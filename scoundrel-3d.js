@@ -10,6 +10,7 @@ import { HorizontalTiltShiftShader } from 'three/addons/shaders/HorizontalTiltSh
 import { VerticalTiltShiftShader } from 'three/addons/shaders/VerticalTiltShiftShader.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
+import { generateHouse } from './house-generator.js';
 import { SoundManager } from './sound-manager.js';
 import { MagicCircleFX } from './magic-circle.js';
 import { CombatTerrain, updateCombatVisibility } from './combat-mechanics.js';
@@ -49,6 +50,10 @@ let hiddenStaticMeshes = []; // Track hidden static objects for combat bulldozer
 let savedPlayerPos = new THREE.Vector3(); // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
 let playerTargetPos = null; // Target position for free movement
+
+let isInHouse = false;
+let currentHouseGroup = null;
+let playerReturnPos = null;
 
 let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
@@ -1101,10 +1106,10 @@ function init3D() {
     const markerMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.8 });
     playerMarker = new THREE.Mesh(markerGeo, markerMat);
 
-    // Soft downward light (The "Outside" Light)
+    // Soft downward light (The "Outside" Light) - now a SpotLight (Cone)
     const markerLight = new THREE.SpotLight(0x00ffff, 500, 25, Math.PI / 3, 1.0, 1.5);
     markerLight.position.set(0, 0, 0);
-    markerLight.target.position.set(0, -1, 0);
+    markerLight.target.position.set(0, 0, 0);
     playerMarker.add(markerLight);
     playerMarker.add(markerLight.target);
 
@@ -2163,8 +2168,12 @@ function animate3D() {
 
     const dt = clock.getDelta();
 
-    // Handle Free Movement
-    updatePlayerMovement(dt);
+    // Handle Free Movement (only on main map)
+    if (isInHouse) {
+        // Custom movement logic for inside the house can go here if needed
+    } else {
+        updatePlayerMovement(dt);
+    }
 
     // Proximity Combat Trigger
     if (!isEngagingCombat && !isCombatView && wanderers.length > 0) {
@@ -2247,17 +2256,6 @@ function animate3D() {
                             const moveDist = speed * dt;
                             const nextPos = wandererPos.clone().add(dir.multiplyScalar(moveDist));
 
-                            // Floor Snap
-                            if (globalFloorMesh) {
-                                terrainRaycaster.set(new THREE.Vector3(nextPos.x, 50, nextPos.z), new THREE.Vector3(0, -1, 0));
-                                const hits = terrainRaycaster.intersectObject(globalFloorMesh);
-                                if (hits.length > 0) {
-                                    wanderer.mesh.position.x = nextPos.x;
-                                    wanderer.mesh.position.z = nextPos.z;
-                                    wanderer.mesh.position.y = hits[0].point.y;
-                                }
-                            }
-
                             // Combat Trigger (Touch)
                             if (distance < 1.2) {
                                 isEngagingCombat = true;
@@ -2268,10 +2266,12 @@ function animate3D() {
                                     const rect = hud.getBoundingClientRect();
                                     spawnFloatingText("AMBUSHED!", rect.left + rect.width / 2, rect.top - 30, '#ff0000');
                                 }
-                                logMsg("Caught by a wanderer!");
+                                logMsg("Caught by a wanderer! Entering house...");
 
-                                // TODO: This will trigger the full combat sequence.
-                                setTimeout(() => { isEngagingCombat = false; }, 5000); // Reset after 5s for now
+                                // --- TRIGGER HOUSE BATTLE ---
+                                enterHouseBattle(wanderer);
+
+                                setTimeout(() => { isEngagingCombat = false; }, 5000); // Reset after 5s for now (prevent re-trigger)
                                 // break; // Removed break to allow other logic if needed, but usually we stop here
                             }
                         }
@@ -2318,6 +2318,120 @@ function animate3D() {
         animatePlayerSprite();
     }
 }
+
+function enterHouseBattle(enemy) {
+    if (isInHouse) return;
+    isInHouse = true;
+
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    if (!playerObj) return;
+
+    // 1. Save player's current position to return to later
+    playerReturnPos = playerObj.position.clone();
+
+    // 2. Get the Battle Island anchor and generate the house
+    const anchor = BattleIsland.getAnchor();
+    currentHouseGroup = generateHouse(scene, anchor, camera);
+
+    // 3. Teleport Player and Enemy
+    // Player spawns at the "door"
+    playerObj.position.set(anchor.x, playerObj.position.y, anchor.z + 5);
+    // Enemy spawns at the other end
+
+
+    // 4. Move Camera
+    controls.target.copy(anchor);
+    camera.position.set(anchor.x, anchor.y + 15, anchor.z + 15);
+    controls.update();
+
+    // 5. Toggle Lights
+    if (torchLight) torchLight.visible = false;
+    if (currentHouseGroup.userData.light) {
+        currentHouseGroup.userData.light.visible = true;
+    }
+
+    // For now, we'll use a debug command to exit.
+    window.exitHouse = exitHouseBattle;
+    logMsg("Entered house. Type exitHouse() in console to leave.");
+}
+
+function findEdgePosition() {
+    // Look for any tile that's on the EDGE of generated terrain (is outside of our safe zone).
+    const safeZone = 10;
+    for (let x = -30; x <= 30; x++) {
+        for (let z = -30; z <= 30; z++) {
+            if (Math.abs(x) > safeZone || Math.abs(z) > safeZone) {
+                // Ensure we are on the floor mesh
+                if (globalFloorMesh) {
+                    terrainRaycaster.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
+                    const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                    if (hits.length > 0) {
+                        return new THREE.Vector3(x, hits[0].point.y, z);
+                    }
+                }
+            }
+        }
+    }
+    return new THREE.Vector3(10, 0, 10); // Default to 10,0,10
+}
+
+function exitHouseBattle() {
+
+    if (!isInHouse) return;
+    isInHouse = false;
+
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    if (playerObj && playerReturnPos) {
+        // Place player at the return position
+        playerObj.position.copy(playerReturnPos);
+    }
+
+    // Remove House Light
+    if (torchLight) torchLight.visible = true;
+    if (currentHouseGroup) {
+        scene.remove(currentHouseGroup);
+        currentHouseGroup = null;
+    }
+
+    // Get Enemy's Mesh
+    const enemyMesh = wanderers.find(e => e.state === 'chase').mesh;
+
+    // Check if it has a valid mesh before setting it's location
+    if (enemyMesh) {
+        // If yes, Set it's state to Patrol and call pickWanderTarget
+        const pos = findEdgePosition();
+
+        // Update state and clear variables
+        wanderers.find(e => e.state === 'chase').state = 'patrol';
+        // Place enemy at the edge to have a running chance
+        enemyMesh.position.copy(pos);
+        pickWandererTarget(wanderers.find(e => e.state === 'patrol'));
+    }
+
+    logMsg("Exited house.");
+}
+
+
+// Temporary hack to get out of house quickly for testing (Weapon Button for Exit)
+window.openInventory = () => {
+    if (isInHouse) {
+        exitHouseBattle();
+        return;
+    }
+
+    if (!document.getElementById('inventoryModal')) setupInventoryUI();
+    toggleInventory();
+};
+
+window.exitHouse = exitHouseBattle;
+
+
+
+
+
+
+
+
 
 function animatePlayerSprite() {
     if (!playerSprite) return;

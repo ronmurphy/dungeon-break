@@ -30,6 +30,13 @@ The next step is to make the world feel alive and dangerous. We need to implemen
     -   Give them a simple "patrol" AI: pick a random nearby point on the `globalFloorMesh` and walk to it.
 
 ### 2. Proximity Trigger
+    -   Implemented "Cone of Vision" for wandering enemies, enabling stealth gameplay. Enemies now have a 120-degree view angle and can "see" the player up to 4.0 units away.
+    -   Enemies will now chase the player when seen, they will stop moving and roam to a new spot on the map to walk when they lose line of sight.
+
+
+
+
+### 2. Teleporting to New "Battle House" when touching the enemy.
 -   **Goal:** Initiate combat when the player gets close to an enemy.
 -   **Implementation:**
     -   In the `animate3D` loop, check the distance between the player and all active `Wanderer` instances.
