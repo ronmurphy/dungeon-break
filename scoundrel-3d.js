@@ -62,7 +62,7 @@ const WANDERER_MODELS = [
     'skeleton-web.glb',
     'female_evil-web.glb', 'female_evil-true-web.glb',
     'male_evil-web.glb', 'male_evil-true-web.glb',
-    'female-web.glb', 'male-web.glb'
+    'female-web.glb', 'male-web.glb', 'ironjaw-web.glb'
 ];
 const terrainRaycaster = new THREE.Raycaster();
 
