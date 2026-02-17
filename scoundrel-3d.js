@@ -1094,6 +1094,14 @@ function init3D() {
     const markerGeo = new THREE.OctahedronGeometry(0.3, 0);
     const markerMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.8 });
     playerMarker = new THREE.Mesh(markerGeo, markerMat);
+    
+    // Soft downward light (The "Outside" Light)
+    const markerLight = new THREE.SpotLight(0x00ffff, 500, 25, Math.PI / 3, 1.0, 1.5);
+    markerLight.position.set(0, 0, 0);
+    markerLight.target.position.set(0, -1, 0);
+    playerMarker.add(markerLight);
+    playerMarker.add(markerLight.target);
+
     scene.add(playerMarker);
 
     // Initialize Battle Island
@@ -3923,290 +3931,6 @@ function pickCard(idx, event) {
             }
             break;
         case 'monster':
-            /* --- OLD SCOUNDREL COMBAT LOGIC (DISABLED) ---
-            game.combatBusy = true;
-            // Compute damage/state but defer applying until animation finishes
-            let dmg = card.val;
-            const cardRect = cardEl.getBoundingClientRect();
-            const centerX = cardRect.left + cardRect.width / 2;
-            const centerY = cardRect.top + cardRect.height / 2;
-
-            // Music Box Check (ID 7)
-            // Actually, music box is active use.
-            // Tome Check (ID 8) - Passive +2 coins
-            const hasTome = game.hotbar.some(i => i && i.type === 'item' && i.id === 8);
-
-            let willBreak = false;
-            let brokeName = null;
-
-            // Calculate Boss Buffs (Weapon + Armor)
-            // Base Guardian Value might be modified by Architect/Sorcerer
-            let effectiveCardVal = card.val;
-            let bossBuffDmg = 0;
-
-            if (game.isBossFight && card.bossSlot === 'boss-guardian') {
-                game.combatCards.forEach(c => {
-                    if (c === card) return; // Skip self
-
-                    // Vanguard/Bulwark: Add direct damage
-                    if (c.bossRole === 'vanguard' || c.bossRole === 'bulwark') {
-                        bossBuffDmg += c.val;
-                    }
-                    // Architect: Adds 1/2 value to Defense (Base Val) AND Attack (Buff Dmg)
-                    if (c.bossRole === 'architect') {
-                        const buff = Math.floor(c.val / 2);
-                        effectiveCardVal += buff;
-                        bossBuffDmg += buff;
-                    }
-                    // Sorcerer: -2 Defense, +2 Attack
-                    if (c.bossRole === 'sorcerer') {
-                        effectiveCardVal = Math.max(0, effectiveCardVal - 2);
-                        bossBuffDmg += 2;
-                    }
-                });
-            }
-
-            // Calculate Player vs Monster Base Damage
-            if (game.equipment.weapon && effectiveCardVal <= game.weaponDurability) {
-                dmg = Math.max(0, effectiveCardVal - game.equipment.weapon.val);
-                game.weaponDurability = card.val;
-                // Persist durability on the item itself
-                game.equipment.weapon.durability = game.weaponDurability;
-
-                // Scoundrel rules usually care about the card's face value. Let's stick to card.val for durability check to be safe,
-                // but use effectiveVal for damage calculation.
-                logMsg(`Slit ${card.name}'s throat. Next enemy must be <=${card.val}.`);
-            } else if (game.equipment.weapon) {
-                dmg = Math.max(0, effectiveCardVal - game.equipment.weapon.val);
-                brokeName = game.equipment.weapon.name;
-                willBreak = true;
-                
-                // --- WEAPON BREAK SALVAGE LOGIC ---
-                // "When a weapon's durability causes the weapon to be destroyed, 
-                // half of the cards will go to the player's trophy area"
-                if (game.slainStack && game.slainStack.length > 0) {
-                    const salvageCount = Math.ceil(game.slainStack.length / 2);
-                    // Shuffle or pick random? User said "can be random".
-                    // Let's just shuffle the stack and keep the first half.
-                    // Actually, game.slainStack usually CLEARS on break in Scoundrel. 
-                    // But here we want to PRESERVE half.
-                    
-                    // Simple shuffle
-                    for (let i = game.slainStack.length - 1; i > 0; i--) {
-                        const j = Math.floor(Math.random() * (i + 1));
-                        [game.slainStack[i], game.slainStack[j]] = [game.slainStack[j], game.slainStack[i]];
-                    }
-                    
-                    // Keep first N (salvageCount), discard the rest
-                    const savedTrophies = game.slainStack.slice(0, salvageCount);
-                    game.slainStack = savedTrophies;
-                    
-                    logMsg(`Weapon shattered! Salvaged ${salvageCount} trophies.`);
-                } else {
-                    game.slainStack = [];
-                }
-
-                game.equipment.weapon = null; 
-                game.weaponDurability = Infinity; 
-                // game.slainStack = []; // REMOVED (Handled above)
-
-                logMsg(`CRACK! The ${brokeName} has broken!`);
-            } else {
-                dmg = effectiveCardVal;
-                // Vanguard (Knight) Passive: Martial Training
-                const reduction = (game.classId === 'knight') ? 3 : 0;
-                dmg = Math.max(0, dmg - reduction);
-                logMsg(`Grappled ${card.name} barehanded. Took ${dmg} DMG.`);
-            }
-
-            // Apply Boss Buffs to final damage (Guardian hits back with full force)
-            dmg += bossBuffDmg;
-
-            // Boss Potion Mechanic (Heal on death)
-            if (game.isBossFight && card.bossRole === 'mystic') {
-                const guardian = game.combatCards.find(c => c.bossSlot === 'boss-guardian');
-                if (guardian) {
-                    guardian.val += 5;
-                    logMsg("The Vial shatters, healing the Guardian +5!");
-                    spawnFloatingText("GUARDIAN HEALED!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#00ff00');
-                }
-            }
-
-            // --- CINEMATIC COMBAT SEQUENCE ---
-
-            // 1. Player Attack Phase (Visuals)
-            triggerPlayerAttackAnim(centerX, centerY, game.equipment.weapon);
-
-            // Trigger 3D Attack Animation
-            if (use3dModel && actions.attack && actions.idle) {
-                actions.idle.stop();
-                if (actions.walk) actions.walk.stop();
-                actions.attack.reset().play();
-
-                const onAttackFinish = (e) => {
-                    if (e.action === actions.attack) {
-                        actions.attack.stop();
-                        actions.idle.play();
-                        mixer.removeEventListener('finished', onAttackFinish);
-                    }
-                };
-                mixer.addEventListener('finished', onAttackFinish);
-            }
-
-            let attackSound = 'attack_blunt';
-            if (game.equipment.weapon) {
-                if (game.equipment.weapon.isSpell) {
-                    const val = game.equipment.weapon.val;
-                    if (val === 2 || val === 7 || val === 9 || val === 11) attackSound = 'spell_fire';
-                    else if (val === 3) attackSound = 'spell_ice';
-                    else if (val === 4) attackSound = 'spell_poison';
-                    else if (val === 5 || val === 6) attackSound = 'spell_electric';
-                    else attackSound = 'spell_void';
-                } else {
-                    attackSound = 'attack_slash';
-                }
-            }
-            audio.play(attackSound, { volume: 0.8, rate: 0.9 + Math.random() * 0.2 });
-
-            // Animate Card Impact (Recoil)
-            const recoilAnim = cardEl.animate([
-                { transform: 'scale(1)' },
-                { transform: 'scale(0.9) rotate(' + (Math.random() * 6 - 3) + 'deg)' },
-                { transform: 'scale(1.05)' },
-                { transform: 'scale(1)' }
-            ], { duration: 250, easing: 'cubic-bezier(0.175, 0.885, 0.32, 1.275)' });
-
-            recoilAnim.onfinish = () => {
-                // 2. Enemy Retaliation Phase (only if player takes damage)
-                if (dmg > 0) {
-                    enemyAttackAnimation(card, cardEl, centerX, centerY, dmg, {}, finalizeCombat);
-                } else {
-                    // Clean kill - slight pause then death
-                    setTimeout(finalizeCombat, 150);
-                }
-            };
-
-            function finalizeCombat() {
-                if (willBreak) {
-                    spawnAboveModalTexture('spark_01.png', centerX, centerY, 30, { tint: '#888', blend: 'lighter', sizeRange: [6, 40], intensity: 2.0, filter: 'brightness(2) saturate(1.1)' });
-                    spawnAboveModalTexture('slash_02.png', window.innerWidth / 2, window.innerHeight / 2, 18, { tint: '#8b0000', blend: 'lighter', sizeRange: [40, 120], intensity: 1.9, filter: 'brightness(1.8) contrast(1.2)' });
-                    triggerShake(15, 30);
-                } else if (game.equipment.weapon && !willBreak) {
-                    // slay with weapon: small sparks
-                    spawnAboveModalTexture('spark_01.png', centerX, centerY, 12, { tint: '#ccc', blend: 'lighter', sizeRange: [8, 36], intensity: 1.2 });
-
-                    // Cursed Blade Effect: Heals on kill? Or just drains? 
-                    // "Bloodthirst" implies healing, but user said "more like a bloodthirst weapon" (drain).
-                    // Let's stick to the drain on entry for now.
-                    
-                    // Reanimator (Necromancer) Passive: Soul Siphon
-                    if (game.classId === 'necromancer') {
-                        if (card.val === game.equipment.weapon.val) {
-                            game.hp = Math.min(game.maxHp, game.hp + 1);
-                            logMsg("Soul Siphon: Exact kill restores 1 HP.");
-                        }
-                    }
-                    
-                    // Templar (Paladin) Passive: Righteous Momentum
-                    if (game.classId === 'paladin') {
-                        game.enemiesDefeated = (game.enemiesDefeated || 0) + 1;
-                        if (game.enemiesDefeated % 5 === 0) {
-                            game.ap = Math.min(game.maxAp, game.ap + 1);
-                            logMsg("Righteous Momentum: +1 AP.");
-                        }
-                    }
-
-                    game.slainStack.push(card);
-                }
-
-                game.soulCoins += card.val + (hasTome ? 2 : 0);
-                if (dmg === 0) {
-                    spawnFloatingText("CRITICAL HIT!", centerX, centerY - 60, '#ffcc00');
-                }
-
-                if (dmg > 0) {
-                    spawnAboveModalTexture('slash_02.png', window.innerWidth / 2, window.innerHeight / 2, 18, { tint: '#8b0000', blend: 'lighter', sizeRange: [40, 120], intensity: 1.7, filter: 'brightness(1.6) contrast(1.15)' });
-                    triggerShake(10, 20);
-                }
-
-                // Mirror Check (ID 6)
-                if (game.hp - dmg <= 0) {
-                    const mirrorIdx = game.hotbar.findIndex(i => i && i.type === 'item' && i.id === 6);
-                    if (mirrorIdx !== -1) {
-                        game.hotbar[mirrorIdx] = null;
-                        dmg = 0; game.hp = 1;
-
-                        // Mirror Shatter FX
-                        spawnAboveModalTexture('spark_01.png', centerX, centerY, 40, { tint: '#ffffff', blend: 'lighter', sizeRange: [10, 40], spread: 60, decay: 0.03 });
-                        spawnAboveModalTexture('slash_02.png', centerX, centerY, 8, { tint: '#aaffff', blend: 'lighter', sizeRange: [40, 100], spread: 40, decay: 0.05 });
-                        triggerShake(20, 40);
-
-                        spawnFloatingText("MIRROR SHATTERED!", centerX, centerY, '#ffffff');
-                        logMsg("Silver Mirror shattered to save your life!");
-                    }
-                }
-
-                if (dmg > 0) takeDamage(dmg);
-                
-                // Arcanist (Occultist) Passive: Echo Cast
-                if (game.classId === 'occultist' && game.equipment.weapon && game.equipment.weapon.isSpell && Math.random() < 0.2) {
-                    const otherMonsters = game.combatCards.filter((c, i) => c.type === 'monster' && i !== idx);
-                    if (otherMonsters.length > 0) {
-                        const target = otherMonsters[Math.floor(Math.random() * otherMonsters.length)];
-                        const echoDmg = game.equipment.weapon.val;
-                        target.val = Math.max(0, target.val - echoDmg);
-                        spawnFloatingText("ECHO CAST!", window.innerWidth/2, window.innerHeight/2 - 50, '#aa00ff');
-                        logMsg(`Echo Cast hit ${target.name} for ${echoDmg}.`);
-                        spawnAboveModalTexture('twirl_01.png', window.innerWidth/2, window.innerHeight/2, 10, { tint:'#aa00ff', blend:'lighter' });
-                    }
-                }
-                
-                updateUI();
-
-                // Animate card death (flip) and then remove from combat array
-                animateCardDeath(cardEl, () => {
-                    game.combatBusy = false;
-                    game.combatCards.splice(idx, 1);
-                    if (!game.isBossFight) game.chosenCount++;
-
-                    if (game.hp <= 0) { gameOver(); return; }
-
-                    // Boss Fight Logic: Only finish if Guardian is dead
-                    if (game.isBossFight) {
-                        // Soul Broker Logic
-                        const broker = game.combatCards.find(c => c.isBroker);
-                        if (game.combatCards.some(c => c.isBroker) && !broker) {
-                            // Broker died just now
-                        }
-
-                        // Shake the Guardian if a minion died
-                        const guardianCard = document.querySelector('.card.boss-guardian');
-                        if (guardianCard) {
-                            guardianCard.animate([
-                                { transform: 'translate(0,0)' },
-                                { transform: 'translate(-5px, 0)' },
-                                { transform: 'translate(5px, 0)' },
-                                { transform: 'translate(0,0)' }
-                            ], { duration: 200 });
-                        }
-
-                        const guardianAlive = game.combatCards.some(c => c.bossSlot === 'boss-guardian');
-                        if (!guardianAlive) {
-                            finishRoom();
-                        } else {
-                            showCombat();
-                        }
-                    } else {
-                        if (game.chosenCount === 3) finishRoom();
-                        else showCombat();
-                    }
-                    updateUI();
-                });
-            }
-
-            // Return so we don't run the default removal logic below (we handle that in the callback)
-            ------------------------------------------------ */
-            
             logMsg("Combat is currently disabled for refactoring.");
             // We return here so the card isn't removed by the default logic below
             return;
@@ -4326,21 +4050,6 @@ function pickCard(idx, event) {
     }
 
     game.combatCards.splice(idx, 1);
-    /* --- OLD PICK-3 LOGIC (DISABLED) ---
-    game.chosenCount++;
-    
-    // Update Retreat Button immediately
-    const avoidBtn = document.getElementById('modalAvoidBtn');
-    if (avoidBtn) avoidBtn.disabled = true;
-
-    if (game.hp <= 0) {
-        gameOver();
-        return;
-    }
-
-    if (game.chosenCount === 3) finishRoom();
-    else showCombat();
-    -------------------------------------- */
     
     showCombat(); // Just refresh the view
     updateUI();
@@ -4510,28 +4219,6 @@ function finishRoom() {
 }
 
 function avoidRoom() {
-    /* --- OLD AVOID LOGIC (DISABLED) ---
-    if (game.lastAvoided || game.chosenCount > 0) return;
-
-    // Cursed Ring Check
-    const hasBurden = game.hotbar.some(i => i && i.id === 'cursed_ring');
-    if (hasBurden) {
-        logMsg("The Ring of Burden prevents your escape!");
-        spawnFloatingText("CANNOT FLEE!", window.innerWidth / 2, window.innerHeight / 2, '#adff2f');
-        return;
-    }
-
-    const room = game.activeRoom;
-    game.deck.push(...room.cards);
-    room.cards = [];
-    room.state = 'avoided';
-    
-    // Scoundrel (Rogue) Passive: Slippery
-    if (game.classId !== 'rogue') game.lastAvoided = true;
-
-    closeCombat();
-    logMsg("Escaped to the shadows. Room marked as avoided.");
-    */
     logMsg("Retreat logic is currently disabled.");
 }
 
