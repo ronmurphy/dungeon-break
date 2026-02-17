@@ -13,6 +13,7 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { SoundManager } from './sound-manager.js';
 import { MagicCircleFX } from './magic-circle.js';
 import { CombatTerrain, updateCombatVisibility } from './combat-mechanics.js';
+import { CombatResolver } from './dnd-mechanics.js';
 import { CardDesigner } from './card-designer.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
@@ -47,6 +48,7 @@ let hiddenDecorationIndices = new Map(); // Track hidden instances for combat
 let hiddenStaticMeshes = []; // Track hidden static objects for combat bulldozer
 let savedPlayerPos = new THREE.Vector3(); // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
+let playerTargetPos = null; // Target position for free movement
 
 // Wanderer State
 let wanderers = [];
@@ -1196,6 +1198,7 @@ function loadPlayerModel() {
             if (walkClip) {
                 actions.walk = mixer.clipAction(walkClip);
                 actions.walk.timeScale = 0.8; // Slower, weightier walk
+                actions.walk.setLoop(THREE.LoopRepeat);
             }
             if (idleClip) {
                 actions.idle = mixer.clipAction(idleClip);
@@ -1446,6 +1449,20 @@ function on3DClick(event) {
                 parent = parent.parent;
                 if (parent === scene) break;
             }
+        }
+    }
+
+    // If no interactable object was clicked, check for Floor (Movement)
+    if (!isCombatView && globalFloorMesh) {
+        // Create a temporary raycaster for the floor check to ensure we hit it
+        const floorRaycaster = new THREE.Raycaster();
+        floorRaycaster.setFromCamera(mouse, camera);
+        const floorHits = floorRaycaster.intersectObject(globalFloorMesh);
+
+        if (floorHits.length > 0) {
+            const point = floorHits[0].point;
+            // Move player to point
+            movePlayerTo(point);
         }
     }
 }
@@ -2015,6 +2032,9 @@ function animate3D() {
         }
     }
 
+    // Handle Free Movement
+    updatePlayerMovement(clock.getDelta());
+
     // Throttled render so we don't render >30fps
     if (now - lastRenderTime >= RENDER_INTERVAL) {
         // Determine active camera based on mode
@@ -2066,6 +2086,106 @@ function animatePlayerSprite() {
         playerSprite.rotation.x = 0; playerSprite.position.y = 0.75; 
         const isFace = camera.position.z > playerSprite.position.z;
         playerSprite.material.map = isFace ? walkAnims[game.sex].down : walkAnims[game.sex].up;
+    }
+}
+
+function movePlayerTo(targetVec) {
+    if (!playerMesh && !playerSprite) return;
+    
+    // Stop existing tween if any
+    if (playerMoveTween) playerMoveTween.stop();
+
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const startPos = playerObj.position.clone();
+    
+    // Calculate distance to determine duration (speed)
+    // Speed = 6 units per second
+    const dist = startPos.distanceTo(targetVec);
+    const speed = 6.0; 
+    const duration = (dist / speed) * 1000;
+
+    // Calculate movement direction for the look-ahead raycast
+    const moveDir = new THREE.Vector3().subVectors(targetVec, startPos).normalize();
+    moveDir.y = 0; // Keep it horizontal
+
+    // Face target
+    if (use3dModel && playerMesh) {
+        playerMesh.lookAt(targetVec.x, playerMesh.position.y, targetVec.z);
+        
+        // Start Walk Animation
+        if (actions.walk) {
+            if (!actions.walk.isRunning()) {
+                actions.walk.enabled = true;
+                actions.walk.setEffectiveTimeScale(0.8);
+                actions.walk.setEffectiveWeight(1.0);
+                actions.walk.play();
+                if (actions.idle) {
+                    actions.idle.crossFadeTo(actions.walk, 0.2, true);
+                }
+            }
+        }
+    }
+
+    playerMoveTween = new TWEEN.Tween(playerObj.position)
+        .to({ x: targetVec.x, z: targetVec.z }, duration)
+        .easing(TWEEN.Easing.Linear.None) // Linear for walking
+        .onUpdate(() => {
+            // Slope/Height Awareness: Raycast down to find floor
+            // "Look at an angle down from their head... a bit infront of their feet"
+            if (globalFloorMesh) {
+                // 1. Origin: Head height (approx 1.5m up)
+                const headPos = playerObj.position.clone().add(new THREE.Vector3(0, 1.5, 0));
+                
+                // 2. Target: A point on the ground slightly ahead of the player (0.5m)
+                // We project where the feet *would* be, then look down at that spot
+                const lookAheadDist = 0.5;
+                const targetFloorPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
+                // Bias the target down so the ray actually points down-ish
+                targetFloorPos.y -= 2.0; 
+
+                // 3. Direction: Head -> Ground Ahead
+                const rayDir = new THREE.Vector3().subVectors(targetFloorPos, headPos).normalize();
+
+                terrainRaycaster.set(headPos, rayDir);
+                const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+
+                if (hits.length > 0) {
+                    // Offset: 0.1 for Model, 0.75 for Sprite (Standing)
+                    const offset = use3dModel ? 0.1 : 0.75;
+                    playerObj.position.y = hits[0].point.y + offset;
+                } else {
+                    // No ground hit? We are staring into the void. STOP.
+                    if (playerMoveTween) playerMoveTween.stop();
+                    playerMoveTween = null;
+                    // Force stop animation immediately
+                    if (use3dModel && actions.walk) actions.walk.stop();
+                    if (use3dModel && actions.idle) actions.idle.play();
+                }
+            }
+        })
+        .onComplete(() => {
+            playerMoveTween = null;
+            // Return to Idle
+            if (use3dModel && actions.walk) {
+                if (actions.idle) {
+                    actions.walk.crossFadeTo(actions.idle, 0.2, true).play();
+                } else {
+                    actions.walk.stop();
+                }
+            }
+        })
+        .start();
+}
+
+function updatePlayerMovement(dt) {
+    // Camera Follow Logic
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    if (playerObj && !isAttractMode && !isCombatView) {
+        // Smoothly lerp camera target to player position
+        controls.target.lerp(playerObj.position, 0.1);
+        
+        // Optional: Move camera body if we want it to follow strictly
+        // For now, OrbitControls handles the orbiting, we just move the pivot (target)
     }
 }
 
