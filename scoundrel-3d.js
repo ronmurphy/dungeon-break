@@ -1100,7 +1100,10 @@ function init3D() {
     BattleIsland.init(scene);
 
     animate3D();
+    window.removeEventListener('click', on3DClick); // Prevent duplicates
     window.addEventListener('click', on3DClick);
+    window.removeEventListener('contextmenu', on3DContextMenu);
+    window.addEventListener('contextmenu', on3DContextMenu);
 }
 
 function rebuildComposer() {
@@ -1384,7 +1387,12 @@ function clearFogRings() {
 }
 */
 
-function on3DClick(event) {
+function on3DContextMenu(e) {
+    e.preventDefault();
+    on3DClick(e, true);
+}
+
+function on3DClick(event, isRightClick = false) {
     if (isEditMode) {
         handleEditClick(event);
         return;
@@ -1418,7 +1426,8 @@ function on3DClick(event) {
     const intersects = raycaster.intersectObjects(scene.children, true);
 
     // Iterate to find first CLICKABLE object (skipping particles)
-    for (let i = 0; i < intersects.length; i++) {
+    if (!isRightClick) { // Only interact with objects on Left Click
+        for (let i = 0; i < intersects.length; i++) {
         let obj = intersects[i].object;
         const current = game.rooms.find(r => r.id === game.currentRoomIdx);
 
@@ -1454,6 +1463,7 @@ function on3DClick(event) {
             }
         }
     }
+    }
 
     // If no interactable object was clicked, check for Floor (Movement)
     if (!isCombatView && globalFloorMesh) {
@@ -1465,7 +1475,7 @@ function on3DClick(event) {
         if (floorHits.length > 0) {
             const point = floorHits[0].point;
             // Move player to point
-            movePlayerTo(point);
+            movePlayerTo(point, isRightClick); // Pass run flag (Right Click = Run)
         }
     }
 }
@@ -2092,7 +2102,7 @@ function animatePlayerSprite() {
     }
 }
 
-function movePlayerTo(targetVec) {
+function movePlayerTo(targetVec, isRunning = false) {
     if (!playerMesh && !playerSprite) return;
     
     // Stop existing tween if any
@@ -2103,8 +2113,8 @@ function movePlayerTo(targetVec) {
     
     // Calculate distance to determine duration (speed)
     // Speed = 3.0 units per second (Walk), 6.0 was Run
+    const speed = isRunning ? 6.0 : 3.0; 
     const dist = startPos.distanceTo(targetVec);
-    const speed = 3.0; 
     const duration = (dist / speed) * 1000;
 
     // Calculate movement direction for the look-ahead raycast
@@ -2117,10 +2127,10 @@ function movePlayerTo(targetVec) {
         
         // Start Walk Animation
         if (actions.walk) {
+            actions.walk.enabled = true;
+            actions.walk.setEffectiveTimeScale(isRunning ? 1.5 : 0.8); // Faster animation for running
+            actions.walk.setEffectiveWeight(1.0);
             if (!actions.walk.isRunning()) {
-                actions.walk.enabled = true;
-                actions.walk.setEffectiveTimeScale(0.8);
-                actions.walk.setEffectiveWeight(1.0);
                 actions.walk.play();
                 if (actions.idle) {
                     actions.idle.crossFadeTo(actions.walk, 0.2, true);
