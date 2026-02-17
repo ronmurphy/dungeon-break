@@ -2,13 +2,15 @@
  * dnd-mechanics.js
  * Core logic for "Dungeon Break" - The Coffee Break RPG
  * Handles dice rolls, modifiers, and the "Dulling Blade" durability system.
+ * 
+ * Stats: STR, DEX, INT, LCK (Single digit point-buy system)
  */
 
 export const DND_CONFIG = {
-    // Map Attribute Score to Modifier (Simplified: Score - 10)
-    // Example: 11 -> +1, 10 -> 0
+    // Map Attribute Score to Modifier
+    // System: Single digit point buy (0-9). The score IS the modifier.
     getModifier: (score) => {
-        return Math.max(0, score - 10);
+        return score;
     },
 
     // Map a total power level (Stat + Weapon) to a Die Size
@@ -86,6 +88,22 @@ export class CombatResolver {
             isBroken: broken,
             isCrit: rawRoll === dieSides && dieSides > 1,
             msg: msg
+        };
+    }
+
+    /**
+     * Resolves a generic attribute check (e.g. Luck, Int).
+     * @param {number} statScore - The attribute score (modifier).
+     * @param {number} dc - Difficulty Class (default 10).
+     * @returns {object} Result { success, roll, total }
+     */
+    static resolveCheck(statScore, dc = 10) {
+        const mod = DND_CONFIG.getModifier(statScore);
+        const roll = DiceRoller.roll(20);
+        return {
+            success: (roll + mod) >= dc,
+            roll: roll,
+            total: roll + mod
         };
     }
 }

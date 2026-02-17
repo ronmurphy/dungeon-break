@@ -1993,6 +1993,12 @@ function animate3D() {
 
             playerMarker.position.set(playerObj.position.x, markerHeight, playerObj.position.z);
             playerMarker.rotation.y += 0.02;
+            
+            // Pulse the light intensity for a "breathing" effect
+            const light = playerMarker.children.find(c => c.isSpotLight);
+            if (light) {
+                light.intensity = 500 + Math.sin(Date.now() * 0.003) * 150;
+            }
         }
     }
 
