@@ -27,20 +27,20 @@ export function logMsg(m) {
 export function updateUI() {
     // Update Sidebar
     const hpSide = document.getElementById('hpValueSidebar');
-    if(hpSide) hpSide.innerText = game.hp;
+    if (hpSide) hpSide.innerText = game.hp;
     const hpBarSide = document.getElementById('hpBarSidebar');
-    if(hpBarSide) hpBarSide.style.width = `${(game.hp / game.maxHp) * 100}%`;
+    if (hpBarSide) hpBarSide.style.width = `${(game.hp / game.maxHp) * 100}%`;
 
     // Visual Progression
     const blockNum = Math.min(9, game.floor).toString().padStart(3, '0');
     const sidebar = document.querySelector('.sidebar');
-    if(sidebar) sidebar.style.backgroundImage = `url('assets/images/individuals/block_${blockNum}.png')`;
+    if (sidebar) sidebar.style.backgroundImage = `url('assets/images/individuals/block_${blockNum}.png')`;
 
     // Update Modal
     const hpModal = document.getElementById('hpValueModal');
-    if(hpModal) hpModal.innerText = game.hp;
+    if (hpModal) hpModal.innerText = game.hp;
     const hpBarModal = document.getElementById('hpBarModal');
-    if(hpBarModal) hpBarModal.style.width = `${(game.hp / game.maxHp) * 100}%`;
+    if (hpBarModal) hpBarModal.style.width = `${(game.hp / game.maxHp) * 100}%`;
 
     // Update AP Bar
     let apBar = document.getElementById('apBarModal');
@@ -52,7 +52,7 @@ export function updateUI() {
         apBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:#88aaff; opacity:0.6; transition: width 0.3s;";
         hpContainer.appendChild(apBar);
     }
-    if(apBar) apBar.style.width = `${(game.ap / Math.max(1, game.maxAp)) * 100}%`;
+    if (apBar) apBar.style.width = `${(game.ap / Math.max(1, game.maxAp)) * 100}%`;
 
     // Update Coins
     const coinEl = document.getElementById('soulCoinsValueSidebar');
@@ -67,7 +67,7 @@ export function updateUI() {
     // Update Fuel
     const torchBar = document.getElementById('torchFuelBar');
     const mapFuelBar = document.getElementById('mapFuelBar');
-    const maxFuel = 30; 
+    const maxFuel = 30;
     const currentFuel = game.torchCharge || 0;
     const fuelPct = Math.min(100, (currentFuel / maxFuel) * 100);
 
@@ -107,7 +107,7 @@ export function updateUI() {
             weaponLabel.innerText = `${cleanName} (${game.equipment.weapon.val})`;
             weaponLabel.style.color = 'var(--gold)';
         }
-        if(weaponDetail) weaponDetail.innerText = game.weaponDurability === Infinity ? "Clean Weapon: No limit" : `Bloody: Next <${game.weaponDurability}`;
+        if (weaponDetail) weaponDetail.innerText = game.weaponDurability === Infinity ? "Clean Weapon: No limit" : `Bloody: Next <${game.weaponDurability}`;
 
         const asset = getAssetData('weapon', game.equipment.weapon.val, game.equipment.weapon.suit);
         const bgSize = `${asset.sheetCount * 100}% 100%`;
@@ -130,7 +130,7 @@ export function updateUI() {
             weaponLabel.innerText = "BARE HANDS";
             weaponLabel.style.color = '#fff';
         }
-        if(weaponDetail) weaponDetail.innerText = "No protection";
+        if (weaponDetail) weaponDetail.innerText = "No protection";
         if (weaponArtModal) weaponArtModal.style.backgroundImage = "none";
         if (weaponArtSidebar) weaponArtSidebar.style.backgroundImage = "none";
         if (nameSidebar) nameSidebar.innerText = "UNARMED";
@@ -158,7 +158,7 @@ export function updateUI() {
                 const bgPos = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
 
                 slot.innerHTML = `<div style="width:100%; height:100%; background-image:url('assets/images/${asset.file}'); background-size:${bgSize}; background-position:${bgPos}; ${tint}" onclick="window.useHotbarItem(${i})"></div>`;
-                
+
                 // Tooltip
                 slot.onmouseenter = () => showTooltip(slot, item);
                 slot.onmouseleave = () => hideTooltip();
@@ -188,7 +188,7 @@ export function updateUI() {
                 const bgPos = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
 
                 slot.innerHTML = `<div style="width:100%; height:100%; background-image:url('assets/images/${asset.file}'); background-size:${bgSize}; background-position:${bgPos}; ${tint}" onclick="window.useHotbarItem(${i})"></div>`;
-                
+
                 slot.onmouseenter = () => showTooltip(slot, item);
                 slot.onmouseleave = () => hideTooltip();
             }
@@ -227,17 +227,16 @@ function updateMapHUD() {
     const invModal = document.getElementById('inventoryModal');
     const startModal = document.getElementById('startMenuModal');
     const attractOv = document.getElementById('attractionOverlay');
-    
-    const isCombat = combatModal && (getComputedStyle(combatModal).display !== 'none');
+
     const isInv = invModal && (getComputedStyle(invModal).display !== 'none');
     const isStart = startModal && (getComputedStyle(startModal).display !== 'none');
     const isAttract = attractOv && (getComputedStyle(attractOv).display !== 'none');
 
-    if (isCombat || isInv || isStart || isAttract) {
+    if (isInv || isStart || isAttract) { // Keep HUD visible during combat
         mapHud.style.display = 'none';
     } else {
         mapHud.style.display = 'flex';
-        
+
         // Ensure HUD has overflow hidden for bars
         if (mapHud.style.overflow !== 'hidden') mapHud.style.overflow = 'hidden';
 
@@ -250,7 +249,7 @@ function updateMapHUD() {
             mapHud.insertBefore(hpBar, mapHud.firstChild);
         }
         hpBar.style.width = `${Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100))}%`;
-        
+
         let apBar = document.getElementById('hudApBar');
         if (!apBar) {
             apBar = document.createElement('div');
@@ -346,7 +345,7 @@ export function renderInventoryUI() {
         div.className = 'inv-item-drag';
         div.style.width = '100%'; div.style.height = '100%';
         div.title = item.name;
-        
+
         const asset = getAssetData(item.type, item.val || item.id, item.suit);
         div.style.backgroundImage = `url('assets/images/${asset.file}')`;
         div.style.backgroundSize = `${asset.sheetCount * 100}% 100%`;
@@ -356,11 +355,11 @@ export function renderInventoryUI() {
         div.ondragstart = (e) => {
             e.dataTransfer.setData('text/plain', JSON.stringify({ source, idx }));
         };
-        
+
         div.onclick = (e) => {
             e.stopPropagation();
             const desc = document.getElementById('invDescription');
-            if(desc) desc.innerHTML = `<span style="color:#fff; font-weight:bold;">${item.name}</span> <span style="margin-left:10px; color:#666;">| ${item.desc || "No description."}</span>`;
+            if (desc) desc.innerHTML = `<span style="color:#fff; font-weight:bold;">${item.name}</span> <span style="margin-left:10px; color:#666;">| ${item.desc || "No description."}</span>`;
         };
 
         // Touch Start Logic
@@ -368,7 +367,7 @@ export function renderInventoryUI() {
             const touch = e.touches[0];
             window.touchDragData = { source, idx };
             window.touchDragMoved = false;
-            
+
             if (window.touchDragGhost && window.touchDragGhost.parentNode) window.touchDragGhost.parentNode.removeChild(window.touchDragGhost);
             window.touchDragGhost = div.cloneNode(true);
             window.touchDragGhost.style.cssText = `position:fixed; width:64px; height:64px; opacity:0.8; z-index:10000; pointer-events:none; left:${touch.clientX - 32}px; top:${touch.clientY - 32}px;`;
@@ -392,7 +391,7 @@ export function renderInventoryUI() {
     const invGrid = document.getElementById('invGrid');
     if (invGrid) {
         invGrid.innerHTML = '';
-        while(game.backpack.length < 24) game.backpack.push(null);
+        while (game.backpack.length < 24) game.backpack.push(null);
         game.backpack.forEach((item, idx) => {
             const div = document.createElement('div');
             div.style.cssText = "border:1px solid #333; background:#0a0a0a; position:relative;";
@@ -452,22 +451,22 @@ export function renderInventoryUI() {
         const cIdx = classMap[game.classId] || 0;
         classIcon.style.backgroundImage = "url('assets/images/classes.png')";
         classIcon.style.backgroundSize = "900% 100%";
-        classIcon.style.backgroundPosition = `${cIdx * (100/8)}% 0%`;
+        classIcon.style.backgroundPosition = `${cIdx * (100 / 8)}% 0%`;
     }
-    
+
     // Update Coins
     const coinsEl = document.getElementById('invSoulCoins');
     if (coinsEl) coinsEl.innerText = game.soulCoins;
 }
 
 function createTrophyElement(c, idx) {
-    let sheetFile = 'diamond.png'; 
+    let sheetFile = 'diamond.png';
     if (c.suit === '♥') sheetFile = 'heart.png';
     else if (c.suit === '♣') sheetFile = 'club.png';
     else if (c.suit === '♠') sheetFile = 'spade.png';
     else if (c.suit === '👺') sheetFile = 'menace.png';
     else if (c.suit === '💀') sheetFile = 'skull.png';
-    
+
     const container = document.createElement('div');
     container.className = 'mini-trophy';
     container.style.cssText = "position:relative; width:80px; height:80px; cursor:pointer; border:1px solid #333; background:#080808; flex-shrink:0;";
@@ -485,7 +484,7 @@ function createTrophyElement(c, idx) {
     else if (c.val === 12) cellIdx = 6;
     else if (c.val === 13) cellIdx = 7;
     else if (c.val === 14) cellIdx = 8;
-    const px = cellIdx * (100/8);
+    const px = cellIdx * (100 / 8);
 
     monster.style.cssText = `width:100%; height:100%; background: url('assets/images/${sheetFile}'); background-size: 900% 100%; background-position: ${px}% 0%; filter: grayscale(0.2) contrast(1.2);`;
     container.appendChild(monster);
@@ -500,10 +499,10 @@ export function setupInventoryUI() {
         modal.className = 'modal-overlay';
         document.body.appendChild(modal);
     }
-    
+
     // Determine doll image based on sex
     const sex = game.sex || 'm';
-    
+
     modal.innerHTML = `
     <div class="inventory-layout-container" style="
         width: 850px; 
@@ -696,18 +695,18 @@ window.allowDrop = allowDrop;
 
 export function handleDrop(e, targetType, targetIdx) {
     if (e && e.preventDefault) e.preventDefault();
-    if (window.touchDragGhost) { 
+    if (window.touchDragGhost) {
         if (window.touchDragGhost.parentNode) document.body.removeChild(window.touchDragGhost);
         window.touchDragGhost = null;
     }
-    
+
     let data;
     try {
         const raw = e.dataTransfer ? e.dataTransfer.getData('text/plain') : (window.touchDragData ? JSON.stringify(window.touchDragData) : null);
         if (!raw) return;
         data = JSON.parse(raw);
     } catch (err) { return; }
-    
+
     const srcType = data.source;
     const srcIdx = data.idx;
 
@@ -729,7 +728,7 @@ export function handleDrop(e, targetType, targetIdx) {
 
     // Validation
     const canEquip = (item, type, idx) => {
-        if (!item) return true; 
+        if (!item) return true;
         if (type === 'equipment') {
             if (idx === 'weapon') {
                 if (item.type !== 'weapon') return false;
@@ -744,7 +743,7 @@ export function handleDrop(e, targetType, targetIdx) {
 
     if (!canEquip(srcItem, targetType, targetIdx)) { spawnFloatingText("Invalid Slot!", e.clientX, e.clientY, '#ff0000'); return; }
     if (tgtItem && !canEquip(tgtItem, srcType, srcIdx)) { spawnFloatingText("Cannot Swap!", e.clientX, e.clientY, '#ff0000'); return; }
-    
+
     // Execute Swap
     if (srcType === 'equipment') game.equipment[srcIdx] = null;
     else if (srcType === 'backpack') game.backpack[srcIdx] = null;
@@ -776,7 +775,7 @@ export function handleDrop(e, targetType, targetIdx) {
 
     window.touchDragData = null;
     updateUI();
-    renderInventoryUI(); 
+    renderInventoryUI();
 }
 window.handleDrop = handleDrop;
 
@@ -784,6 +783,7 @@ window.toggleInventory = function () {
     const modal = document.getElementById('inventoryModal');
     if (modal.style.display === 'flex') {
         modal.style.display = 'none';
+        updateUI(); // Refresh UI to show the map HUD again
     } else {
         modal.style.display = 'flex';
         updateUI();
@@ -817,9 +817,9 @@ window.sortInventory = function () {
 window.forgeItems = function () {
     const i1 = game.anvil[0];
     const i2 = game.anvil[1];
-    if (!i1 || !i2) { spawnFloatingText("Need 2 items!", window.innerWidth/2, window.innerHeight/2, '#ff0000'); return; }
-    if (i1.type !== i2.type) { spawnFloatingText("Types must match!", window.innerWidth/2, window.innerHeight/2, '#ff0000'); return; }
-    
+    if (!i1 || !i2) { spawnFloatingText("Need 2 items!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000'); return; }
+    if (i1.type !== i2.type) { spawnFloatingText("Types must match!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000'); return; }
+
     const newVal = Math.min(16, i1.val + i2.val - 1);
     const survivor = (Math.random() < 0.5 ? i1 : i2);
     survivor.val = newVal;
@@ -830,11 +830,11 @@ window.forgeItems = function () {
         survivor.name = survivor.name.split(' (')[0] + ` (${newVal})`;
     }
     game.anvil = [survivor, null];
-    spawnFloatingText("Forged!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+    spawnFloatingText("Forged!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
     updateUI();
 };
 
-window.sellAllLoot = function() {
+window.sellAllLoot = function () {
     let soldCount = 0;
     let totalValue = 0;
 
@@ -853,29 +853,29 @@ window.sellAllLoot = function() {
     }
 
     if (soldCount > 0) {
-        spawnFloatingText(`Sold ${soldCount} items!`, window.innerWidth/2, window.innerHeight/2, '#ffd700');
+        spawnFloatingText(`Sold ${soldCount} items!`, window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
         logMsg(`Sold ${soldCount} items for ${totalValue} coins.`);
         updateUI();
         renderInventoryUI();
     } else {
-        spawnFloatingText("Nothing to sell!", window.innerWidth/2, window.innerHeight/2, '#aaa');
+        spawnFloatingText("Nothing to sell!", window.innerWidth / 2, window.innerHeight / 2, '#aaa');
     }
 };
 
 export function burnTrophy(idx) {
     if (idx < 0 || idx >= game.slainStack.length) return;
     const card = game.slainStack[idx];
-    
+
     // Remove from stack
     game.slainStack.splice(idx, 1);
-    
+
     // Add Fuel
     const fuelGain = card.val * 2;
     game.torchCharge = Math.min(100, (game.torchCharge || 0) + fuelGain);
 
     logMsg(`Burned ${card.name}. +${fuelGain} Fuel.`);
-    
-    updateUI(); 
+
+    updateUI();
     renderInventoryUI();
 }
 
@@ -896,14 +896,14 @@ window.addEventListener('touchend', (e) => {
 
     window.touchDragGhost.style.display = 'none';
     const elemBelow = document.elementFromPoint(touch.clientX, touch.clientY);
-    
+
     if (window.touchDragGhost.parentNode) document.body.removeChild(window.touchDragGhost);
     window.touchDragGhost = null;
 
     if (elemBelow && window.touchDragMoved) {
         const slot = elemBelow.closest('[data-slot-type]');
         if (slot) {
-            handleDrop({ preventDefault: () => {} }, slot.dataset.slotType, slot.dataset.slotIdx);
+            handleDrop({ preventDefault: () => { } }, slot.dataset.slotType, slot.dataset.slotIdx);
         }
     }
     window.touchDragData = null;

@@ -50,6 +50,7 @@ let savedPlayerPos = new THREE.Vector3(); // Store player pos before teleporting
 let playerMoveTween = null; // Track movement tween to stop it during combat
 let playerTargetPos = null; // Target position for free movement
 
+let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
 let wanderers = [];
 const WANDERER_MODELS = [
@@ -2159,6 +2160,56 @@ function animate3D() {
 
     // Handle Free Movement
     updatePlayerMovement(dt);
+
+    // Proximity Combat Trigger
+    if (!isEngagingCombat && !isCombatView && wanderers.length > 0) {
+        const playerObj = use3dModel ? playerMesh : playerSprite;
+        if (playerObj) {
+            for (const wanderer of wanderers) {
+                if (wanderer.mesh) {
+                    const wandererPos = wanderer.mesh.position;
+                    const playerPos = playerObj.position;
+                    const distance = wandererPos.distanceTo(playerPos);
+                    const visionRange = 5.0; // How far they can see.
+
+                    if (distance < visionRange) {
+                        const wandererForward = new THREE.Vector3();
+                        wanderer.mesh.getWorldDirection(wandererForward);
+                        wandererForward.y = 0; // Ignore vertical difference
+                        wandererForward.normalize();
+
+                        const toPlayer = new THREE.Vector3().subVectors(playerPos, wandererPos);
+                        toPlayer.y = 0; // Ignore vertical difference
+                        toPlayer.normalize();
+
+                        // The dot product of two normalized vectors is the cosine of the angle between them.
+                        // cos(60 deg) is 0.5. This creates a 120-degree field of view.
+                        const dot = wandererForward.dot(toPlayer);
+                        const visionConeAngleCos = 0.5;
+
+                        // Also, if the player is very close, the enemy should notice regardless of direction.
+                        const personalSpaceRadius = 1.5;
+
+                        if (distance < personalSpaceRadius || dot > visionConeAngleCos) {
+                            isEngagingCombat = true;
+                            stopMovement();
+
+                            const hud = document.getElementById('gameplayInventoryBar');
+                            if (hud) {
+                                const rect = hud.getBoundingClientRect();
+                                spawnFloatingText("COMBAT IMMINENT!", rect.left + rect.width / 2, rect.top - 30, '#ff4400');
+                            }
+                            logMsg("You've been spotted!");
+
+                            // TODO: This will trigger the full combat sequence.
+                            setTimeout(() => { isEngagingCombat = false; }, 5000); // Reset after 5s for now
+                            break; // Only trigger for one enemy at a time
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // Throttled render so we don't render >30fps
     if (now - lastRenderTime >= RENDER_INTERVAL) {
