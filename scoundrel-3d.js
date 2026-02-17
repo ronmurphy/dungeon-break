@@ -1389,6 +1389,9 @@ function on3DClick(event) {
         handleEditClick(event);
         return;
     }
+    // Prevent interaction during Attract Mode (Title Screen)
+    if (isAttractMode) return;
+
     // Check if mouse moved significantly (drag/rotate) > 5 pixels
     if (Math.abs(event.clientX - clickStart.x) > 5 || Math.abs(event.clientY - clickStart.y) > 5) {
         return;
@@ -2099,9 +2102,9 @@ function movePlayerTo(targetVec) {
     const startPos = playerObj.position.clone();
     
     // Calculate distance to determine duration (speed)
-    // Speed = 6 units per second
+    // Speed = 3.0 units per second (Walk), 6.0 was Run
     const dist = startPos.distanceTo(targetVec);
-    const speed = 6.0; 
+    const speed = 3.0; 
     const duration = (dist / speed) * 1000;
 
     // Calculate movement direction for the look-ahead raycast
@@ -2130,29 +2133,36 @@ function movePlayerTo(targetVec) {
         .to({ x: targetVec.x, z: targetVec.z }, duration)
         .easing(TWEEN.Easing.Linear.None) // Linear for walking
         .onUpdate(() => {
-            // Slope/Height Awareness: Raycast down to find floor
-            // "Look at an angle down from their head... a bit infront of their feet"
             if (globalFloorMesh) {
-                // 1. Origin: Head height (approx 1.5m up)
-                const headPos = playerObj.position.clone().add(new THREE.Vector3(0, 1.5, 0));
-                
-                // 2. Target: A point on the ground slightly ahead of the player (0.5m)
-                // We project where the feet *would* be, then look down at that spot
+                const offset = use3dModel ? 0.1 : 0.75;
+                const down = new THREE.Vector3(0, -1, 0);
+                const rayOriginHeight = playerObj.position.y + 3.0; // Cast from above head
+
+                // 1. Ground Snapping (Current Position)
+                // Keep player glued to the floor at their CURRENT X/Z
+                terrainRaycaster.set(new THREE.Vector3(playerObj.position.x, rayOriginHeight, playerObj.position.z), down);
+                const currentHits = terrainRaycaster.intersectObject(globalFloorMesh);
+
+                if (currentHits.length > 0) {
+                    playerObj.position.y = currentHits[0].point.y + offset;
+                }
+
+                // 2. Cliff/Wall Prevention (Look Ahead)
+                // Check the ground slightly ahead to prevent walking into void or off steep cliffs
                 const lookAheadDist = 0.5;
-                const targetFloorPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
-                // Bias the target down so the ray actually points down-ish
-                targetFloorPos.y -= 2.0; 
+                const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
+                
+                terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
+                const aheadHits = terrainRaycaster.intersectObject(globalFloorMesh);
 
-                // 3. Direction: Head -> Ground Ahead
-                const rayDir = new THREE.Vector3().subVectors(targetFloorPos, headPos).normalize();
+                if (aheadHits.length > 0) {
+                    const nextY = aheadHits[0].point.y;
+                    const currY = (currentHits.length > 0) ? currentHits[0].point.y : (playerObj.position.y - offset);
 
-                terrainRaycaster.set(headPos, rayDir);
-                const hits = terrainRaycaster.intersectObject(globalFloorMesh);
-
-                if (hits.length > 0) {
-                    // Offset: 0.1 for Model, 0.75 for Sprite (Standing)
-                    const offset = use3dModel ? 0.1 : 0.75;
-                    playerObj.position.y = hits[0].point.y + offset;
+                    // If the height difference is too steep (> 1.5 units), treat as Wall or Cliff
+                    if (Math.abs(nextY - currY) > 1.5) {
+                        stopMovement();
+                    }
                 } else {
                     // No ground hit? We are staring into the void. STOP.
                     if (playerMoveTween) playerMoveTween.stop();
@@ -2165,6 +2175,7 @@ function movePlayerTo(targetVec) {
         })
         .onComplete(() => {
             playerMoveTween = null;
+            
             // Return to Idle
             if (use3dModel && actions.walk) {
                 if (actions.idle) {
@@ -2175,6 +2186,13 @@ function movePlayerTo(targetVec) {
             }
         })
         .start();
+}
+
+function stopMovement() {
+    if (playerMoveTween) playerMoveTween.stop();
+    playerMoveTween = null;
+    if (use3dModel && actions.walk) actions.walk.stop();
+    if (use3dModel && actions.idle) actions.idle.play();
 }
 
 function updatePlayerMovement(dt) {
@@ -2672,7 +2690,9 @@ function finalizeStartDive() {
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
+    
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture); // Generate Atmosphere and Floor
+    
     updateAtmosphere(game.floor);
     
     // initWanderers();
@@ -2850,7 +2870,9 @@ function descendToNextFloor() {
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
+    
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    
     updateAtmosphere(game.floor);
     // initWanderers();
 
@@ -3891,6 +3913,7 @@ function pickCard(idx, event) {
             }
             break;
         case 'monster':
+            /* --- OLD SCOUNDREL COMBAT LOGIC (DISABLED) ---
             game.combatBusy = true;
             // Compute damage/state but defer applying until animation finishes
             let dmg = card.val;
@@ -4172,6 +4195,10 @@ function pickCard(idx, event) {
             }
 
             // Return so we don't run the default removal logic below (we handle that in the callback)
+            ------------------------------------------------ */
+            
+            logMsg("Combat is currently disabled for refactoring.");
+            // We return here so the card isn't removed by the default logic below
             return;
         case 'potion':
             // Spawn both canvas FX (for background) and DOM UI FX (so they appear above the modal)
@@ -4289,6 +4316,7 @@ function pickCard(idx, event) {
     }
 
     game.combatCards.splice(idx, 1);
+    /* --- OLD PICK-3 LOGIC (DISABLED) ---
     game.chosenCount++;
     
     // Update Retreat Button immediately
@@ -4302,6 +4330,9 @@ function pickCard(idx, event) {
 
     if (game.chosenCount === 3) finishRoom();
     else showCombat();
+    -------------------------------------- */
+    
+    showCombat(); // Just refresh the view
     updateUI();
 }
 
@@ -4469,6 +4500,7 @@ function finishRoom() {
 }
 
 function avoidRoom() {
+    /* --- OLD AVOID LOGIC (DISABLED) ---
     if (game.lastAvoided || game.chosenCount > 0) return;
 
     // Cursed Ring Check
@@ -4489,6 +4521,8 @@ function avoidRoom() {
 
     closeCombat();
     logMsg("Escaped to the shadows. Room marked as avoided.");
+    */
+    logMsg("Retreat logic is currently disabled.");
 }
 
 function closeCombat() {
@@ -5422,6 +5456,7 @@ function initAttractMode() {
 
     // Generate floor and atmosphere
     globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    
     updateAtmosphere(1);
 
     // Center player/torch for lighting
@@ -5513,6 +5548,7 @@ function loadGame() {
     // Re-Generate Floor Visuals (using loaded room data)
     // Note: generateFloorCA uses game.rooms, which we just loaded
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    
     updateAtmosphere(game.floor);
     // initWanderers(); // Disabled for now
 
@@ -6749,6 +6785,7 @@ window.use3dmodels = function (bool) {
         clear3DScene();
         init3D();
         globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+        
         updateAtmosphere(game.floor);
 
         // Restore position
