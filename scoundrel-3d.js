@@ -1340,6 +1340,7 @@ function initWanderers() {
 
 function pickWandererTarget(wanderer) {
     if (!wanderer.mesh) return;
+    if (wanderer.state && wanderer.state !== 'patrol') return; // Don't patrol if chasing/cooldown
 
     let valid = false;
     let x, z;
@@ -1645,6 +1646,7 @@ function update3DScene() {
             const isVisible = isAttractMode || (dist < vRad);
             if (isVisible) r.isRevealed = true;
 
+            /* WAYPOINTS DISABLED
             if (r.isRevealed || isEditMode) {
                 if (r.isWaypoint) {
                     // Hidden Waypoint Logic
@@ -1704,143 +1706,145 @@ function update3DScene() {
                         }
                     });
                 } else {
-                    if (!roomMeshes.has(r.id)) {
-                        const rw = r.w; const rh = r.h;
-                        const rDepth = 3.0 + Math.random() * 3.0;
-                        r.rDepth = rDepth;
+            */
+            if (!roomMeshes.has(r.id)) {
+                if (r.isWaypoint) return; // Skip waypoints
+                const rw = r.w; const rh = r.h;
+                const rDepth = 3.0 + Math.random() * 3.0;
+                r.rDepth = rDepth;
 
-                        let geo, customModelPath = null, customScale = 1.0;
+                let geo, customModelPath = null, customScale = 1.0;
 
-                        if (r.isFinal) {
-                            // Tower/Deep Pit
-                            // Use Gothic Tower GLB if available
-                            if (use3dModel) customModelPath = 'assets/images/glb/gothic_tower-web.glb';
-                            customScale = 2.5; // Increased size
-                            // Fallback geometry while loading or if fails
-                            geo = new THREE.BoxGeometry(rw, 10, rh);
-                        } else if (r.isBonfire) {
-                            // Circular Campfire Ring 
-                            // Use a Cylinder. radius ~ min(w,h)/2.
-                            // Use Campfire Tower GLB
-                            if (use3dModel) customModelPath = 'assets/images/glb/campfire_tower-web.glb';
-                            customScale = 2.0; // Increased size
-                            const rad = Math.min(rw, rh) * 0.4;
-                            geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
-                        } else if (r.isSecret) {
-                            // Secret Room: Large Boulder/Mound or Custom GLB
-                            geo = new THREE.DodecahedronGeometry(Math.min(rw, rh) * 0.9, 1);
-                            if (use3dModel) {
-                                customModelPath = 'assets/images/glb/room_secret-web.glb';
-                                customScale = 0.5;
+                if (r.isFinal) {
+                    // Tower/Deep Pit
+                    // Use Gothic Tower GLB if available
+                    if (use3dModel) customModelPath = 'assets/images/glb/gothic_tower-web.glb';
+                    customScale = 2.5; // Increased size
+                    // Fallback geometry while loading or if fails
+                    geo = new THREE.BoxGeometry(rw, 10, rh);
+                } else if (r.isBonfire) {
+                    // Circular Campfire Ring 
+                    // Use a Cylinder. radius ~ min(w,h)/2.
+                    // Use Campfire Tower GLB
+                    if (use3dModel) customModelPath = 'assets/images/glb/campfire_tower-web.glb';
+                    customScale = 2.0; // Increased size
+                    const rad = Math.min(rw, rh) * 0.4;
+                    geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
+                } else if (r.isSecret) {
+                    // Secret Room: Large Boulder/Mound or Custom GLB
+                    geo = new THREE.DodecahedronGeometry(Math.min(rw, rh) * 0.9, 1);
+                    if (use3dModel) {
+                        customModelPath = 'assets/images/glb/room_secret-web.glb';
+                        customScale = 0.5;
+                    }
+                } else {
+                    // Varied Shapes
+                    if (r.shape === 'round') {
+                        const rad = Math.min(rw, rh) * 0.45;
+                        geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
+                        if (use3dModel) {
+                            customModelPath = 'assets/images/glb/room_round-web.glb';
+                            customScale = 0.5;
+                        }
+                    } else if (r.shape === 'dome') {
+                        const rad = Math.min(rw, rh) * 0.65;
+                        geo = new THREE.SphereGeometry(rad, 16, 12); // Full sphere
+                        if (use3dModel) {
+                            customModelPath = 'assets/images/glb/room_dome-web.glb';
+                            customScale = 0.5;
+                        }
+                    } else if (r.shape === 'spire') {
+                        geo = new THREE.ConeGeometry(Math.min(rw, rh) * 0.6, rDepth, 4);
+                        if (use3dModel) {
+                            customModelPath = 'assets/images/glb/room_spire-web.glb';
+                            customScale = 0.5;
+                        }
+                    } else {
+                        geo = new THREE.BoxGeometry(rw, rDepth, rh);
+                        if (use3dModel) {
+                            customModelPath = 'assets/images/glb/room_rect-web.glb';
+                            customScale = 0.5;
+                        }
+                    }
+                }
+
+                // Create a container mesh (or placeholder)
+                const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, visible: !customModelPath });
+                const mesh = new THREE.Mesh(geo, mat);
+
+                if (customModelPath) {
+                    // Use filename as config key (e.g., 'gothic_tower-web.glb')
+                    const configKey = customModelPath.split('/').pop();
+
+                    loadGLB(customModelPath, (model) => {
+                        // Only auto-align if NO config exists
+                        if (!roomConfig[configKey]) {
+                            // Fix Origin: Align bottom of model to floor using Bounding Box
+                            const box = new THREE.Box3().setFromObject(model);
+
+                            // Determine floor level relative to container mesh
+                            let floorOffset = -rDepth / 2;
+                            if (r.isFinal || r.shape === 'dome' || r.isSecret) {
+                                floorOffset = 0;
                             }
-                        } else {
-                            // Varied Shapes
-                            if (r.shape === 'round') {
-                                const rad = Math.min(rw, rh) * 0.45;
-                                geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
-                                if (use3dModel) {
-                                    customModelPath = 'assets/images/glb/room_round-web.glb';
-                                    customScale = 0.5;
-                                }
-                            } else if (r.shape === 'dome') {
-                                const rad = Math.min(rw, rh) * 0.65;
-                                geo = new THREE.SphereGeometry(rad, 16, 12); // Full sphere
-                                if (use3dModel) {
-                                    customModelPath = 'assets/images/glb/room_dome-web.glb';
-                                    customScale = 0.5;
-                                }
-                            } else if (r.shape === 'spire') {
-                                geo = new THREE.ConeGeometry(Math.min(rw, rh) * 0.6, rDepth, 4);
-                                if (use3dModel) {
-                                    customModelPath = 'assets/images/glb/room_spire-web.glb';
-                                    customScale = 0.5;
-                                }
-                            } else {
-                                geo = new THREE.BoxGeometry(rw, rDepth, rh);
-                                if (use3dModel) {
-                                    customModelPath = 'assets/images/glb/room_rect-web.glb';
-                                    customScale = 0.5;
-                                }
-                            }
+                            // Shift model so its bottom (box.min.y) sits at floorOffset
+                            model.position.set(0, floorOffset - box.min.y - 0.05, 0);
                         }
 
-                        // Create a container mesh (or placeholder)
-                        const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, visible: !customModelPath });
-                        const mesh = new THREE.Mesh(geo, mat);
+                        mesh.add(model);
+                        // Hide placeholder geometry but keep mesh for logic/positioning
+                        mesh.material.visible = false;
 
-                        if (customModelPath) {
-                            // Use filename as config key (e.g., 'gothic_tower-web.glb')
-                            const configKey = customModelPath.split('/').pop();
-
-                            loadGLB(customModelPath, (model) => {
-                                // Only auto-align if NO config exists
-                                if (!roomConfig[configKey]) {
-                                    // Fix Origin: Align bottom of model to floor using Bounding Box
-                                    const box = new THREE.Box3().setFromObject(model);
-
-                                    // Determine floor level relative to container mesh
-                                    let floorOffset = -rDepth / 2;
-                                    if (r.isFinal || r.shape === 'dome' || r.isSecret) {
-                                        floorOffset = 0;
-                                    }
-                                    // Shift model so its bottom (box.min.y) sits at floorOffset
-                                    model.position.set(0, floorOffset - box.min.y - 0.05, 0);
-                                }
-
-                                mesh.add(model);
-                                // Hide placeholder geometry but keep mesh for logic/positioning
-                                mesh.material.visible = false;
-
-                                // Special logic for Bonfire Tower Light
-                                if (r.isBonfire) {
-                                    const fireLight = new THREE.PointLight(0xff6600, 500, 15);
-                                    fireLight.position.set(0, 2, 0); // Inside the tower
-                                    fireLight.castShadow = true;
-                                    model.add(fireLight);
-                                }
-                            }, customScale, configKey);
-                        }
-
-                        if (r.isFinal) {
-                            // Extend downwards for the pit/tower
-                            mesh.position.set(r.gx, 0, r.gy); // Sit on ground
-                        } else if (r.shape === 'dome' || r.isSecret || (use3dModel && customModelPath)) {
-                            // If using 3D models, always sit on ground (y=0) to ensure config offsets are consistent
-                            // regardless of random rDepth generation.
-                            mesh.position.set(r.gx, 0, r.gy); // Sit on ground (half buried)
-                        } else {
-                            mesh.position.set(r.gx, rDepth / 2, r.gy); // Standard rooms raised slightly
-                        }
-
-                        // Apply the matrix once
-                        mesh.updateMatrix();
-
+                        // Special logic for Bonfire Tower Light
                         if (r.isBonfire) {
-                            const fire = createEmojiSprite('🔥', 2.0);
-                            fire.position.set(r.gx, rDepth + 0.5, r.gy);
-                            // Animate bobbing?
-                            // Add to mesh to keep relative?
-                            // Just add to scene for now
-                            scene.add(fire);
-                            // Store reference maybe if we want to animate/remove?
-                            // Ideally add to roomMeshes map or create a separate group
-                            // For simplicity, add to mesh
-                            // mesh.add(fire); // This would scale with mesh which might be weird if mesh is scaled
-                            // But mesh is created with geometry size, so no scale.
-                            // Wait, mesh.position is center.
-                            // If mesh extends from 0 to rDepth, and pos is rDepth/2.
-                            // Top is at rDepth.
-                            // Fire should be at rDepth + 1.
-                            fire.position.set(0, rDepth / 2 + 1, 0);
-                            mesh.add(fire);
+                            const fireLight = new THREE.PointLight(0xff6600, 500, 15);
+                            fireLight.position.set(0, 2, 0); // Inside the tower
+                            fireLight.castShadow = true;
+                            model.add(fireLight);
+                        }
+                    }, customScale, configKey);
+                }
 
-                            // --- GLSL: Holy Fire Pillar ---
-                            // A volumetric cone that pulses with light
-                            const beamGeo = new THREE.ConeGeometry(r.w * 0.3, rDepth * 1.2, 16, 1, true);
-                            const beamMat = new THREE.ShaderMaterial({
-                                uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0xffaa00) } },
-                                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-                                fragmentShader: `
+                if (r.isFinal) {
+                    // Extend downwards for the pit/tower
+                    mesh.position.set(r.gx, 0, r.gy); // Sit on ground
+                } else if (r.shape === 'dome' || r.isSecret || (use3dModel && customModelPath)) {
+                    // If using 3D models, always sit on ground (y=0) to ensure config offsets are consistent
+                    // regardless of random rDepth generation.
+                    mesh.position.set(r.gx, 0, r.gy); // Sit on ground (half buried)
+                } else {
+                    mesh.position.set(r.gx, rDepth / 2, r.gy); // Standard rooms raised slightly
+                }
+
+                // Apply the matrix once
+                mesh.updateMatrix();
+
+                if (r.isBonfire) {
+                    const fire = createEmojiSprite('🔥', 2.0);
+                    fire.position.set(r.gx, rDepth + 0.5, r.gy);
+                    // Animate bobbing?
+                    // Add to mesh to keep relative?
+                    // Just add to scene for now
+                    scene.add(fire);
+                    // Store reference maybe if we want to animate/remove?
+                    // Ideally add to roomMeshes map or create a separate group
+                    // For simplicity, add to mesh
+                    // mesh.add(fire); // This would scale with mesh which might be weird if mesh is scaled
+                    // But mesh is created with geometry size, so no scale.
+                    // Wait, mesh.position is center.
+                    // If mesh extends from 0 to rDepth, and pos is rDepth/2.
+                    // Top is at rDepth.
+                    // Fire should be at rDepth + 1.
+                    fire.position.set(0, rDepth / 2 + 1, 0);
+                    mesh.add(fire);
+
+                    // --- GLSL: Holy Fire Pillar ---
+                    // A volumetric cone that pulses with light
+                    const beamGeo = new THREE.ConeGeometry(r.w * 0.3, rDepth * 1.2, 16, 1, true);
+                    const beamMat = new THREE.ShaderMaterial({
+                        uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0xffaa00) } },
+                        vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                        fragmentShader: `
                                     uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
                                     void main() {
                                         // Vertical fade + pulsing sine wave
@@ -1849,21 +1853,21 @@ function update3DScene() {
                                         gl_FragColor = vec4(uColor, alpha);
                                     }
                                 `,
-                                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
-                            });
-                            const beamMesh = new THREE.Mesh(beamGeo, beamMat);
-                            beamMesh.position.y = 0; // Center of room
-                            mesh.add(beamMesh);
-                            animatedMaterials.push(beamMat);
-                        }
+                        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+                    });
+                    const beamMesh = new THREE.Mesh(beamGeo, beamMat);
+                    beamMesh.position.y = 0; // Center of room
+                    mesh.add(beamMesh);
+                    animatedMaterials.push(beamMat);
+                }
 
-                        // --- GLSL: Merchant Gold Dust ---
-                        if (r.isSpecial && !r.isFinal) {
-                            const dustGeo = new THREE.CylinderGeometry(r.w * 0.4, r.w * 0.4, rDepth, 16, 1, true);
-                            const dustMat = new THREE.ShaderMaterial({
-                                uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0xffd700) } },
-                                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-                                fragmentShader: `
+                // --- GLSL: Merchant Gold Dust ---
+                if (r.isSpecial && !r.isFinal) {
+                    const dustGeo = new THREE.CylinderGeometry(r.w * 0.4, r.w * 0.4, rDepth, 16, 1, true);
+                    const dustMat = new THREE.ShaderMaterial({
+                        uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0xffd700) } },
+                        vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                        fragmentShader: `
                                     uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
                                     float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453); }
                                     void main() {
@@ -1874,20 +1878,20 @@ function update3DScene() {
                                         gl_FragColor = vec4(uColor, alpha);
                                     }
                                 `,
-                                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
-                            });
-                            const dustMesh = new THREE.Mesh(dustGeo, dustMat);
-                            mesh.add(dustMesh);
-                            animatedMaterials.push(dustMat);
-                        }
+                        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+                    });
+                    const dustMesh = new THREE.Mesh(dustGeo, dustMat);
+                    mesh.add(dustMesh);
+                    animatedMaterials.push(dustMat);
+                }
 
-                        // --- GLSL: Alchemy Bubbles ---
-                        if (r.isAlchemy && !r.isFinal) {
-                            const bubbleGeo = new THREE.CylinderGeometry(r.w * 0.4, r.w * 0.4, rDepth, 16, 1, true);
-                            const bubbleMat = new THREE.ShaderMaterial({
-                                uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x00ff88) } }, // Teal/Green
-                                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-                                fragmentShader: `
+                // --- GLSL: Alchemy Bubbles ---
+                if (r.isAlchemy && !r.isFinal) {
+                    const bubbleGeo = new THREE.CylinderGeometry(r.w * 0.4, r.w * 0.4, rDepth, 16, 1, true);
+                    const bubbleMat = new THREE.ShaderMaterial({
+                        uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x00ff88) } }, // Teal/Green
+                        vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                        fragmentShader: `
                                     uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
                                     float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898,78.233))) * 43758.5453); }
                                     void main() {
@@ -1901,20 +1905,20 @@ function update3DScene() {
                                         gl_FragColor = vec4(uColor, alpha * 0.8);
                                     }
                                 `,
-                                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
-                            });
-                            const bubbleMesh = new THREE.Mesh(bubbleGeo, bubbleMat);
-                            mesh.add(bubbleMesh);
-                            animatedMaterials.push(bubbleMat);
-                        }
+                        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+                    });
+                    const bubbleMesh = new THREE.Mesh(bubbleGeo, bubbleMat);
+                    mesh.add(bubbleMesh);
+                    animatedMaterials.push(bubbleMat);
+                }
 
-                        // --- GLSL: Final Room Vortex ---
-                        if (r.isFinal) {
-                            const portalGeo = new THREE.PlaneGeometry(r.w * 0.8, r.h * 0.8);
-                            const portalMat = new THREE.ShaderMaterial({
-                                uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x8800ff) } },
-                                vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-                                fragmentShader: `
+                // --- GLSL: Final Room Vortex ---
+                if (r.isFinal) {
+                    const portalGeo = new THREE.PlaneGeometry(r.w * 0.8, r.h * 0.8);
+                    const portalMat = new THREE.ShaderMaterial({
+                        uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(0x8800ff) } },
+                        vertexShader: `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+                        fragmentShader: `
                                     uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
                                     void main() {
                                         vec2 uv = vUv - 0.5;
@@ -1926,78 +1930,78 @@ function update3DScene() {
                                         gl_FragColor = vec4(uColor, alpha);
                                     }
                                 `,
-                                transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
-                            });
-                            const portalMesh = new THREE.Mesh(portalGeo, portalMat);
-                            portalMesh.rotation.x = -Math.PI / 2;
-                            portalMesh.position.y = -rDepth / 2 + 0.2; // Slightly above floor
-                            mesh.add(portalMesh);
-                            animatedMaterials.push(portalMat);
+                        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+                    });
+                    const portalMesh = new THREE.Mesh(portalGeo, portalMat);
+                    portalMesh.rotation.x = -Math.PI / 2;
+                    portalMesh.position.y = -rDepth / 2 + 0.2; // Slightly above floor
+                    mesh.add(portalMesh);
+                    animatedMaterials.push(portalMat);
+                }
+
+                if (r.isBonfire) {
+                    // Start spatial sound for this bonfire
+                    if (audio.initialized)
+                        audio.startLoop(`bonfire_${r.id}`, 'bonfire_loop', { volume: 0 });
+
+                    // Force Idle Animation inside Bonfire Room (since it's visible)
+                    if (currentRoom && currentRoom.id === r.id && use3dModel && actions.idle && actions.walk) {
+                        if (actions.walk.isRunning()) {
+                            actions.walk.stop();
+                            actions.idle.play();
                         }
-
-                        if (r.isBonfire) {
-                            // Start spatial sound for this bonfire
-                            if (audio.initialized)
-                                audio.startLoop(`bonfire_${r.id}`, 'bonfire_loop', { volume: 0 });
-
-                            // Force Idle Animation inside Bonfire Room (since it's visible)
-                            if (currentRoom && currentRoom.id === r.id && use3dModel && actions.idle && actions.walk) {
-                                if (actions.walk.isRunning()) {
-                                    actions.walk.stop();
-                                    actions.idle.play();
-                                }
-                            }
-                        }
-
-                        mesh.receiveShadow = true;
-                        mesh.userData = { roomId: r.id };
-                        if (r.isFinal) applyTextureToMesh(mesh, 'block', 7);
-                        else if (r.isSpecial) applyTextureToMesh(mesh, 'block', 1);
-                        else applyTextureToMesh(mesh, 'block', 0);
-                        scene.add(mesh);
-                        roomMeshes.set(r.id, mesh);
-                        addDoorsToRoom(r, mesh);
-                        addLocalFog(mesh);
-                    }
-                    const mesh = roomMeshes.get(r.id);
-
-                    // Visual Priority: Cleared (Holy Glow) > Special > Base
-                    let eCol = 0x000000;
-                    let eInt = (isVisible ? 1.0 : 0.2);
-
-                    let targetColor = 0x444444;
-                    if (r.state === 'cleared' && !r.isWaypoint) {
-                        eCol = 0xaaaaaa; // Holy Glow
-                        targetColor = 0xffffff; // White Tint
-                        eInt = (isVisible ? 0.8 : 0.4);
-                        if (r.isFinal) {
-                            eCol = 0x440000; // Bright Red Glow
-                            targetColor = 0xffaaaa;
-                            eInt = 1.0;
-                        }
-                    } else {
-                        targetColor = 0x444444; // Reset to dark
-                        if (r.isFinal) { eCol = 0xff0000; eInt = (isVisible ? 2.5 : 0.5); }
-                        else if (r.isBonfire) { eCol = 0xff8800; eInt = (isVisible ? 2.5 : 0.5); }
-                        else if (r.isSpecial) {
-                            // Only tint if NOT using 3D models (let the model texture show)
-                            if (!use3dModel) { eCol = 0x8800ff; eInt = (isVisible ? 1.5 : 0.3); }
-                        }
-                        else if (r.isAlchemy) { eCol = 0x00ff88; eInt = (isVisible ? 1.5 : 0.3); }
-                    }
-
-                    if (mesh.material.color.getHex() !== targetColor) mesh.material.color.setHex(targetColor);
-                    if (mesh.material.emissive.getHex() !== eCol) mesh.material.emissive.setHex(eCol);
-                    if (mesh.material.emissiveIntensity !== eInt) mesh.material.emissiveIntensity = eInt;
-
-                    // Add Holy Light FX for cleared rooms
-                    if (r.state === 'cleared' && !r.isWaypoint && !r.isFinal && !mesh.userData.hasHolyLight) {
-                        addHolyLightFX(mesh, r.w, r.rDepth);
-                        mesh.userData.hasHolyLight = true;
                     }
                 }
+
+                mesh.receiveShadow = true;
+                mesh.userData = { roomId: r.id };
+                if (r.isFinal) applyTextureToMesh(mesh, 'block', 7);
+                else if (r.isSpecial) applyTextureToMesh(mesh, 'block', 1);
+                else applyTextureToMesh(mesh, 'block', 0);
+                scene.add(mesh);
+                roomMeshes.set(r.id, mesh);
+                addDoorsToRoom(r, mesh);
+                addLocalFog(mesh);
+            }
+            const mesh = roomMeshes.get(r.id);
+
+            // Visual Priority: Cleared (Holy Glow) > Special > Base
+            let eCol = 0x000000;
+            let eInt = (isVisible ? 1.0 : 0.2);
+
+            let targetColor = 0x444444;
+            if (r.state === 'cleared' && !r.isWaypoint) {
+                eCol = 0xaaaaaa; // Holy Glow
+                targetColor = 0xffffff; // White Tint
+                eInt = (isVisible ? 0.8 : 0.4);
+                if (r.isFinal) {
+                    eCol = 0x440000; // Bright Red Glow
+                    targetColor = 0xffaaaa;
+                    eInt = 1.0;
+                }
+            } else {
+                targetColor = 0x444444; // Reset to dark
+                if (r.isFinal) { eCol = 0xff0000; eInt = (isVisible ? 2.5 : 0.5); }
+                else if (r.isBonfire) { eCol = 0xff8800; eInt = (isVisible ? 2.5 : 0.5); }
+                else if (r.isSpecial) {
+                    // Only tint if NOT using 3D models (let the model texture show)
+                    if (!use3dModel) { eCol = 0x8800ff; eInt = (isVisible ? 1.5 : 0.3); }
+                }
+                else if (r.isAlchemy) { eCol = 0x00ff88; eInt = (isVisible ? 1.5 : 0.3); }
             }
 
+            if (mesh.material.color.getHex() !== targetColor) mesh.material.color.setHex(targetColor);
+            if (mesh.material.emissive.getHex() !== eCol) mesh.material.emissive.setHex(eCol);
+            if (mesh.material.emissiveIntensity !== eInt) mesh.material.emissiveIntensity = eInt;
+
+            // Add Holy Light FX for cleared rooms
+            if (r.state === 'cleared' && !r.isWaypoint && !r.isFinal && !mesh.userData.hasHolyLight) {
+                addHolyLightFX(mesh, r.w, r.rDepth);
+                mesh.userData.hasHolyLight = true;
+            }
+            // } // End of Waypoint/Room block
+
+            /* CORRIDORS DISABLED
             // Secret Room Map Glow
             if (r.isSecret && r.mesh && hasMap) {
                 r.mesh.material.emissive.setHex(0x0044ff);
@@ -2036,6 +2040,7 @@ function update3DScene() {
                     if (mesh.visible) mesh.material.emissiveIntensity = (isDir ? 0.3 : 0.05);
                 }
             });
+            */
         });
 
         if (currentRoom && !isAttractMode && !isCombatView) {
@@ -2170,40 +2175,105 @@ function animate3D() {
                     const wandererPos = wanderer.mesh.position;
                     const playerPos = playerObj.position;
                     const distance = wandererPos.distanceTo(playerPos);
-                    const visionRange = 5.0; // How far they can see.
 
+                    // AI Parameters
+                    const visionRange = 4.0; // Reduced from 6.0
+                    const escapeRange = 10.0;
+                    const personalSpaceRadius = 1.5;
+                    const visionConeAngleCos = 0.5; // 120 degrees
+
+                    // Determine Visibility
+                    let canSee = false;
                     if (distance < visionRange) {
                         const wandererForward = new THREE.Vector3();
                         wanderer.mesh.getWorldDirection(wandererForward);
-                        wandererForward.y = 0; // Ignore vertical difference
-                        wandererForward.normalize();
+                        wandererForward.y = 0; wandererForward.normalize();
 
                         const toPlayer = new THREE.Vector3().subVectors(playerPos, wandererPos);
-                        toPlayer.y = 0; // Ignore vertical difference
-                        toPlayer.normalize();
+                        toPlayer.y = 0; toPlayer.normalize();
 
-                        // The dot product of two normalized vectors is the cosine of the angle between them.
-                        // cos(60 deg) is 0.5. This creates a 120-degree field of view.
                         const dot = wandererForward.dot(toPlayer);
-                        const visionConeAngleCos = 0.5;
-
-                        // Also, if the player is very close, the enemy should notice regardless of direction.
-                        const personalSpaceRadius = 1.5;
 
                         if (distance < personalSpaceRadius || dot > visionConeAngleCos) {
-                            isEngagingCombat = true;
-                            stopMovement();
+                            canSee = true;
+                        }
+                    }
+
+                    // State Machine
+                    if (!wanderer.state) wanderer.state = 'patrol';
+
+                    if (wanderer.state === 'patrol') {
+                        if (canSee) {
+                            // Transition to Chase
+                            wanderer.state = 'chase';
+                            if (wanderer.tween) wanderer.tween.stop();
+                            wanderer.tween = null;
 
                             const hud = document.getElementById('gameplayInventoryBar');
                             if (hud) {
                                 const rect = hud.getBoundingClientRect();
-                                spawnFloatingText("COMBAT IMMINENT!", rect.left + rect.width / 2, rect.top - 30, '#ff4400');
+                                spawnFloatingText("SPOTTED!", rect.left + rect.width / 2, rect.top - 50, '#ff4400');
                             }
-                            logMsg("You've been spotted!");
 
-                            // TODO: This will trigger the full combat sequence.
-                            setTimeout(() => { isEngagingCombat = false; }, 5000); // Reset after 5s for now
-                            break; // Only trigger for one enemy at a time
+                            // Ensure running animation
+                            if (wanderer.actions.walk) {
+                                if (wanderer.actions.idle) wanderer.actions.idle.stop();
+                                wanderer.actions.walk.play();
+                            }
+                        }
+                    } else if (wanderer.state === 'chase') {
+                        if (distance > escapeRange) {
+                            // Lost Target
+                            wanderer.state = 'cooldown';
+                            if (wanderer.actions.walk) wanderer.actions.walk.stop();
+                            if (wanderer.actions.idle) wanderer.actions.idle.play();
+
+                            logMsg("The enemy lost interest.");
+
+                            setTimeout(() => {
+                                if (wanderer.state === 'cooldown') {
+                                    wanderer.state = 'patrol';
+                                    pickWandererTarget(wanderer);
+                                }
+                            }, 2000);
+                        } else {
+                            // Chase Logic
+                            const speed = 4.0; // Faster than patrol
+                            const dir = new THREE.Vector3().subVectors(playerPos, wandererPos).normalize();
+                            dir.y = 0;
+
+                            wanderer.mesh.lookAt(playerPos.x, wanderer.mesh.position.y, playerPos.z);
+
+                            const moveDist = speed * dt;
+                            const nextPos = wandererPos.clone().add(dir.multiplyScalar(moveDist));
+
+                            // Floor Snap
+                            if (globalFloorMesh) {
+                                terrainRaycaster.set(new THREE.Vector3(nextPos.x, 50, nextPos.z), new THREE.Vector3(0, -1, 0));
+                                const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                                if (hits.length > 0) {
+                                    wanderer.mesh.position.x = nextPos.x;
+                                    wanderer.mesh.position.z = nextPos.z;
+                                    wanderer.mesh.position.y = hits[0].point.y;
+                                }
+                            }
+
+                            // Combat Trigger (Touch)
+                            if (distance < 1.2) {
+                                isEngagingCombat = true;
+                                stopMovement();
+
+                                const hud = document.getElementById('gameplayInventoryBar');
+                                if (hud) {
+                                    const rect = hud.getBoundingClientRect();
+                                    spawnFloatingText("AMBUSHED!", rect.left + rect.width / 2, rect.top - 30, '#ff0000');
+                                }
+                                logMsg("Caught by a wanderer!");
+
+                                // TODO: This will trigger the full combat sequence.
+                                setTimeout(() => { isEngagingCombat = false; }, 5000); // Reset after 5s for now
+                                // break; // Removed break to allow other logic if needed, but usually we stop here
+                            }
                         }
                     }
                 }

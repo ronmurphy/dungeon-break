@@ -68,8 +68,8 @@ export function generateDungeon(floor) {
 
         let found = false;
         for (const d of dirs) {
-            const nx = parent.gx + d.x * 4;
-            const ny = parent.gy + d.y * 4;
+            const nx = parent.gx + d.x * 10; // Increased spacing (was 4)
+            const ny = parent.gy + d.y * 10;
             if (!occupied.has(`${nx},${ny}`)) {
                 const newRoom = {
                     id: roomCount++,
@@ -163,8 +163,8 @@ export function generateDungeon(floor) {
         if (secretCreated) break;
         const dirs = shuffle([{ x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }]);
         for (const d of dirs) {
-            const nx = p.gx + d.x * 4;
-            const ny = p.gy + d.y * 4;
+            const nx = p.gx + d.x * 10;
+            const ny = p.gy + d.y * 10;
             // Check collision with existing rooms/waypoints
             const collide = rooms.some(r => Math.abs(r.gx - nx) < 2 && Math.abs(r.gy - ny) < 2);
             if (!collide) {
@@ -241,10 +241,30 @@ function countNeighbors(grid, x, z, b) {
 
 export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture) {
     const theme = getThemeForFloor(floor);
-    const bounds = 12 + (floor * 2);
+    // Larger Map: 2.5x base size + scaling
+    const bounds = 30 + (floor * 5);
 
     const size = bounds * 2 + 1;
     let grid = {};
+
+    // Pre-calculate all paths (including secret ones) for flattening and generation
+    const paths = [];
+    rooms.forEach(r => {
+        r.connections.forEach(cid => {
+            const target = rooms.find(rm => rm.id === cid);
+            if (target && r.id < target.id) { // Avoid duplicates
+                paths.push({ x1: r.gx, z1: r.gy, x2: target.gx, z2: target.gy });
+            }
+        });
+    });
+
+    function distToSegment(px, pz, x1, z1, x2, z2) {
+        const l2 = (x1 - x2) * (x1 - x2) + (z1 - z2) * (z1 - z2);
+        if (l2 === 0) return Math.hypot(px - x1, pz - z1);
+        let t = ((px - x1) * (x2 - x1) + (pz - z1) * (z2 - z1)) / l2;
+        t = Math.max(0, Math.min(1, t));
+        return Math.hypot(px - (x1 + t * (x2 - x1)), pz - (z1 + t * (z2 - z1)));
+    }
 
     // ========================================
     // STEP 1: Initialize grid
@@ -259,12 +279,10 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
                     z >= r.gy - r.h / 2 - 1 && z <= r.gy + r.h / 2 + 1;
             });
 
-            const nearCorr = Array.from(corridorMeshes.values()).some(m => {
-                const p = m.position;
-                return Math.abs(x - p.x) < 2 && Math.abs(z - p.z) < 2;
-            });
+            // Ensure floor exists along paths (since we aren't drawing corridors anymore)
+            const nearPath = paths.some(p => distToSegment(x, z, p.x1, p.z1, p.x2, p.z2) < 2.5);
 
-            if (nearRoom || nearCorr) alive = true;
+            if (nearRoom || nearPath) alive = true;
             grid[x][z] = alive;
         }
     }
@@ -312,25 +330,6 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     const rockInstances = [];
     let vertexCount = 0;
 
-    // Pre-calculate all paths (including secret ones) for flattening
-    const paths = [];
-    rooms.forEach(r => {
-        r.connections.forEach(cid => {
-            const target = rooms.find(rm => rm.id === cid);
-            if (target && r.id < target.id) { // Avoid duplicates
-                paths.push({ x1: r.gx, z1: r.gy, x2: target.gx, z2: target.gy });
-            }
-        });
-    });
-
-    function distToSegment(px, pz, x1, z1, x2, z2) {
-        const l2 = (x1 - x2) * (x1 - x2) + (z1 - z2) * (z1 - z2);
-        if (l2 === 0) return Math.hypot(px - x1, pz - z1);
-        let t = ((px - x1) * (x2 - x1) + (pz - z1) * (z2 - z1)) / l2;
-        t = Math.max(0, Math.min(1, t));
-        return Math.hypot(px - (x1 + t * (x2 - x1)), pz - (z1 + t * (z2 - z1)));
-    }
-
     // Helper to get height at a specific corner coordinate (world space)
     function getVertexHeight(vx, vz) {
         // 1. Flatten near rooms/corridors
@@ -348,9 +347,10 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         }
 
         // 3. Terrain Noise
-        const noise = Math.sin(vx * 0.15) + Math.cos(vz * 0.23);
-        if (noise > 1.2) return 1.5; // Mountain
-        if (noise > 0.5) return 0.75; // Hill
+        const noise = Math.sin(vx * 0.1) + Math.cos(vz * 0.1) + Math.sin(vx * 0.3 + vz * 0.2) * 0.5;
+        if (noise > 1.5) return 2.5; // High Mountain
+        if (noise > 0.8) return 1.0; // Hill
+        if (noise < -1.2) return -1.0; // Valley
         return 0;
     }
 
@@ -362,7 +362,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         const h_fr = getVertexHeight(x + 0.5, z - 0.5); // Front-Right
         const h_fl = getVertexHeight(x - 0.5, z - 0.5); // Front-Left
 
-        const base = -2.0; // Deep base to prevent floating
+        const base = -4.0; // Deep base to prevent floating with valleys
 
         // UVs
         const tileWidth = 1.0 / 9;
@@ -422,10 +422,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
             z >= r.gy - r.h / 2 - 1.5 && z <= r.gy + r.h / 2 + 1.5
         )) return true;
 
-        // Check corridors
-        if (Array.from(corridorMeshes.values()).some(m =>
-            Math.abs(x - m.position.x) < 2.5 && Math.abs(z - m.position.z) < 2.5
-        )) return true;
+        // Check paths
+        if (paths.some(p => distToSegment(x, z, p.x1, p.z1, p.x2, p.z2) < 2.0)) return true;
         return false;
     }
 
@@ -558,6 +556,6 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     }
 
     console.log(`✅ Floor: ${tileCount} solid tiles in 1 draw call (was ${tileCount} draw calls)`);
-    
+
     return floorMesh;
 }
