@@ -52,7 +52,12 @@ let playerTargetPos = null; // Target position for free movement
 
 // Wanderer State
 let wanderers = [];
-const GHOST_MODELS = ['skeleton-web.glb'];
+const GHOST_MODELS = [
+    'skeleton-web.glb',
+    'female_evil-web.glb', 'female_evil-true-web.glb',
+    'male_evil-web.glb', 'male_evil-true-web.glb',
+    'female-web.glb', 'male-web.glb'
+];
 const terrainRaycaster = new THREE.Raycaster();
 
 let globalFloorMesh = null; // Reference for terrain manipulation
@@ -108,7 +113,7 @@ let ghosts = []; // Active ghost sprites
 let viewMode = 1; // 0: 2D, 1: 3D Iso (Default), 2: 3D Free/FPS
 let combatCameraActive = false; // User preference for rotating camera in combat
 let isAttractMode = false; // Title screen mode
-let use3dModel = false; // Default to 2D sprites
+let use3dModel = true; // Default to 3D models
 let playerSprite;
 let playerMesh; // 3D Model
 let mixer; // Animation Mixer
@@ -841,7 +846,7 @@ function updateWeather(ctx) {
     if (weatherParticles.length < 150) { // Cap weather density
         const w = fxCanvas.width;
         const h = fxCanvas.height;
-        
+
         let p = { x: Math.random() * w, y: -10, vx: 0, vy: 0, size: 1, color: '#fff', life: 1 };
 
         if (currentWeather === 'snow') {
@@ -859,7 +864,7 @@ function updateWeather(ctx) {
             p.vx = (Math.random() - 0.5) * 2;
             p.vy = -1 - Math.random() * 2;
             p.size = 1 + Math.random() * 2;
-            p.color = `rgba(255, ${Math.floor(Math.random()*100)}, 0, ${0.5+Math.random()*0.5})`;
+            p.color = `rgba(255, ${Math.floor(Math.random() * 100)}, 0, ${0.5 + Math.random() * 0.5})`;
         } else if (currentWeather === 'dust' || currentWeather === 'spore') {
             p.x = Math.random() * w;
             p.y = Math.random() * h;
@@ -869,7 +874,7 @@ function updateWeather(ctx) {
             p.color = currentWeather === 'spore' ? 'rgba(100, 255, 100, 0.3)' : 'rgba(200, 180, 150, 0.2)';
             p.life = 0; // Just for spawn logic reuse, dust persists differently
         }
-        
+
         weatherParticles.push(p);
     }
 
@@ -1010,7 +1015,7 @@ function init3D() {
     // Post-Processing Setup
     composer = new EffectComposer(renderer);
     composer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Match renderer quality
-    
+
     // Bloom Pass (David's Request)
     bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
     bloomPass.threshold = 0.2;
@@ -1029,7 +1034,7 @@ function init3D() {
 
     rebuildComposer(); // Build the pass chain
     updateTiltShiftUniforms();
-    
+
     const aspect = container.clientWidth / container.clientHeight;
     const d = 10;
     camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
@@ -1039,7 +1044,7 @@ function init3D() {
     perspectiveCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000); // Devin's Camera
 
     controls = new OrbitControls(camera, renderer.domElement);
-    controls.enablePan = true; 
+    controls.enablePan = true;
     controls.enableRotate = true; // Restore spinning for Map View
     controls.maxZoom = 2;
     controls.minZoom = 0.5;
@@ -1094,7 +1099,7 @@ function init3D() {
     const markerGeo = new THREE.OctahedronGeometry(0.3, 0);
     const markerMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, wireframe: true, transparent: true, opacity: 0.8 });
     playerMarker = new THREE.Mesh(markerGeo, markerMat);
-    
+
     // Soft downward light (The "Outside" Light)
     const markerLight = new THREE.SpotLight(0x00ffff, 500, 25, Math.PI / 3, 1.0, 1.5);
     markerLight.position.set(0, 0, 0);
@@ -1122,18 +1127,18 @@ function rebuildComposer() {
     if (gameSettings.celShadingEnabled && gameSettings.celOutlineEnabled && outlineEffect) {
         // Custom Pass that uses OutlineEffect
         const celPass = new RenderPass(scene, camera);
-        celPass.render = function(renderer, writeBuffer, readBuffer) {
+        celPass.render = function (renderer, writeBuffer, readBuffer) {
             // Mimic standard RenderPass logic but use outlineEffect.render
             const oldAutoClear = renderer.autoClear;
             renderer.autoClear = false;
 
             let target = this.renderToScreen ? null : readBuffer;
             renderer.setRenderTarget(target);
-            
+
             if (this.clear) renderer.clear(renderer.autoClearColor, renderer.autoClearDepth, renderer.autoClearStencil);
-            
+
             outlineEffect.render(this.scene, this.camera);
-            
+
             renderer.autoClear = oldAutoClear;
         };
         composer.addPass(celPass);
@@ -1200,11 +1205,19 @@ function loadPlayerModel() {
                 walkClip = animations.find(a => a.name === 'Walking') || animations.find(a => a.name === 'Running');
             }
 
-            // Fallbacks / Auto-detect
-            if (!idleClip) idleClip = animations.find(a => /idle|stand|wait/i.test(a.name)) || animations.find(a => a.name === 'Idle_03' || a.name === 'Idle_15') || animations[0];
-            if (!walkClip) walkClip = animations.find(a => /walk/i.test(a.name)) || animations.find(a => /run|move/i.test(a.name)) || animations.find(a => a !== idleClip) || animations[0];
-            if (!attackClip) attackClip = animations.find(a => /attack|slash|punch|kick/i.test(a.name));
-            if (!hitClip) hitClip = animations.find(a => /hit|damage|reaction|death/i.test(a.name));
+            // Improved Animation Discovery (Named Instances)
+            const findAnim = (terms) => {
+                for (const term of terms) {
+                    const clip = animations.find(a => a.name.toLowerCase().includes(term));
+                    if (clip) return clip;
+                }
+                return null;
+            };
+
+            if (!idleClip) idleClip = findAnim(['idle', 'stand', 'wait']) || animations[0];
+            if (!walkClip) walkClip = findAnim(['walk', 'run', 'move']) || animations.find(a => a !== idleClip) || animations[0];
+            if (!attackClip) attackClip = findAnim(['attack', 'slash', 'punch', 'kick']);
+            if (!hitClip) hitClip = findAnim(['hit', 'damage', 'reaction', 'death']);
 
             if (walkClip) {
                 actions.walk = mixer.clipAction(walkClip);
@@ -1247,36 +1260,39 @@ function loadPlayerModel() {
 
 function initWanderers() {
     // Cleanup existing
-    wanderers.forEach(w => scene.remove(w.mesh));
+    wanderers.forEach(w => {
+        if (w.tween) w.tween.stop();
+        scene.remove(w.mesh);
+    });
     wanderers = [];
 
     const count = 1 + Math.floor(game.floor / 2);
-    
+
     for (let i = 0; i < count; i++) {
         const file = GHOST_MODELS[Math.floor(Math.random() * GHOST_MODELS.length)];
-        
+
         loadGLB(`assets/images/glb/${file}`, (model, animations) => {
             // Find valid spawn point
             let valid = false;
             let sx = 0, sz = 0, sy = 0;
             let attempts = 0;
-            
+
             while (!valid && attempts < 50) {
                 attempts++;
                 const bounds = 12 + (game.floor * 2);
-                const r = 5 + Math.random() * (bounds - 6); 
+                const r = 5 + Math.random() * (bounds - 6);
                 const angle = Math.random() * Math.PI * 2;
                 sx = Math.cos(angle) * r;
                 sz = Math.sin(angle) * r;
-                
+
                 if (game.rooms.some(r => Math.hypot(r.gx - sx, r.gy - sz) < 4)) continue;
-                
+
                 let nearCorr = false;
                 for (const m of corridorMeshes.values()) {
                     if (Math.hypot(m.position.x - sx, m.position.z - sz) < 2.5) { nearCorr = true; break; }
                 }
                 if (nearCorr) continue;
-                
+
                 // Raycast to ensure we are on the floor mesh
                 if (globalFloorMesh) {
                     terrainRaycaster.set(new THREE.Vector3(sx, 50, sz), new THREE.Vector3(0, -1, 0));
@@ -1290,15 +1306,31 @@ function initWanderers() {
 
             model.position.set(sx, sy, sz);
             scene.add(model);
-            
+
             const mixer = new THREE.AnimationMixer(model);
-            const walkClip = animations.find(a => /walk|run/i.test(a.name)) || animations[0];
+
+            // Improved Animation Discovery
+            const findAnim = (terms) => {
+                for (const term of terms) {
+                    const clip = animations.find(a => a.name.toLowerCase().includes(term));
+                    if (clip) return clip;
+                }
+                return null;
+            };
+
+            const walkClip = findAnim(['walk', 'run', 'move']) || animations[0];
+            const idleClip = findAnim(['idle', 'stand', 'wait']);
+
+            const actions = {};
             if (walkClip) {
-                const action = mixer.clipAction(walkClip);
-                action.play();
+                actions.walk = mixer.clipAction(walkClip);
+                actions.walk.play(); // Default state
             }
-            
-            const wanderer = { mesh: model, mixer: mixer };
+            if (idleClip) {
+                actions.idle = mixer.clipAction(idleClip);
+            }
+
+            const wanderer = { mesh: model, mixer: mixer, actions: actions };
             wanderers.push(wanderer);
             pickWandererTarget(wanderer);
         }, 0.7);
@@ -1307,11 +1339,11 @@ function initWanderers() {
 
 function pickWandererTarget(wanderer) {
     if (!wanderer.mesh) return;
-    
+
     let valid = false;
     let x, z;
     let attempts = 0;
-    
+
     while (!valid && attempts < 50) {
         attempts++;
         const bounds = 12 + (game.floor * 2);
@@ -1319,17 +1351,17 @@ function pickWandererTarget(wanderer) {
         const angle = Math.random() * Math.PI * 2;
         x = Math.cos(angle) * r;
         z = Math.sin(angle) * r;
-        
+
         // Avoid Rooms
         if (game.rooms.some(r => Math.hypot(r.gx - x, r.gy - z) < 4)) continue;
-        
+
         // Avoid Corridors
         let nearCorr = false;
         for (const m of corridorMeshes.values()) {
             if (Math.hypot(m.position.x - x, m.position.z - z) < 2.5) { nearCorr = true; break; }
         }
         if (nearCorr) continue;
-        
+
         // Raycast to ensure target is on the floor mesh
         if (globalFloorMesh) {
             terrainRaycaster.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
@@ -1339,20 +1371,76 @@ function pickWandererTarget(wanderer) {
             }
         }
     }
-    
+
     if (valid) {
+        // Switch to Walk
+        if (wanderer.actions.walk) {
+            if (wanderer.actions.idle) wanderer.actions.idle.stop();
+            wanderer.actions.walk.play();
+        }
+
         wanderer.mesh.lookAt(x, wanderer.mesh.position.y, z);
         const dist = Math.hypot(x - wanderer.mesh.position.x, z - wanderer.mesh.position.z);
-        
-        new TWEEN.Tween(wanderer.mesh.position)
-            .to({ x: x, z: z }, dist * 1200) 
+
+        // Calculate direction for look-ahead (Cliff/Wall prevention)
+        const startPos = wanderer.mesh.position.clone();
+        const moveDir = new THREE.Vector3(x - startPos.x, 0, z - startPos.z).normalize();
+
+        wanderer.tween = new TWEEN.Tween(wanderer.mesh.position)
+            .to({ x: x, z: z }, dist * 1200)
             .onUpdate(() => {
                 // Snap to floor mesh during movement
-                terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
-                const hits = terrainRaycaster.intersectObject(globalFloorMesh);
-                if (hits.length > 0) wanderer.mesh.position.y = hits[0].point.y;
+                if (globalFloorMesh) {
+                    const rayOriginHeight = 50;
+                    const down = new THREE.Vector3(0, -1, 0);
+
+                    // 1. Snap to floor
+                    terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
+                    const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                    let currentY = wanderer.mesh.position.y;
+
+                    if (hits.length > 0) {
+                        currentY = hits[0].point.y;
+                        wanderer.mesh.position.y = currentY;
+                    }
+
+                    // 2. Look Ahead (Cliff/Wall Check)
+                    const lookAheadDist = 0.6;
+                    const aheadPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
+
+                    terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
+                    const aheadHits = terrainRaycaster.intersectObject(globalFloorMesh);
+
+                    let stop = false;
+                    if (aheadHits.length > 0) {
+                        const nextY = aheadHits[0].point.y;
+                        if (Math.abs(nextY - currentY) > 1.5) stop = true; // Wall or Cliff
+                    } else {
+                        stop = true; // Void
+                    }
+
+                    if (stop) {
+                        if (wanderer.tween) wanderer.tween.stop();
+                        wanderer.tween = null;
+
+                        // Stop anim
+                        if (wanderer.actions.idle) {
+                            if (wanderer.actions.walk) wanderer.actions.walk.stop();
+                            wanderer.actions.idle.play();
+                        }
+
+                        // Retry sooner
+                        setTimeout(() => pickWandererTarget(wanderer), 500 + Math.random() * 1000);
+                    }
+                }
             })
             .onComplete(() => {
+                wanderer.tween = null;
+                // Switch to Idle
+                if (wanderer.actions.idle) {
+                    if (wanderer.actions.walk) wanderer.actions.walk.stop();
+                    wanderer.actions.idle.play();
+                }
                 setTimeout(() => pickWandererTarget(wanderer), 2000 + Math.random() * 3000);
             })
             .start();
@@ -1436,41 +1524,41 @@ function on3DClick(event, isRightClick = false) {
     // Iterate to find first CLICKABLE object (skipping particles)
     if (!isRightClick) { // Only interact with objects on Left Click
         for (let i = 0; i < intersects.length; i++) {
-        let obj = intersects[i].object;
-        const current = game.rooms.find(r => r.id === game.currentRoomIdx);
+            let obj = intersects[i].object;
+            const current = game.rooms.find(r => r.id === game.currentRoomIdx);
 
-        // Check for Room Mesh Interaction
-        if (obj.userData && obj.userData.roomId !== undefined) {
-            const roomIdx = obj.userData.roomId;
+            // Check for Room Mesh Interaction
+            if (obj.userData && obj.userData.roomId !== undefined) {
+                const roomIdx = obj.userData.roomId;
 
-            // Movement
-            if (current && current.connections.includes(roomIdx)) {
-                enterRoom(roomIdx);
-                break;
-            }
-
-            // Self-Interaction (Trap, Bonfire, Merchant) in Combat View
-            if (isCombatView && current && current.id === roomIdx && (current.isTrap || current.isBonfire || current.isSpecial) && current.state !== 'cleared') {
-                enterRoom(roomIdx);
-                break;
-            }
-        }
-
-        // Combat Interaction (3D Standees) - Check parent groups
-        if (isCombatView) {
-            let parent = obj;
-            while (parent) {
-                if (parent.userData && parent.userData.isCombatEntity) {
-                    const idx = parent.userData.cardIdx;
-                    // Trigger pickCard with a mock event or handle null event in pickCard
-                    pickCard(idx, null);
-                    return; // Stop processing clicks
+                // Movement
+                if (current && current.connections.includes(roomIdx)) {
+                    enterRoom(roomIdx);
+                    break;
                 }
-                parent = parent.parent;
-                if (parent === scene) break;
+
+                // Self-Interaction (Trap, Bonfire, Merchant) in Combat View
+                if (isCombatView && current && current.id === roomIdx && (current.isTrap || current.isBonfire || current.isSpecial) && current.state !== 'cleared') {
+                    enterRoom(roomIdx);
+                    break;
+                }
+            }
+
+            // Combat Interaction (3D Standees) - Check parent groups
+            if (isCombatView) {
+                let parent = obj;
+                while (parent) {
+                    if (parent.userData && parent.userData.isCombatEntity) {
+                        const idx = parent.userData.cardIdx;
+                        // Trigger pickCard with a mock event or handle null event in pickCard
+                        pickCard(idx, null);
+                        return; // Stop processing clicks
+                    }
+                    parent = parent.parent;
+                    if (parent === scene) break;
+                }
             }
         }
-    }
     }
 
     // If no interactable object was clicked, check for Floor (Movement)
@@ -1993,7 +2081,7 @@ function animate3D() {
 
             playerMarker.position.set(playerObj.position.x, markerHeight, playerObj.position.z);
             playerMarker.rotation.y += 0.02;
-            
+
             // Pulse the light intensity for a "breathing" effect
             const light = playerMarker.children.find(c => c.isSpotLight);
             if (light) {
@@ -2059,8 +2147,10 @@ function animate3D() {
         }
     }
 
+    const dt = clock.getDelta();
+
     // Handle Free Movement
-    updatePlayerMovement(clock.getDelta());
+    updatePlayerMovement(dt);
 
     // Throttled render so we don't render >30fps
     if (now - lastRenderTime >= RENDER_INTERVAL) {
@@ -2079,7 +2169,7 @@ function animate3D() {
                 hTilt.enabled = tiltActive;
                 vTilt.enabled = tiltActive;
             }
-            
+
             renderPass.camera = activeCam;
             composer.render();
         } else {
@@ -2092,9 +2182,9 @@ function animate3D() {
 
     // Update Animation Mixer
     if (use3dModel && mixer) {
-        const delta = Math.min(clock.getDelta(), 0.1); // Cap delta to prevent "super fast" catch-up glitches
+        const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches
         mixer.update(delta * globalAnimSpeed);
-        wanderers.forEach(w => { if(w.mixer) w.mixer.update(delta * globalAnimSpeed); });
+        wanderers.forEach(w => { if (w.mixer) w.mixer.update(delta * globalAnimSpeed); });
     } else if (!use3dModel) {
         animatePlayerSprite();
     }
@@ -2102,15 +2192,20 @@ function animate3D() {
 
 function animatePlayerSprite() {
     if (!playerSprite) return;
-    const time = Date.now() * 0.001;
-    const frame = Math.floor((time * 12) % 25);
+
+    let frame = 0; // Default to frame 0 (idle)
+    if (playerMoveTween) { // If there is a movement tween, animate.
+        const time = Date.now() * 0.001;
+        frame = Math.floor((time * 12) % 25);
+    }
+
     playerSprite.material.map.repeat.set(1 / 25, 1);
     playerSprite.material.map.offset.set(frame / 25, 0);
     if (viewMode === 0) { // 2D
-        playerSprite.rotation.x = Math.PI / 2; playerSprite.position.y = 0.8;
+        playerSprite.rotation.x = Math.PI / 2;
         playerSprite.material.map = walkAnims[game.sex].up;
     } else { // 3D Iso or Free
-        playerSprite.rotation.x = 0; playerSprite.position.y = 0.75; 
+        playerSprite.rotation.x = 0;
         const isFace = camera.position.z > playerSprite.position.z;
         playerSprite.material.map = isFace ? walkAnims[game.sex].down : walkAnims[game.sex].up;
     }
@@ -2118,16 +2213,16 @@ function animatePlayerSprite() {
 
 function movePlayerTo(targetVec, isRunning = false) {
     if (!playerMesh && !playerSprite) return;
-    
+
     // Stop existing tween if any
     if (playerMoveTween) playerMoveTween.stop();
 
     const playerObj = use3dModel ? playerMesh : playerSprite;
     const startPos = playerObj.position.clone();
-    
+
     // Calculate distance to determine duration (speed)
     // Speed = 3.0 units per second (Walk), 6.0 was Run
-    const speed = isRunning ? 6.0 : 3.0; 
+    const speed = isRunning ? 6.0 : 3.0;
     const dist = startPos.distanceTo(targetVec);
     const duration = (dist / speed) * 1000;
 
@@ -2138,7 +2233,7 @@ function movePlayerTo(targetVec, isRunning = false) {
     // Face target
     if (use3dModel && playerMesh) {
         playerMesh.lookAt(targetVec.x, playerMesh.position.y, targetVec.z);
-        
+
         // Start Walk Animation
         if (actions.walk) {
             actions.walk.enabled = true;
@@ -2175,7 +2270,7 @@ function movePlayerTo(targetVec, isRunning = false) {
                 // Check the ground slightly ahead to prevent walking into void or off steep cliffs
                 const lookAheadDist = 0.5;
                 const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
-                
+
                 terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
                 const aheadHits = terrainRaycaster.intersectObject(globalFloorMesh);
 
@@ -2199,7 +2294,7 @@ function movePlayerTo(targetVec, isRunning = false) {
         })
         .onComplete(() => {
             playerMoveTween = null;
-            
+
             // Return to Idle
             if (use3dModel && actions.walk) {
                 if (actions.idle) {
@@ -2225,7 +2320,7 @@ function updatePlayerMovement(dt) {
     if (playerObj && !isAttractMode && !isCombatView) {
         // Smoothly lerp camera target to player position
         controls.target.lerp(playerObj.position, 0.1);
-        
+
         // Optional: Move camera body if we want it to follow strictly
         // For now, OrbitControls handles the orbiting, we just move the pivot (target)
     }
@@ -2527,7 +2622,10 @@ function clear3DScene() {
     hiddenStaticMeshes = [];
     globalFloorMesh = null;
 
-    wanderers.forEach(w => scene.remove(w.mesh));
+    wanderers.forEach(w => {
+        if (w.tween) w.tween.stop();
+        scene.remove(w.mesh);
+    });
     wanderers = [];
 
     // Clear ghosts
@@ -2547,7 +2645,7 @@ function clear3DScene() {
 function toggleView() {
     combatCameraActive = !combatCameraActive;
     const btn = document.getElementById('viewToggleBtn');
-    
+
     if (btn) {
         btn.innerText = `Combat Camera: ${combatCameraActive ? 'On' : 'Off'}`;
         btn.style.background = combatCameraActive ? '#d4af37' : ''; // Visual feedback
@@ -2569,7 +2667,7 @@ function toggleView() {
             controls.target.copy(new THREE.Vector3(anchorX, anchorY + 1.2, anchorZ));
         }
     }
-    
+
     camera.updateProjectionMatrix();
 }
 window.toggleView = toggleView;
@@ -2714,12 +2812,12 @@ function finalizeStartDive() {
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
-    
+
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture); // Generate Atmosphere and Floor
-    
+
     updateAtmosphere(game.floor);
-    
-    // initWanderers();
+
+    initWanderers();
     updateUI();
     logMsg("The descent begins. Room 0 explored.");
 
@@ -2792,7 +2890,7 @@ function startIntermission() {
 
     const itemsContainer = document.createElement('div');
     // We let CSS grid handle layout now
-    itemsContainer.style.cssText = "display:contents;"; 
+    itemsContainer.style.cssText = "display:contents;";
     enemyArea.appendChild(itemsContainer);
 
     // Render Shop Items (Random selection of 4)
@@ -2894,9 +2992,9 @@ function descendToNextFloor() {
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
-    
+
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
-    
+
     updateAtmosphere(game.floor);
     // initWanderers();
 
@@ -2919,12 +3017,12 @@ function enterRoom(id) {
     if (game.equipment.weapon && game.equipment.weapon.id === 'cursed_blade' && !room.isWaypoint && id !== 0) {
         takeDamage(1);
         logMsg("The Bloodthirst Blade drinks your vitality... (-1 HP)");
-        
+
         // Visual FX for Life Drain
         if (use3dModel && playerMesh) {
             spawn3DDrainFX(playerMesh.position);
         } else {
-            spawnAboveModalTexture('circle_03.png', window.innerWidth/2, window.innerHeight/2, 1, { tint: '#880000', blend: 'multiply', size: 300, decay: 0.02 });
+            spawnAboveModalTexture('circle_03.png', window.innerWidth / 2, window.innerHeight / 2, 1, { tint: '#880000', blend: 'multiply', size: 300, decay: 0.02 });
         }
         updateUI();
     }
@@ -2932,9 +3030,9 @@ function enterRoom(id) {
     // Hardcore Auto-Save on Room Entry
     if (game.mode === 'hardcore') saveGame();
 
-    if (room.isWaypoint) { 
-        logMsg("Traversing corridors..."); 
-        
+    if (room.isWaypoint) {
+        logMsg("Traversing corridors...");
+
         // Confessor (Priest) Passive: Pilgrimage
         if (game.classId === 'priest') {
             if (!game.visitedWaypoints) game.visitedWaypoints = [];
@@ -2949,9 +3047,9 @@ function enterRoom(id) {
         }
         // Strider (Ranger) Passive: Scout
         if (game.classId === 'ranger') {
-            room.connections.forEach(cid => { const r = game.rooms.find(rm => rm.id === cid); if(r) r.isRevealed = true; });
+            room.connections.forEach(cid => { const r = game.rooms.find(rm => rm.id === cid); if (r) r.isRevealed = true; });
         }
-        return; 
+        return;
     }
 
     if (room.state === 'cleared' && !room.isFinal) { logMsg("Safe passage."); return; }
@@ -3037,10 +3135,10 @@ function enterRoom(id) {
 
         game.combatCards = room.generatedContent; // Load persistent gifts
         game.chosenCount = 0; game.potionsUsedThisTurn = false;
-        
+
         // --- Merchant (Gift) Room Setup ---
         logMsg(`Merchant's Gift: Choose one item freely.`);
-        
+
         // Force Merchant Layout (2x2 Grid)
         const enemyArea = document.getElementById('enemyArea');
         enemyArea.classList.remove('boss-grid', 'layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal');
@@ -3053,7 +3151,7 @@ function enterRoom(id) {
         const mp = ensureMerchantPortrait();
         mp.innerHTML = `<img src="assets/images/visualnovel/merchant_front.png">`;
         requestAnimationFrame(updateMerchantPortraitPosition);
-        
+
         mp.style.display = 'flex';
         return;
     }
@@ -3130,15 +3228,15 @@ function startBossFight() {
     // Add the Guardian itself
     // Health/Damage = 20 + Floor
     game.combatCards.push({ type: 'monster', val: 20 + game.floor, suit: SUITS.SKULLS, name: "The Guardian", bossSlot: 'boss-guardian', customAnim: selectedGuardian });
-    game.combatCards.push({ 
-        type: 'monster', 
-        val: 20 + game.floor, 
-        suit: SUITS.SKULLS, 
-        name: "The Guardian", 
-        bossSlot: 'boss-guardian', 
-        customAsset: `animations/${selectedGuardian}.png`, 
-        customBgSize: '2500% 100%', 
-        isAnimated: true 
+    game.combatCards.push({
+        type: 'monster',
+        val: 20 + game.floor,
+        suit: SUITS.SKULLS,
+        name: "The Guardian",
+        bossSlot: 'boss-guardian',
+        customAsset: `animations/${selectedGuardian}.png`,
+        customBgSize: '2500% 100%',
+        isAnimated: true
     });
 
     showCombat();
@@ -3206,7 +3304,7 @@ function showCombat() {
         const interactables = ['exitCombatBtn', 'modalAvoidBtn', 'descendBtn', 'bonfireNotNowBtn'];
         interactables.forEach(id => {
             const el = document.getElementById(id);
-            if(el) el.style.pointerEvents = 'auto';
+            if (el) el.style.pointerEvents = 'auto';
         });
 
         // Clear previous 3D entities
@@ -3237,7 +3335,7 @@ function showCombat() {
 
         // Determine Orientation (Face a corridor if possible)
         // BATTLE ISLAND: Always face North (Z+) or South (Z-) depending on preference. Let's use Z+ (0,0,1)
-        let forward = new THREE.Vector3(0, 0, 1); 
+        let forward = new THREE.Vector3(0, 0, 1);
         const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
 
         // Snap Player Rotation
@@ -3366,7 +3464,7 @@ function showCombat() {
                 // Weapon (Left) -> Left
                 // Potion (Right) -> Right
                 // Armor (Front) -> Front Center
-                
+
                 if (c.bossSlot === 'boss-guardian') {
                     xOff = 0; zOff = 4.0; // Back
                 } else if (c.bossSlot === 'boss-weapon') {
@@ -3408,7 +3506,7 @@ function showCombat() {
         enemyArea.classList.add('boss-grid');
     } else {
         enemyArea.classList.remove('boss-grid');
-        
+
         // Randomize Card Layout for Standard Encounters (2D Mode mostly)
         // Reset classes
         enemyArea.classList.remove('layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal');
@@ -3428,8 +3526,8 @@ function showCombat() {
                 const pick = layouts[Math.floor(Math.random() * layouts.length)];
                 enemyArea.classList.add(pick);
             } else {
-                 // Default to linear if 3D (overlay should generally stay out of way, or standard)
-                 enemyArea.classList.add('layout-linear');
+                // Default to linear if 3D (overlay should generally stay out of way, or standard)
+                enemyArea.classList.add('layout-linear');
             }
         }
     }
@@ -3515,11 +3613,11 @@ function showCombat() {
     if (game.activeRoom && game.activeRoom.state === 'cleared') {
         if (game.activeRoom.isFinal) {
             // Updated AllCleared Logic: Matches HUD (Exclude Bonfires/Specials)
-            const allCleared = game.rooms.every(r => 
-                r.isWaypoint || 
-                r.isSpecial || 
-                r.isBonfire || 
-                r.state === 'cleared' || 
+            const allCleared = game.rooms.every(r =>
+                r.isWaypoint ||
+                r.isSpecial ||
+                r.isBonfire ||
+                r.state === 'cleared' ||
                 r.state === 'boss_active'
             );
 
@@ -3527,7 +3625,7 @@ function showCombat() {
                 msgEl.innerText = "The Guardian awaits.";
                 document.getElementById('descendBtn').style.display = 'block';
                 document.getElementById('descendBtn').innerText = "Confront Guardian";
-                document.getElementById('descendBtn').onclick = (e) => { if(e) e.stopPropagation(); startBossFight(); };
+                document.getElementById('descendBtn').onclick = (e) => { if (e) e.stopPropagation(); startBossFight(); };
             } else {
                 msgEl.innerText = "Clear all rooms.";
                 document.getElementById('descendBtn').style.display = 'none';
@@ -3558,7 +3656,7 @@ function showCombat() {
     if (avoidBtn) {
         const hasBurden = game.hotbar.some(i => i && i.id === 'cursed_ring');
         avoidBtn.disabled = (game.lastAvoided || game.chosenCount > 0 || hasBurden);
-        
+
         if (hasBurden) avoidBtn.title = "Ring of Burden prevents escape!";
         else if (game.lastAvoided) avoidBtn.title = "Cannot avoid two rooms in a row.";
         else if (game.chosenCount > 0) avoidBtn.title = "Combat started, cannot flee.";
@@ -3582,7 +3680,7 @@ function showCombat() {
 
 function getBestCombatOrientation(anchorX, anchorZ) {
     const candidates = [];
-    
+
     // 1. Directions towards connections
     if (game.activeRoom && game.activeRoom.connections) {
         game.activeRoom.connections.forEach(cid => {
@@ -3608,7 +3706,7 @@ function getBestCombatOrientation(anchorX, anchorZ) {
         // Camera is placed BEHIND the player (opposite to forward)
         // Pos = Anchor - Forward * 3.5
         const camPos = new THREE.Vector3(anchorX, 0, anchorZ).addScaledVector(c.dir, -3.5);
-        
+
         let score = 0;
         // Prefer connections (player faces enemy/door)
         if (c.type === 'connection') score += 10;
@@ -3623,8 +3721,8 @@ function getBestCombatOrientation(anchorX, anchorZ) {
 
         // If camera is too close to another room, heavily penalize
         if (minRoomDist < 2.0) score -= 1000;
-        else if (minRoomDist < 4.0) score -= 50; 
-        
+        else if (minRoomDist < 4.0) score -= 50;
+
         // Add distance as tie breaker (more space is better)
         score += minRoomDist;
 
@@ -3740,7 +3838,7 @@ function triggerPlayerAttackAnim(x, y, weapon) {
     if (weapon) {
         // 3D Physical FX
         if (use3dModel && playerMesh) {
-             spawn3DPhysicalFX(playerMesh.position, new THREE.Vector3(x, 0.5, y));
+            spawn3DPhysicalFX(playerMesh.position, new THREE.Vector3(x, 0.5, y));
         }
 
         // Slash
@@ -3770,15 +3868,15 @@ function triggerPlayerAttackAnim(x, y, weapon) {
 function spawn3DMagicCircle(pos, val) {
     const tex = loadTexture('assets/images/textures/magic_02.png');
     const geo = new THREE.PlaneGeometry(3, 3);
-    const mat = new THREE.MeshBasicMaterial({ 
-        map: tex, 
-        transparent: true, 
-        opacity: 0, 
+    const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        opacity: 0,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         side: THREE.DoubleSide
     });
-    
+
     // Color based on spell type
     if (val === 2 || val === 7 || val === 11) mat.color.setHex(0xff5500); // Fire
     else if (val === 3) mat.color.setHex(0x00ffff); // Ice
@@ -3796,7 +3894,7 @@ function spawn3DMagicCircle(pos, val) {
     new TWEEN.Tween(mesh.rotation)
         .to({ z: Math.PI }, 1000)
         .start();
-        
+
     new TWEEN.Tween(mat)
         .to({ opacity: 0.8 }, 200)
         .yoyo(true)
@@ -3808,11 +3906,11 @@ function spawn3DMagicCircle(pos, val) {
 function spawn3DProjectile(startPos, targetPos, val) {
     // Adjust target height for chest impact
     const impactPos = targetPos.clone();
-    impactPos.y = 1.5; 
+    impactPos.y = 1.5;
 
     let texName = 'flame_01.png';
     let color = 0xffaa00;
-    
+
     if (val === 3) { texName = 'spark_06.png'; color = 0x00ffff; } // Ice
     else if (val === 4) { texName = 'smoke_05.png'; color = 0x00ff00; } // Poison
     else if (val === 5 || val === 6) { texName = 'trace_06.png'; color = 0xffff00; } // Lightning
@@ -3859,7 +3957,7 @@ function spawn3DImpact(pos, color, texName = 'star_06.png') {
         .to({ x: 3, y: 3 }, 200)
         .easing(TWEEN.Easing.Quadratic.Out)
         .start();
-        
+
     new TWEEN.Tween(mat)
         .to({ opacity: 0 }, 300)
         .onComplete(() => scene.remove(sprite))
@@ -3881,7 +3979,7 @@ function spawn3DDrainFX(pos) {
         .easing(TWEEN.Easing.Quadratic.In)
         .onComplete(() => scene.remove(sprite))
         .start();
-        
+
     if (audio && audio.initialized) audio.play('spell_void', { volume: 0.4, rate: 2.0 });
 }
 
@@ -4056,7 +4154,7 @@ function pickCard(idx, event) {
     }
 
     game.combatCards.splice(idx, 1);
-    
+
     showCombat(); // Just refresh the view
     updateUI();
 }
@@ -4083,22 +4181,22 @@ function finishRoom() {
             // Check Phase (Broker Defeated Logic)
             if (game.brokerPhase < 4) {
                 game.brokerPhase++;
-                
+
                 // If we killed the Broker (isBroker is true), the game SHOULD end.
                 // The phase logic is for when he SURVIVES (retreats).
                 // Wait, if the player kills the Broker in Phase 1, do they win immediately?
                 // Or does he "fake die" and come back?
                 // Let's assume if you kill him, you win. The phases are for if you clear his MINIONS.
-                
+
                 // BUT, if the player clears the room (3 cards) and the Broker is the 4th card (alive),
                 // THEN we trigger the next phase.
-                
+
                 // If we are inside this block, it means the Broker was DEFEATED (killed).
                 // So we should trigger the ending.
-                
+
                 setTimeout(() => { startEndingSequence(); }, 4000);
                 updateBossBar(0, 60); // Deplete bar
-                
+
                 // Cleanup 3D entities immediately so they don't linger
                 game.combatCards = [];
                 while (combatGroup.children.length > 0) combatGroup.remove(combatGroup.children[0]);
@@ -4116,7 +4214,7 @@ function finishRoom() {
         game.combatCards = [];
         while (combatGroup.children.length > 0) combatGroup.remove(combatGroup.children[0]);
         combatEntities = [];
-        
+
         game.isBossFight = false; // Reset flag for standard boss
 
         // If we just beat the Floor 9 Guardian, trigger Soul Broker
@@ -4181,7 +4279,7 @@ function finishRoom() {
             document.getElementById('combatMessage').innerText = "Floor Purged! The Guardian awaits.";
             document.getElementById('descendBtn').style.display = 'block';
             document.getElementById('descendBtn').innerText = "Confront Guardian";
-            document.getElementById('descendBtn').onclick = (e) => { if(e) e.stopPropagation(); startBossFight(); };
+            document.getElementById('descendBtn').onclick = (e) => { if (e) e.stopPropagation(); startBossFight(); };
             document.getElementById('exitCombatBtn').style.display = 'none';
             logMsg("Floor Purged! The Guardian awaits.");
             updateBossBar(0, 60, false, true); // Hide bar if visible
@@ -4194,17 +4292,17 @@ function finishRoom() {
         // OR if we killed him but there are phases left?
         // Actually, in Scoundrel, if the boss is the 4th card, he stays for the next "room".
         // But here we want a gauntlet.
-        
+
         // Logic: If the room is "finished" (3 cards picked), we start the next round immediately.
         // The Broker carries over his HP.
-        
+
         if (game.brokerPhase < 4) {
             const broker = game.combatCards.find(c => c.isBroker) || (game.carryCard && game.carryCard.isBroker ? game.carryCard : null);
             if (broker) {
                 game.brokerHP = broker.val + 10; // Heal 10
                 logMsg(`The Soul Broker retreats and rallies his guard! (+10 HP)`);
                 game.combatBusy = true; // Block clicks during rally
-                
+
                 // Animate Bar Filling Up
                 updateBossBar(broker.val, 60); // Current
                 setTimeout(() => {
@@ -4212,9 +4310,9 @@ function finishRoom() {
                     // Fade out after 2.5s (allow time to see fill)
                     setTimeout(() => { updateBossBar(game.brokerHP, 60, false, true); }, 2500);
                     game.combatBusy = false; // Re-enable combat
-                }, 500); 
+                }, 500);
             }
-            
+
             game.brokerPhase++;
             setTimeout(setupBrokerRound, 2000);
             return;
@@ -4276,7 +4374,7 @@ window.handleBonfire = function (cost) {
     const hasHerbs = game.hotbar.some(i => i && i.type === 'item' && i.id === 5);
     const heal = Math.min((5 * cost) + (hasHerbs ? 5 : 0), game.maxHp - game.hp);
     game.hp += heal;
-    
+
     // Ensure we don't exceed max? (Assuming logic allows overheal or not? usually clamped)
     // For now, update UI immediately
     updateBonfireUI();
@@ -4566,9 +4664,9 @@ function updateBossBar(val, max, show = false, fadeOut = false) {
         container.style.transition = 'opacity 0.5s';
     } else if (fadeOut) {
         container.style.opacity = '0';
-        setTimeout(() => { if(container.style.opacity === '0') container.style.display = 'none'; }, 500);
+        setTimeout(() => { if (container.style.opacity === '0') container.style.display = 'none'; }, 500);
     }
-    
+
     const pct = Math.max(0, Math.min(100, (val / max) * 100));
     fill.style.width = `${pct}%`;
 }
@@ -4718,7 +4816,7 @@ let gameSettings = {
     masterVolume: 0.5,
     musicMuted: false,
     sfxMuted: false,
-    enhancedGraphics: false,
+    enhancedGraphics: true,
     tiltShiftMode: 'threejs', // 'off', 'css', 'threejs'
     bloomEnabled: true,
     celShadingEnabled: false,
@@ -4763,19 +4861,12 @@ window.showOptionsModal = function () {
         document.body.appendChild(modal);
     }
 
-    // Check for True Ending Unlock
-    const wins = JSON.parse(localStorage.getItem('scoundrelWins') || '{"m":false, "f":false}');
-    const isTrueEndingUnlocked = (wins.m && wins.f);
-
-    let graphicsOption = '';
-    if (isTrueEndingUnlocked) {
-        graphicsOption = `
-            <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px; border-top: 1px solid #444; padding-top: 15px;">
-                <input type="checkbox" id="enhancedGfx" ${gameSettings.enhancedGraphics ? 'checked' : ''} onchange="updateSetting('graphics', this.checked)">
-                <label for="enhancedGfx" style="color:var(--gold);">Enhanced Graphics</label>
-            </div>
-        `;
-    }
+    const graphicsOption = `
+        <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px; border-top: 1px solid #444; padding-top: 15px;">
+            <input type="checkbox" id="enhancedGfx" ${gameSettings.enhancedGraphics ? 'checked' : ''} onchange="updateSetting('graphics', this.checked)">
+            <label for="enhancedGfx" style="color:var(--gold);">Enhanced Graphics</label>
+        </div>
+    `;
 
     modal.innerHTML = `
         <div style="background:rgba(0,0,0,0.9); border:2px solid var(--gold); padding:30px; width:300px; text-align:center; color:#fff; font-family:'Cinzel'; position:relative;">
@@ -4859,7 +4950,7 @@ window.updateSetting = function (type, val) {
     if (type === 'cel') {
         gameSettings.celShadingEnabled = val;
         const sub = document.getElementById('celOutlineDiv');
-        if(sub) sub.style.display = val ? 'flex' : 'none';
+        if (sub) sub.style.display = val ? 'flex' : 'none';
         rebuildComposer();
     }
     if (type === 'celOutline') {
@@ -4891,10 +4982,10 @@ function applyTiltShiftMode(mode) {
 }
 
 // --- BENCHMARK SYSTEM (Glenn's Request) ---
-window.runBenchmark = function() {
+window.runBenchmark = function () {
     const resEl = document.getElementById('benchmarkResult');
-    if(resEl) resEl.innerText = "Testing... (3s)";
-    
+    if (resEl) resEl.innerText = "Testing... (3s)";
+
     let frames = 0;
     let startTime = performance.now();
     let active = true;
@@ -4905,17 +4996,17 @@ window.runBenchmark = function() {
     gameSettings.bloomEnabled = true;
     gameSettings.celShadingEnabled = true;
     gameSettings.celOutlineEnabled = true;
-    if(bloomPass) bloomPass.enabled = true;
+    if (bloomPass) bloomPass.enabled = true;
     rebuildComposer();
 
     const loop = () => {
-        if(!active) return;
+        if (!active) return;
         frames++;
         const now = performance.now();
         if (now - startTime >= 3000) {
             active = false;
             const fps = Math.round((frames / 3) * 10) / 10;
-            
+
             // Decision Matrix
             let mode = "Classic";
             if (fps > 55) {
@@ -4931,24 +5022,24 @@ window.runBenchmark = function() {
                 updateSetting('graphics', false); updateSetting('tiltShift', false); updateSetting('bloom', false); updateSetting('cel', false); updateSetting('celOutline', false);
                 mode = "Low (Classic)";
             }
-            
-            if(resEl) resEl.innerText = `Result: ${fps} FPS -> Set to ${mode}`;
-            
+
+            if (resEl) resEl.innerText = `Result: ${fps} FPS -> Set to ${mode}`;
+
             // Restore UI toggles
             const gfxCheck = document.getElementById('enhancedGfx');
-            if(gfxCheck) gfxCheck.checked = gameSettings.enhancedGraphics;
-            
+            if (gfxCheck) gfxCheck.checked = gameSettings.enhancedGraphics;
+
             const tiltCheck = document.getElementById('tiltShift');
-            if(tiltCheck) tiltCheck.checked = (gameSettings.tiltShiftMode === 'threejs');
-            
+            if (tiltCheck) tiltCheck.checked = (gameSettings.tiltShiftMode === 'threejs');
+
             const bloomCheck = document.getElementById('bloomFX');
-            if(bloomCheck) bloomCheck.checked = gameSettings.bloomEnabled;
+            if (bloomCheck) bloomCheck.checked = gameSettings.bloomEnabled;
 
             const celCheck = document.getElementById('celShading');
-            if(celCheck) celCheck.checked = gameSettings.celShadingEnabled;
+            if (celCheck) celCheck.checked = gameSettings.celShadingEnabled;
 
             const outlineCheck = document.getElementById('celOutline');
-            if(outlineCheck) outlineCheck.checked = gameSettings.celOutlineEnabled;
+            if (outlineCheck) outlineCheck.checked = gameSettings.celOutlineEnabled;
 
             showBenchmarkModal(fps);
         } else {
@@ -5091,22 +5182,22 @@ function initAttractMode() {
     // Hide Control Box & Gameplay Options (Control box always hidden)
     const cb = document.querySelector('.control-box');
     if (cb) cb.style.display = 'none';
-    
+
     // (Gameplay options will be enabled below for unified button)
 
     // Show Attraction Overlay and Setup Interactions
     const overlay = document.getElementById('attractionOverlay');
     if (overlay) {
         overlay.style.display = 'block';
-        
+
         // Handle Overlay Click -> Open Start Menu
         overlay.onclick = (e) => {
-             // Don't trigger if clicked on the options button itself (even global one)
-             if (e.target.closest('#gameplayOptionsBtn')) return;
-             document.getElementById('startMenuModal').style.display = 'flex';
+            // Don't trigger if clicked on the options button itself (even global one)
+            if (e.target.closest('#gameplayOptionsBtn')) return;
+            document.getElementById('startMenuModal').style.display = 'flex';
         };
     }
-    
+
     // Ensure Global Options Button is Visible
     const gpOpt = document.getElementById('gameplayOptionsBtn');
     if (gpOpt) gpOpt.style.display = 'flex';
@@ -5115,35 +5206,35 @@ function initAttractMode() {
     const startBtn = document.getElementById('startNewDiveBtn');
     if (startBtn) {
         startBtn.onclick = () => {
-             document.getElementById('startMenuModal').style.display = 'none';
-             if (overlay) overlay.style.display = 'none';
-             // if (cb) cb.style.display = 'flex'; // HIDDEN
-             startDive();
+            document.getElementById('startMenuModal').style.display = 'none';
+            if (overlay) overlay.style.display = 'none';
+            // if (cb) cb.style.display = 'flex'; // HIDDEN
+            startDive();
         };
     }
 
     const contBtn = document.getElementById('continueDiveBtn');
     if (contBtn) {
-         if (hasSave()) {
-             contBtn.style.display = 'block';
-             contBtn.onclick = () => {
-                 document.getElementById('startMenuModal').style.display = 'none';
-                 if (overlay) overlay.style.display = 'none';
-                 // if (cb) cb.style.display = 'flex'; // HIDDEN
-                 
-                 // Show Gameplay Options Button
-                 const gpOpt = document.getElementById('gameplayOptionsBtn');
-                 if (gpOpt) gpOpt.style.display = 'flex';
+        if (hasSave()) {
+            contBtn.style.display = 'block';
+            contBtn.onclick = () => {
+                document.getElementById('startMenuModal').style.display = 'none';
+                if (overlay) overlay.style.display = 'none';
+                // if (cb) cb.style.display = 'flex'; // HIDDEN
 
-                 // Hide Logo
-                 const logo = document.getElementById('gameLogo');
-                 if (logo) logo.style.opacity = '0';
+                // Show Gameplay Options Button
+                const gpOpt = document.getElementById('gameplayOptionsBtn');
+                if (gpOpt) gpOpt.style.display = 'flex';
 
-                 loadGame();
-             };
-         } else {
-             contBtn.style.display = 'none';
-         }
+                // Hide Logo
+                const logo = document.getElementById('gameLogo');
+                if (logo) logo.style.opacity = '0';
+
+                loadGame();
+            };
+        } else {
+            contBtn.style.display = 'none';
+        }
     }
 
     // Hide Dock during attract mode
@@ -5159,7 +5250,7 @@ function initAttractMode() {
 
     // Generate floor and atmosphere
     globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
-    
+
     updateAtmosphere(1);
 
     // Center player/torch for lighting
@@ -5251,9 +5342,9 @@ function loadGame() {
     // Re-Generate Floor Visuals (using loaded room data)
     // Note: generateFloorCA uses game.rooms, which we just loaded
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
-    
+
     updateAtmosphere(game.floor);
-    // initWanderers(); // Disabled for now
+    initWanderers();
 
     // Restore Player Position
     const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
@@ -5695,7 +5786,7 @@ const potionImages = { bottle: new Image(), mask: new Image(), buffer: document.
 potionImages.bottle.src = 'assets/images/minigames/potion_bottle_base.png';
 potionImages.mask.src = 'assets/images/minigames/potion_bottle_mask.png';
 
-window.startPotionGame = function(room) {
+window.startPotionGame = function (room) {
     let modal = document.getElementById('potionUI');
     if (!modal) {
         modal = document.createElement('div');
@@ -5708,7 +5799,7 @@ window.startPotionGame = function(room) {
         modal.style.zIndex = '7000';
         document.body.appendChild(modal);
     }
-    
+
     // Generate Target Color
     const targets = [
         { name: "Crimson Vitality", r: 200, g: 20, b: 20 },
@@ -5788,13 +5879,13 @@ window.startPotionGame = function(room) {
             <div id="potionFeedback" style="height:20px; font-size:0.9rem; color:#ffaa00;"></div>
         </div>
     `;
-    
+
     modal.style.display = 'flex';
     renderPotionCanvas();
     updatePotionUI();
 };
 
-window.mixPotion = function(r, g, b) {
+window.mixPotion = function (r, g, b) {
     if (!potionState || !potionState.active) return;
     const cur = potionState.current;
     const addVol = 20;
@@ -5805,12 +5896,12 @@ window.mixPotion = function(r, g, b) {
     cur.vol += addVol;
     renderPotionCanvas();
     updatePotionUI();
-    
+
     // Play Sound
     if (audio && audio.initialized) audio.play('potion_pour', { volume: 0.5, rate: 0.9 + Math.random() * 0.2 });
 };
 
-window.resetPotion = function() {
+window.resetPotion = function () {
     if (!potionState) return;
     potionState.current = { r: 150, g: 150, b: 180, vol: 15 }; // Reset to base
     renderPotionCanvas();
@@ -5819,54 +5910,54 @@ window.resetPotion = function() {
     document.getElementById('potionFeedback').style.color = "#aaa";
 };
 
-window.updatePotionUI = function() {
+window.updatePotionUI = function () {
     const meter = document.getElementById('potionMeterFill');
     if (!meter || !potionState) return;
     const c = potionState.current;
     const t = potionState.target;
-    
+
     // Calculate Euclidean distance in RGB space
     const dist = Math.sqrt(Math.pow(c.r - t.r, 2) + Math.pow(c.g - t.g, 2) + Math.pow(c.b - t.b, 2));
-    
+
     // Max possible distance is ~442 (distance between black and white)
     // We want the meter to be full (100%) when dist is 0, and empty (0%) when dist > 200
     // This makes the meter sensitive only when you are getting somewhat close
     const maxRange = 200;
     const pct = Math.max(0, Math.min(100, 100 * (1 - (dist / maxRange))));
-    
+
     meter.style.height = `${pct}%`;
-    
+
     // Color shift based on closeness
     if (pct > 85) meter.style.background = '#00ff00'; // Green (Good)
     else if (pct > 50) meter.style.background = '#ffaa00'; // Orange (Okay)
     else meter.style.background = '#550000'; // Red (Bad)
 };
 
-window.checkPotion = function() {
+window.checkPotion = function () {
     if (!potionState) return;
     const cur = potionState.current;
     const tgt = potionState.target;
     const dist = Math.sqrt(Math.pow(cur.r - tgt.r, 2) + Math.pow(cur.g - tgt.g, 2) + Math.pow(cur.b - tgt.b, 2));
     const feedback = document.getElementById('potionFeedback');
-    
+
     if (dist < 40) {
         feedback.innerText = "Perfect Match!";
         feedback.style.color = "#00ff00";
         setTimeout(() => {
             closePotionGame();
-            
+
             // Reward Logic
             const potionItem = { type: 'potion', val: 20, name: potionState.target.name, suit: '♥', desc: "A perfectly brewed masterwork potion." };
-            
+
             if (addToBackpack(potionItem)) {
-                spawnFloatingText("Potion Brewed!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+                spawnFloatingText("Potion Brewed!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
                 logMsg(`Brewed ${potionItem.name}. Added to backpack.`);
             } else {
                 game.hp = game.maxHp; // Full heal if inventory full
-                spawnFloatingText("Fully Healed!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+                spawnFloatingText("Fully Healed!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
                 logMsg(`Brewed ${potionItem.name}. Inventory full, drank immediately.`);
             }
-            
+
             if (potionState.room) { potionState.room.state = 'cleared'; updateUI(); }
         }, 1000);
     } else {
@@ -5875,7 +5966,7 @@ window.checkPotion = function() {
     }
 };
 
-window.closePotionGame = function() {
+window.closePotionGame = function () {
     const modal = document.getElementById('potionUI');
     if (modal) modal.style.display = 'none';
     potionState = null;
@@ -5894,10 +5985,10 @@ function renderPotionCanvas() {
         potionImages.buffer.height = canvas.height;
     }
     const bCtx = potionImages.buffer.getContext('2d');
-    
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     bCtx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     // 1. Draw Bottle Base (Background)
     if (potionImages.bottle.complete && potionImages.bottle.naturalWidth > 0) {
         ctx.drawImage(potionImages.bottle, 0, 0, canvas.width, canvas.height);
@@ -5913,7 +6004,7 @@ function renderPotionCanvas() {
     } else {
         // Fallback
         bCtx.fillStyle = `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
-        bCtx.beginPath(); bCtx.arc(canvas.width/2, canvas.height*0.6, canvas.width*0.3, 0, Math.PI*2); bCtx.fill();
+        bCtx.beginPath(); bCtx.arc(canvas.width / 2, canvas.height * 0.6, canvas.width * 0.3, 0, Math.PI * 2); bCtx.fill();
     }
 
     // 3. Tint Overlay (Draw Color ON TOP of Bottle)
@@ -5976,22 +6067,22 @@ function showShrineUI() {
     `;
 }
 
-window.handleShrine = function(action) {
+window.handleShrine = function (action) {
     if (action === 'pray') {
         const heal = Math.min(2, game.maxHp - game.hp);
         game.hp += heal;
         logMsg(`You prayed at the shrine. +${heal} HP.`);
-        spawnFloatingText("BLESSED", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+        spawnFloatingText("BLESSED", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
     } else if (action === 'sacrifice') {
         takeDamage(5);
         game.maxAp += 1;
         game.ap += 1;
         logMsg("You sacrificed vitality for power. -5 HP, +1 Max AP.");
-        spawnFloatingText("POWER GAINED", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+        spawnFloatingText("POWER GAINED", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
     } else {
         logMsg("You ignored the shrine.");
     }
-    
+
     game.activeRoom.state = 'cleared';
     updateUI();
     closeCombat();
@@ -6299,7 +6390,7 @@ function enterCombatView() {
 
     // --- BATTLE ISLAND TELEPORT ---
     const arenaPos = BattleIsland.getAnchor();
-    
+
     // Teleport Player to Arena
     if (playerMesh) {
         playerMesh.position.copy(arenaPos);
@@ -6325,12 +6416,12 @@ function exitCombatView() {
     // Restore camera
     controls.object = camera; // Switch controls back to Ortho camera
     controls.enableRotate = true; // Restore rotation
-    controls.enablePan = true; 
+    controls.enablePan = true;
     controls.autoRotate = false; // Stop spinning
     controls.maxPolarAngle = Math.PI; // Reset vertical limit
     controls.minDistance = 0;
     controls.maxDistance = Infinity;
-    
+
     // Restore default controls
     controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
@@ -6449,7 +6540,7 @@ window.testmfglb = function (arg) {
         return;
     }
     const anims = playerMesh.userData.animations || [];
-    
+
     if (arg === undefined) {
         console.log("%c--- Loaded Animations ---", "color: #00ff00; font-weight: bold;");
         anims.forEach((a, i) => console.log(`[${i}] ${a.name} (Duration: ${a.duration.toFixed(2)}s)`));
@@ -6465,7 +6556,7 @@ window.testmfglb = function (arg) {
         let clip = null;
         if (typeof arg === 'number') clip = anims[arg];
         else clip = anims.find(a => a.name === arg);
-        
+
         if (clip) {
             console.log(`Playing ${clip.name}...`);
             mixer.stopAllAction();
@@ -6488,7 +6579,7 @@ window.use3dmodels = function (bool) {
         clear3DScene();
         init3D();
         globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
-        
+
         updateAtmosphere(game.floor);
 
         // Restore position
