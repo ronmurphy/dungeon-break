@@ -52,7 +52,7 @@ let playerTargetPos = null; // Target position for free movement
 
 // Wanderer State
 let wanderers = [];
-const GHOST_MODELS = [
+const WANDERER_MODELS = [
     'skeleton-web.glb',
     'female_evil-web.glb', 'female_evil-true-web.glb',
     'male_evil-web.glb', 'male_evil-true-web.glb',
@@ -1269,7 +1269,7 @@ function initWanderers() {
     const count = 1 + Math.floor(game.floor / 2);
 
     for (let i = 0; i < count; i++) {
-        const file = GHOST_MODELS[Math.floor(Math.random() * GHOST_MODELS.length)];
+        const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
 
         loadGLB(`assets/images/glb/${file}`, (model, animations) => {
             // Find valid spawn point
@@ -1436,11 +1436,19 @@ function pickWandererTarget(wanderer) {
             })
             .onComplete(() => {
                 wanderer.tween = null;
-                // Switch to Idle
+                // Smoothly transition from walking to a random idle animation.
+                // This feels more natural than freezing in place before idling.
                 if (wanderer.actions.idle) {
-                    if (wanderer.actions.walk) wanderer.actions.walk.stop();
-                    wanderer.actions.idle.play();
+                    if (wanderer.actions.walk) {
+                        wanderer.actions.walk.crossFadeTo(wanderer.actions.idle, 0.3, true).play();
+                    } else {
+                        wanderer.actions.idle.play();
+                    }
+                } else if (wanderer.actions.walk) {
+                    // Fallback: No idle animation, just stop walking.
+                    wanderer.actions.walk.stop();
                 }
+                // After idling for a couple of seconds, find a new place to wander.
                 setTimeout(() => pickWandererTarget(wanderer), 2000 + Math.random() * 3000);
             })
             .start();
