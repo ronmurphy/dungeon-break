@@ -6771,6 +6771,16 @@ function startCombat(wanderer) {
     }
     activeWanderer = wanderer;
 
+    // --- FIX LOD FOR COMBAT ---
+    // The combat camera is ~70 units away, which might trigger the low-poly box 
+    // if the LOD setting is "Medium" (50) or "Low". We force the box distance to Infinity here.
+    if (activeWanderer.mesh && activeWanderer.mesh.isLOD) {
+        const levels = activeWanderer.mesh.levels;
+        if (levels.length > 1) {
+            levels[1].distance = Infinity; // Never switch to box during combat
+        }
+    }
+
     // Initialize Enemy Stats (Simple D&D-lite stats)
     if (!activeWanderer.stats) {
         const baseStats = getEnemyStats(activeWanderer.filename);
