@@ -885,7 +885,7 @@ function createCombatMenu() {
     `;
 
     const actions = [
-        { name: 'Attack', icon: 'icon_attack.png', fn: "console.log('Attack')" },
+        { name: 'Attack', icon: 'icon_attack.png', fn: "window.commandAttack()" },
         { name: 'Skill', icon: 'icon_skill.png', fn: "console.log('Skill')" },
         { name: 'Item', icon: 'icon_item.png', fn: "console.log('Item')" },
         { name: 'Defend', icon: 'icon_defend.png', fn: "console.log('Defend')" },

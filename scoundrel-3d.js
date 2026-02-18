@@ -21,6 +21,7 @@ import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu } from './ui-manager.js';
+import { getEnemyStats } from './enemy-database.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
 
@@ -184,6 +185,12 @@ let isCombatView = false;
 let activeWanderer = null; // Track current enemy
 let savedCamState = { pos: new THREE.Vector3(), target: new THREE.Vector3(), zoom: 1 };
 let combatEntities = []; // Track standees/chests for updates
+let combatState = {
+    active: false,
+    turn: 'player', // 'player' | 'enemy' | 'busy'
+    isTargeting: false
+};
+
 const textureLoader = new THREE.TextureLoader();
 const glbCache = new Map(); // Cache for loaded GLB assets
 const loadingPromises = new Map(); // Deduplicate in-flight loads
@@ -1376,7 +1383,7 @@ function initWanderers() {
                 actions.idle = mixer.clipAction(idleClip);
             }
 
-            const wanderer = { mesh: model, mixer: mixer, actions: actions };
+            const wanderer = { mesh: model, mixer: mixer, actions: actions, filename: file };
             wanderers.push(wanderer);
             pickWandererTarget(wanderer);
         }, 0.7);
@@ -1585,6 +1592,20 @@ function on3DClick(event, isRightClick = false) {
     // FIX: Always use the main camera for raycasting, as we now use it for both Exploration and Combat views
     raycaster.setFromCamera(mouse, camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
+
+    // --- COMBAT TARGETING ---
+    if (isCombatView && combatState.isTargeting && activeWanderer && activeWanderer.mesh) {
+        // Check if we clicked the enemy
+        const enemyHits = raycaster.intersectObject(activeWanderer.mesh, true);
+        if (enemyHits.length > 0) {
+            executePlayerAttack(activeWanderer);
+            return;
+        }
+        // If we clicked elsewhere, maybe cancel targeting?
+        // For now, just return to prevent moving while trying to attack
+        logMsg("Select a valid target.");
+        return;
+    }
 
     // Iterate to find first CLICKABLE object (skipping particles)
     if (!isRightClick) { // Only interact with objects on Left Click
@@ -6375,6 +6396,17 @@ function startCombat(wanderer) {
         return;
     }
     activeWanderer = wanderer;
+    
+    // Initialize Enemy Stats (Simple D&D-lite stats)
+    if (!activeWanderer.stats) {
+        const baseStats = getEnemyStats(activeWanderer.filename);
+        activeWanderer.stats = { ...baseStats };
+        // Scale with Floor
+        activeWanderer.stats.hp += (game.floor * 4);
+        activeWanderer.stats.maxHp = activeWanderer.stats.hp;
+        activeWanderer.stats.ac += Math.floor(game.floor / 2);
+        activeWanderer.stats.str += Math.floor(game.floor / 3);
+    }
 
     // Set global flags
     inBattleIsland = true;
@@ -6409,6 +6441,7 @@ function startCombat(wanderer) {
     CombatManager.startCombat(wanderer, currentTheme);
 
     // Show the UI Overlay (Command Menu)
+    combatState = { active: true, turn: 'player', isTargeting: false };
     showCombat();
     
     isCombatView = true;
@@ -6480,12 +6513,10 @@ function exitCombatView() {
 
     // Restore Player Position from Battle Island
     if (playerMesh) {
-        if (game.activeRoom) {
-            // Place player at the center of the room they are currently in
-            playerMesh.position.set(game.activeRoom.gx, 0.1, game.activeRoom.gy);
-        } else {
-            playerMesh.position.copy(savedPlayerPos);
-        }
+        // Always return to the exact spot we left from (savedPlayerPos)
+        // This supports free movement better than snapping to room center
+        playerMesh.position.copy(savedPlayerPos);
+        playerMesh.rotation.set(0, 0, 0); // Reset rotation if needed, or keep lookAt
     }
 
     // Optional: Tween Ortho camera back if we moved it, but we mostly moved Perspective camera.
@@ -6546,6 +6577,48 @@ window.testmfglb = function (arg) {
     }
 };
 
+function spawnDice3D(finalValue, callback) {
+    // Create Dice Mesh (Icosahedron)
+    const geo = new THREE.IcosahedronGeometry(0.4, 0);
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: 0x880000, 
+        roughness: 0.2, 
+        metalness: 0.5,
+        emissive: 0x220000,
+        emissiveIntensity: 0.2
+    });
+    const dice = new THREE.Mesh(geo, mat);
+    
+    // Position in front of camera (UI-like 3D position)
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const spawnPos = camera.position.clone().add(forward.multiplyScalar(4)); // 4 units in front
+    // Offset slightly down
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    spawnPos.add(up.multiplyScalar(-0.5));
+    
+    dice.position.copy(spawnPos);
+    scene.add(dice);
+    
+    // Animate Spin
+    const duration = 1000;
+    const rotations = 4;
+    
+    new TWEEN.Tween(dice.rotation)
+        .to({ x: Math.PI * rotations, y: Math.PI * rotations, z: Math.PI * rotations }, duration)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .onComplete(() => {
+            // Show Number Result
+            spawnFloatingText(finalValue.toString(), window.innerWidth/2, window.innerHeight/2 + 50, '#ffffff');
+            
+            // Cleanup
+            setTimeout(() => {
+                scene.remove(dice);
+                if (callback) callback();
+            }, 600);
+        })
+        .start();
+}
+
 window.use3dmodels = function (bool) {
     use3dModel = bool;
     console.log(`3D Models: ${use3dModel}`);
@@ -6572,6 +6645,108 @@ window.use3dmodels = function (bool) {
     } else {
         reloadScene();
     }
+}
+
+// --- COMBAT LOGIC ---
+
+window.commandAttack = function() {
+    if (combatState.turn !== 'player') {
+        spawnFloatingText("Not your turn!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+        return;
+    }
+    combatState.isTargeting = true;
+    spawnFloatingText("SELECT TARGET", window.innerWidth/2, window.innerHeight/2 - 150, '#d4af37');
+    logMsg("Select a target to attack.");
+};
+
+function executePlayerAttack(target) {
+    combatState.isTargeting = false;
+    combatState.turn = 'busy';
+
+    // 1. Player Animation
+    if (use3dModel && actions.attack) {
+        actions.attack.reset().play();
+        // Play sound
+        if (audio.initialized) audio.play('attack_slash', { volume: 0.5 });
+    }
+
+    // 2. Resolve Math
+    // Player Stats (Simplified for now)
+    const playerStr = CLASS_DATA[game.classId].stats.str || 0;
+    const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 2; // Base 2 for unarmed
+    const weaponWear = 0; // TODO: Hook up durability
+    
+    const result = CombatResolver.resolveAttack(playerStr, weaponVal, weaponWear, target.stats.ac);
+
+    // 3. Spawn Dice Roll Animation
+    spawnDice3D(result.roll, () => {
+        // 4. Apply Result (After Dice Lands)
+        setTimeout(() => {
+            // Show Damage
+            if (result.damage > 0) {
+                target.stats.hp -= result.damage;
+                spawnFloatingText(`-${result.damage}`, window.innerWidth/2 + 100, window.innerHeight/2 - 50, '#ff0000');
+                logMsg(`You hit for ${result.damage} damage! (Roll: ${result.roll})`);
+                
+                // Enemy Hit Reaction
+                if (target.actions && target.actions.hit) {
+                    target.actions.hit.reset().play();
+                }
+            } else {
+                spawnFloatingText("MISS", window.innerWidth/2 + 100, window.innerHeight/2 - 50, '#aaa');
+                logMsg(`Attack missed! (Roll: ${result.roll} vs AC ${target.stats.ac})`);
+            }
+
+            // 5. Check Death
+            if (target.stats.hp <= 0) {
+                logMsg("Enemy defeated!");
+                spawnFloatingText("VICTORY!", window.innerWidth/2, window.innerHeight/2, '#ffd700');
+                setTimeout(() => window.exitBattleIsland(), 1500);
+            } else {
+                // 6. End Turn -> Enemy Turn
+                setTimeout(startEnemyTurn, 1000);
+            }
+        }, 200);
+    });
+}
+
+function startEnemyTurn() {
+    combatState.turn = 'enemy';
+    logMsg("Enemy turn...");
+
+    setTimeout(() => {
+        if (!activeWanderer) return;
+
+        // Enemy Attack Animation
+        if (activeWanderer.actions && activeWanderer.actions.attack) {
+            activeWanderer.actions.attack.reset().play();
+        }
+        if (audio.initialized) audio.play('attack_blunt', { volume: 0.5 });
+
+        // Resolve Attack against Player
+        const enemyStr = activeWanderer.stats.str;
+        const playerAC = CLASS_DATA[game.classId].stats.ac || 10;
+        
+        // Enemy uses generic weapon value (e.g. 4)
+        const result = CombatResolver.resolveAttack(enemyStr, 4, 0, playerAC);
+
+        setTimeout(() => {
+            if (result.damage > 0) {
+                takeDamage(result.damage);
+                spawnFloatingText(`-${result.damage} HP`, window.innerWidth/2 - 100, window.innerHeight/2, '#ff0000');
+                logMsg(`Enemy hits you for ${result.damage}!`);
+            } else {
+                spawnFloatingText("MISS", window.innerWidth/2 - 100, window.innerHeight/2, '#aaa');
+                logMsg("Enemy missed you.");
+            }
+
+            // Back to Player
+            combatState.turn = 'player';
+            logMsg("Player turn.");
+            updateUI();
+        }, 500);
+
+    }, 1000);
 }
 window.show3dmodels = window.use3dmodels; // Alias
 
