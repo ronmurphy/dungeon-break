@@ -150,8 +150,8 @@ export const CombatManager = {
             this._originalMapBtnHandler = mapBtn.onclick;
             mapBtn.onclick = (e) => {
                 e.stopPropagation();
-                console.log("🛑 [combat-manager.js] User requested exit via button.");
-                this.endCombat(enemy); 
+                console.log("🛑 [combat-manager.js] User requested COMBAT MENU via button.");
+                if (window.toggleInventory) window.toggleInventory();
             };
             mapBtn.style.filter = "hue-rotate(90deg)"; // Visual cue
         }

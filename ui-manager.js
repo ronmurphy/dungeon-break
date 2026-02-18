@@ -269,13 +269,25 @@ function updateMapHUD() {
         // Ensure HUD has overflow hidden for bars
         if (mapHud.style.overflow !== 'hidden') mapHud.style.overflow = 'hidden';
 
-        // HP/AP Bars
+        // GOTHIC HUD LAYOUT ADJUSTMENT
+        // If in gothic mode, wrap bars in a container? Or adjust width calculation?
+        // Let's use a container approach for cleaner layout regardless of mode
+        let barContainer = document.getElementById('hudBarContainer');
+        if (!barContainer) {
+            barContainer = document.createElement('div');
+            barContainer.id = 'hudBarContainer';
+            // Default styling (fill parent)
+            barContainer.style.cssText = "position:absolute; top:0; left:0; width:100%; height:100%; z-index:0; pointer-events:none;";
+            mapHud.insertBefore(barContainer, mapHud.firstChild);
+        }
+
+        // HP/AP Bars (Inside Container)
         let hpBar = document.getElementById('hudHpBar');
         if (!hpBar) {
             hpBar = document.createElement('div');
             hpBar.id = 'hudHpBar';
-            hpBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:linear-gradient(to right, #8b0000, #e60000); z-index:0; transition: width 0.3s ease-out; opacity:0.6;";
-            mapHud.insertBefore(hpBar, mapHud.firstChild);
+            hpBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:linear-gradient(to right, #8b0000, #e60000); z-index:1; transition: width 0.3s ease-out; opacity:0.6;";
+            barContainer.appendChild(hpBar);
         }
         hpBar.style.width = `${Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100))}%`;
 
@@ -283,8 +295,8 @@ function updateMapHUD() {
         if (!apBar) {
             apBar = document.createElement('div');
             apBar.id = 'hudApBar';
-            apBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:linear-gradient(to right, rgba(212, 175, 55, 0.5), rgba(255, 223, 0, 0.6)); z-index:0; transition: width 0.3s ease-out; pointer-events:none; border-right: 1px solid rgba(255,255,255,0.5);";
-            mapHud.insertBefore(apBar, hpBar.nextSibling);
+            apBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:linear-gradient(to right, rgba(212, 175, 55, 0.5), rgba(255, 223, 0, 0.6)); z-index:2; transition: width 0.3s ease-out; pointer-events:none; border-right: 1px solid rgba(255,255,255,0.5);";
+            barContainer.appendChild(apBar);
         }
         apBar.style.width = `${game.maxAp > 0 ? Math.max(0, Math.min(100, (game.ap / game.maxAp) * 100)) : 0}%`;
 
@@ -299,7 +311,14 @@ function updateMapHUD() {
         // Weapon Button
         const mapWepBtn = document.getElementById('mapWeaponBtn');
         if (mapWepBtn) {
-            mapWepBtn.onclick = window.openInventory;
+            mapWepBtn.onclick = () => {
+                if (window.toggleInventory) {
+                    window.toggleInventory();
+                } else {
+                    console.warn("toggleInventory not defined");
+                }
+            };
+            
             mapWepBtn.innerHTML = '';
             if (game.equipment.weapon) {
                 const w = game.equipment.weapon;
@@ -826,6 +845,10 @@ window.toggleInventory = function () {
 };
 
 function toggleCombatMenu() {
+    // Ensure Inventory is closed
+    const inv = document.getElementById('inventoryModal');
+    if (inv) inv.style.display = 'none';
+
     let menu = document.getElementById('combatMenuGrid');
     if (!menu) {
         createCombatMenu();
@@ -848,7 +871,7 @@ function createCombatMenu() {
     const menu = document.createElement('div');
     menu.id = 'combatMenuGrid';
     menu.style.cssText = `
-        position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+        position: fixed; bottom: 165px; left: 50%; transform: translateX(-50%);
         width: 300px; height: 300px;
         background: rgba(10, 10, 10, 0.95);
         border: 2px solid #d4af37;

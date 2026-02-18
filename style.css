@@ -1705,8 +1705,73 @@ h1 {
     justify-content: center !important;
 }
 
-/* Hide the default fuel bar or move it? */
-#gameplayInventoryBar.gothic-hud-active .fuel-meter-container {
+/* #gameplayInventoryBar.gothic-hud-active #mapInventoryBtn {
     /* Maybe hide it for now, or position it creatively */
-    display: none !important;
+    /* display: none !important; */
+/* } */ 
+
+/* Override the generic pointer-events:auto for the container */
+#gameplayInventoryBar.gothic-hud-active #hudBarContainer {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 667px !important;
+    height: 256px !important;
+    z-index: 1 !important;
+    pointer-events: none !important; 
 }
+
+/* 4. HP Bar adjustments */
+#gameplayInventoryBar.gothic-hud-active #hudHpBar {
+    /* Position relative to the Full HUD Container */
+    position: absolute !important;
+    top: 210px !important;
+    
+    /* Center it at the bottom where the red graphic is */
+    left: 80px !important; 
+    width: 550px !important; /* Approximate width of the red bottom bar area */
+    bottom: 12px !important; /* Sit right near the bottom edge */
+    height: 14px !important;
+    
+    background: linear-gradient(to right, #aa0000, #ff3333) !important;
+    opacity: 0.7 !important; /* Let the graphic show through a bit */
+    border-radius: 4px !important;
+    box-shadow: 0 0 10px red !important;
+}
+
+
+/* 5. AP Bar adjustments */
+#gameplayInventoryBar.gothic-hud-active #hudApBar {
+    position: absolute !important;
+    top: 90px !important; /* Positioned ABOVE the hotbar slots */
+    bottom: auto !important;
+    
+    /* Align with the top trim above the slots */
+    left: 176px !important;
+    width: 460px !important;
+    height: 8px !important;
+   
+    background: linear-gradient(to right, #cca300, #ffe600) !important; 
+    opacity: 0.9 !important;
+    border-radius: 2px !important;
+    box-shadow: 0 0 5px gold !important;
+}
+
+/* 6. Fuel Meter (Now Visible & Movable) */
+#gameplayInventoryBar.gothic-hud-active .fuel-meter-container {
+    display: block !important;
+    position: absolute !important;
+    /* Default position: Right side of the HUD */
+    left: 635px !important; 
+    top: 100px !important;
+    width: 20px !important;
+    height: 100px !important;
+    z-index: 20 !important;
+    border: 1px solid #444 !important;
+    background: rgba(0,0,0,0.5) !important;
+}
+
+/* Restore default behavior for non-gothic mode (width:100% of container is default) */
+/* The container is 100% width/height of parent by defaultJS, so no change needed there */
+
+
