@@ -233,14 +233,14 @@ function updateMapHUD() {
             mapHud.classList.add('gothic-hud-active');
         };
         img.onerror = () => {
-             console.log("Gothic HUD not found. Using default style.");
-             window.hasCheckedGothicHUD = true;
+            console.log("Gothic HUD not found. Using default style.");
+            window.hasCheckedGothicHUD = true;
         };
     }
 
     // Do not overwrite styles if Gothic HUD is active
     if (mapHud.classList.contains('gothic-hud-active')) {
-        return; 
+        return;
     }
 
     // --- NEW HUD STYLING (Default) ---
@@ -318,7 +318,7 @@ function updateMapHUD() {
                     console.warn("toggleInventory not defined");
                 }
             };
-            
+
             mapWepBtn.innerHTML = '';
             if (game.equipment.weapon) {
                 const w = game.equipment.weapon;
@@ -854,7 +854,7 @@ function toggleCombatMenu() {
         createCombatMenu();
         menu = document.getElementById('combatMenuGrid');
     }
-    
+
     if (menu.style.display === 'none' || menu.style.display === '') {
         menu.style.display = 'grid';
     } else {
@@ -905,9 +905,9 @@ function createCombatMenu() {
         `;
         btn.onmouseenter = () => { btn.style.background = '#333'; btn.style.borderColor = '#d4af37'; };
         btn.onmouseleave = () => { btn.style.background = '#222'; btn.style.borderColor = '#444'; };
-        btn.onclick = () => { 
+        btn.onclick = () => {
             // Execute function string
-            new Function(act.fn)(); 
+            new Function(act.fn)();
             // Optional: Close menu after action?
             // menu.style.display = 'none'; 
         };

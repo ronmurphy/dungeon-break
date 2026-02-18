@@ -1,0 +1,2496 @@
+<!DOCTYPE html>
+<!--
+  JS Dependency Visualizer
+  https://github.com/[your-username]/js-dependency-visualizer
+  
+  MIT License
+  
+  Copyright (c) 2026 [Your Name]
+  
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+  
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+  
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+  SOFTWARE.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>JS Dependency Visualizer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0d1117; color: #e6edf3; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    header { background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 20px; display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
+    header h1 { font-size: 1rem; font-weight: 600; color: #58a6ff; white-space: nowrap; }
+    header h1 span { color: #8b949e; font-weight: 400; }
+    .btn { background: #21262d; border: 1px solid #30363d; color: #c9d1d9; padding: 6px 14px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; transition: background 0.15s; white-space: nowrap; }
+    .btn:hover { background: #30363d; }
+    .btn.primary { background: #1f6feb; border-color: #388bfd; color: #fff; }
+    .btn.primary:hover { background: #388bfd; }
+    .btn.danger { background: #3d1f1f; border-color: #f85149; color: #ff7b72; }
+    .btn.danger:hover { background: #5a2020; }
+    .header-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: #8b949e; }
+    .legend-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+
+    .main { display: flex; flex: 1; overflow: hidden; }
+
+    .sidebar { width: 240px; min-width: 240px; background: #161b22; border-right: 1px solid #30363d; display: flex; flex-direction: column; overflow: hidden; }
+    .sidebar-header { padding: 12px 14px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: #8b949e; border-bottom: 1px solid #30363d; }
+    .file-list { overflow-y: auto; flex: 1; }
+    .file-item { padding: 8px 14px; font-size: 0.8rem; cursor: pointer; border-bottom: 1px solid #21262d; display: flex; align-items: center; gap: 8px; transition: background 0.1s; }
+    .file-item:hover { background: #21262d; }
+    .file-item.html-script { border-left: 2px solid #f0883e22; }
+    .file-item.html-script .file-name { color: #f0a070; }
+    .file-icon { color: #f0e68c; font-size: 0.8rem; }
+    .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #c9d1d9; }
+    .file-count { font-size: 0.7rem; background: #21262d; border: 1px solid #30363d; border-radius: 10px; padding: 1px 6px; color: #8b949e; }
+    .stats-panel { padding: 14px; border-top: 1px solid #30363d; font-size: 0.75rem; color: #8b949e; }
+    .stat { margin-bottom: 6px; display: flex; justify-content: space-between; }
+    .stat span:last-child { color: #c9d1d9; font-weight: 600; }
+    .orphan-count { color: #f85149 !important; }
+
+    .canvas-area { flex: 1; position: relative; overflow: hidden; }
+    #graph-svg { width: 100%; height: 100%; cursor: grab; }
+    #graph-svg:active { cursor: grabbing; }
+
+    /* Drop Zone */
+    .drop-zone { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 40px; text-align: center; }
+    .drop-zone.hidden { display: none; }
+    .drop-icon { font-size: 4rem; opacity: 0.4; }
+    .drop-zone h2 { font-size: 1.3rem; color: #c9d1d9; font-weight: 500; }
+    .drop-zone p { color: #8b949e; font-size: 0.9rem; max-width: 360px; line-height: 1.6; }
+    .drop-area { border: 2px dashed #30363d; border-radius: 12px; padding: 30px 50px; cursor: pointer; transition: border-color 0.2s, background 0.2s; }
+    .drop-area:hover, .drop-area.drag-over { border-color: #58a6ff; background: rgba(88,166,255,0.05); }
+    .drop-area p { color: #58a6ff; margin: 0; font-size: 0.9rem; }
+    .drop-area small { color: #8b949e; font-size: 0.75rem; }
+
+    /* Tooltip */
+    #tooltip { position: fixed; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px 14px; font-size: 0.78rem; pointer-events: none; opacity: 0; transition: opacity 0.15s; max-width: 260px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+    #tooltip.visible { opacity: 1; }
+    .tt-name { font-weight: 700; color: #e6edf3; margin-bottom: 6px; }
+    .tt-row { color: #8b949e; margin-bottom: 3px; }
+    .tt-row span { color: #c9d1d9; }
+
+    /* Info Panel */
+    .info-panel { position: absolute; right: 16px; top: 16px; background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px; width: 230px; font-size: 0.78rem; display: none; box-shadow: 0 4px 20px rgba(0,0,0,0.5); z-index: 10; }
+    .info-panel.visible { display: block; }
+    .info-panel h3 { color: #e6edf3; font-size: 0.85rem; margin-bottom: 10px; padding-right: 20px; word-break: break-all; }
+    .ip-row { margin-bottom: 6px; color: #8b949e; }
+    .ip-row span { color: #c9d1d9; font-weight: 600; }
+    .info-close { float: right; cursor: pointer; color: #8b949e; font-size: 1rem; line-height: 1; }
+    .info-close:hover { color: #e6edf3; }
+    .ip-section-label { color: #8b949e; font-size: 0.72rem; margin: 8px 0 4px; }
+    .caller-list { max-height: 120px; overflow-y: auto; }
+    .caller-item { padding: 2px 0; color: #58a6ff; font-size: 0.75rem; cursor: pointer; }
+    .caller-item:hover { text-decoration: underline; }
+    .orphan-badge { display: inline-block; background: rgba(248,81,73,0.15); border: 1px solid #f85149; color: #ff7b72; font-size: 0.68rem; border-radius: 4px; padding: 1px 6px; margin-left: 6px; vertical-align: middle; }
+
+    /* D3 graph */
+    .node circle { stroke-width: 2.5px; cursor: pointer; }
+    .node circle:hover { filter: brightness(1.4); }
+    .node.highlighted circle { stroke-width: 4px; filter: brightness(1.5) drop-shadow(0 0 6px currentColor); }
+    .node.dimmed circle, .node.dimmed text { opacity: 0.12; }
+    .node text { font-size: 10px; fill: #c9d1d9; pointer-events: none; user-select: none; }
+    .link { stroke-opacity: 0.45; fill: none; }
+    .link.highlighted { stroke-opacity: 1 !important; }
+    .link.dimmed { stroke-opacity: 0.04 !important; }
+
+    /* Zoom controls */
+    .controls-overlay { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 6px 10px; }
+    .controls-overlay.hidden { display: none; }
+    .ctrl-btn { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 0.85rem; padding: 4px 8px; border-radius: 4px; transition: background 0.1s; }
+    .ctrl-btn:hover { background: #21262d; color: #e6edf3; }
+
+    /* ═══════════════════════════════════════════════
+       REPORT MODAL
+    ═══════════════════════════════════════════════ */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
+    .modal-overlay.hidden { display: none; }
+    .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; width: 100%; max-width: 760px; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 8px 40px rgba(0,0,0,0.6); }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 12px; }
+    .modal-header h2 { font-size: 1rem; color: #e6edf3; flex: 1; }
+    .modal-header .modal-close { background: none; border: none; color: #8b949e; font-size: 1.2rem; cursor: pointer; line-height: 1; padding: 4px; }
+    .modal-header .modal-close:hover { color: #e6edf3; }
+    .modal-tabs { display: flex; border-bottom: 1px solid #30363d; padding: 0 20px; }
+    .modal-tab { padding: 10px 16px; font-size: 0.82rem; cursor: pointer; color: #8b949e; border-bottom: 2px solid transparent; transition: color 0.15s; }
+    .modal-tab:hover { color: #c9d1d9; }
+    .modal-tab.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+    .modal-body { flex: 1; overflow-y: auto; padding: 20px; }
+    .modal-footer { padding: 14px 20px; border-top: 1px solid #30363d; display: flex; gap: 10px; justify-content: flex-end; align-items: center; }
+    .modal-footer .footer-note { margin-right: auto; font-size: 0.76rem; color: #8b949e; }
+
+    /* Report summary cards */
+    .report-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    .summary-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; text-align: center; }
+    .summary-card .sc-num { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+    .summary-card .sc-label { font-size: 0.72rem; color: #8b949e; margin-top: 4px; }
+    .sc-red .sc-num { color: #f85149; }
+    .sc-orange .sc-num { color: #f0883e; }
+    .sc-blue .sc-num { color: #58a6ff; }
+    .sc-gray .sc-num { color: #8b949e; }
+
+    /* Orphan table */
+    .report-section-title { font-size: 0.8rem; font-weight: 600; color: #8b949e; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 10px; margin-top: 20px; }
+    .report-section-title:first-of-type { margin-top: 0; }
+    .orphan-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .orphan-table th { text-align: left; padding: 8px 10px; color: #8b949e; border-bottom: 1px solid #30363d; font-weight: 600; font-size: 0.75rem; }
+    .orphan-table td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
+    .orphan-table tr:hover td { background: #1c2128; }
+    .fn-name { font-family: 'Consolas', 'Monaco', monospace; color: #f85149; font-weight: 600; }
+    .file-tag { display: inline-block; background: #21262d; border: 1px solid #30363d; border-radius: 4px; padding: 1px 6px; font-size: 0.72rem; color: #8b949e; font-family: monospace; }
+    .reason-tag { display: inline-block; border-radius: 4px; padding: 2px 7px; font-size: 0.7rem; margin-right: 4px; margin-bottom: 2px; }
+    .reason-never-called { background: rgba(248,81,73,0.15); color: #ff7b72; border: 1px solid rgba(248,81,73,0.3); }
+    .reason-no-outbound { background: rgba(139,148,158,0.15); color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
+    .reason-isolated { background: rgba(240,136,62,0.15); color: #ffa657; border: 1px solid rgba(240,136,62,0.3); }
+
+    /* JSON tab */
+    .json-output { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 16px; font-family: 'Consolas', 'Monaco', monospace; font-size: 0.75rem; color: #c9d1d9; white-space: pre; overflow-x: auto; line-height: 1.6; max-height: 500px; overflow-y: auto; }
+    .json-key { color: #79c0ff; }
+    .json-str { color: #a5d6ff; }
+    .json-num { color: #f0883e; }
+    .json-bool { color: #d2a8ff; }
+
+    /* CSS Compactor */
+    .sc-green .sc-num { color: #3fb950; }
+
+    /* Health Score */
+    .health-score { display:flex; align-items:center; gap:6px; background:#21262d; border:1px solid #30363d; border-radius:6px; padding:5px 12px; }
+    .health-score.hidden { display:none; }
+    .hs-label { font-size:0.72rem; color:#8b949e; }
+    .hs-value { font-size:0.95rem; font-weight:700; min-width:2.5rem; text-align:center; }
+
+    /* Search box */
+    .search-box { display:flex; align-items:center; gap:6px; background:#21262d; border:1px solid #30363d; border-radius:6px; padding:3px 10px; }
+    .search-box.hidden { display:none; }
+    .search-box input { background:none; border:none; outline:none; color:#e6edf3; font-size:0.8rem; width:160px; }
+    .search-box input::placeholder { color:#484f58; }
+    .search-count { font-size:0.72rem; color:#8b949e; white-space:nowrap; }
+
+    /* Depth badge on nodes */
+    .depth-badge { font-size:9px; fill:#0d1117; font-weight:700; pointer-events:none; }
+
+    /* Charts */
+    .chart-section { margin-bottom:32px; }
+    .chart-title { font-size:0.8rem; font-weight:600; color:#8b949e; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:14px; }
+    .chart-svg { width:100%; overflow:visible; }
+    .chart-bar { cursor:pointer; transition:opacity 0.15s; }
+    .chart-bar:hover { opacity:0.8; }
+    .chart-label { font-size:11px; fill:#8b949e; }
+    .chart-value { font-size:11px; fill:#c9d1d9; font-weight:600; }
+    .chart-axis line, .chart-axis path { stroke:#30363d; }
+    .chart-axis text { fill:#8b949e; font-size:10px; }
+    .donut-label { font-size:11px; fill:#c9d1d9; }
+    .charts-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+
+    /* Diff tool */
+    .diff-file-slot { display:flex; align-items:center; gap:8px; }
+    .diff-slot-label { font-size:0.75rem; color:#8b949e; font-weight:600; min-width:70px; }
+    .diff-slot-name { font-size:0.75rem; color:#58a6ff; font-family:monospace; }
+    .diff-view { display:grid; grid-template-columns:1fr 1fr; gap:0; border:1px solid #30363d; border-radius:8px; overflow:hidden; font-family:'Consolas','Monaco',monospace; font-size:0.73rem; line-height:1.7; }
+    .diff-pane { overflow:auto; max-height:440px; }
+    .diff-pane-header { padding:8px 14px; background:#161b22; border-bottom:1px solid #30363d; font-size:0.75rem; color:#8b949e; font-family:sans-serif; position:sticky; top:0; z-index:1; }
+    .diff-line { display:flex; }
+    .diff-ln { min-width:36px; padding:0 6px; text-align:right; color:#484f58; background:#161b22; border-right:1px solid #30363d; user-select:none; flex-shrink:0; }
+    .diff-text { padding:0 10px; white-space:pre; flex:1; }
+    .diff-add  .diff-ln { background:rgba(63,185,80,0.1); color:#3fb950; }
+    .diff-add  .diff-text { background:rgba(63,185,80,0.08); color:#aff5b4; }
+    .diff-del  .diff-ln { background:rgba(248,81,73,0.1); color:#f85149; }
+    .diff-del  .diff-text { background:rgba(248,81,73,0.08); color:#ffa198; text-decoration:line-through; }
+    .diff-same .diff-text { color:#8b949e; }
+    .diff-divider { border-right:1px solid #30363d; }
+    .css-file-section { margin-bottom: 24px; }
+    .css-file-header { font-size:0.8rem; font-weight:600; color:#8b949e; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:10px; display:flex; align-items:center; gap:10px; }
+    .css-badge { font-size:0.7rem; background:#21262d; border:1px solid #30363d; border-radius:4px; padding:2px 7px; color:#8b949e; text-transform:none; letter-spacing:0; font-weight:400; }
+    .css-badge.merged { background:rgba(63,185,80,0.1); border-color:#3fb950; color:#3fb950; }
+    .css-badge.override { background:rgba(240,136,62,0.1); border-color:#f0883e; color:#ffa657; }
+    .css-badge.untouched { background:rgba(139,148,158,0.1); border-color:#8b949e; color:#8b949e; }
+    .merge-table { width:100%; border-collapse:collapse; font-size:0.79rem; margin-bottom:8px; }
+    .merge-table th { text-align:left; padding:7px 10px; color:#8b949e; border-bottom:1px solid #30363d; font-size:0.73rem; font-weight:600; }
+    .merge-table td { padding:7px 10px; border-bottom:1px solid #21262d; vertical-align:top; }
+    .merge-table tr:hover td { background:#1c2128; }
+    .sel-name { font-family:'Consolas','Monaco',monospace; color:#79c0ff; font-weight:600; font-size:0.8rem; }
+    .prop-list { font-family:'Consolas','Monaco',monospace; font-size:0.73rem; color:#c9d1d9; line-height:1.7; }
+    .prop-override { color:#ffa657; }
+    .prop-comment { color:#6e7681; font-style:italic; }
+    .preview-block { background:#0d1117; border:1px solid #30363d; border-radius:8px; padding:14px 16px; font-family:'Consolas','Monaco',monospace; font-size:0.76rem; line-height:1.8; color:#c9d1d9; white-space:pre-wrap; overflow-x:auto; max-height:480px; overflow-y:auto; margin-bottom:16px; }
+    .preview-selector { color:#79c0ff; font-weight:700; }
+    .preview-property { color:#c9d1d9; }
+    .preview-value { color:#a5d6ff; }
+    .preview-comment { color:#6e7681; font-style:italic; }
+    .preview-at { color:#d2a8ff; font-weight:700; }
+    .untouched-list { font-size:0.78rem; color:#8b949e; line-height:2; }
+    .untouched-list span { font-family:monospace; color:#6e7681; background:#21262d; border-radius:3px; padding:1px 5px; margin-right:6px; }
+
+    /* Help modal */
+    .help-section { margin-bottom:24px; }
+    .help-section h3 { font-size:0.9rem; color:#e6edf3; margin-bottom:8px; font-weight:600; }
+    .help-section p { font-size:0.8rem; color:#c9d1d9; line-height:1.7; margin-bottom:8px; }
+    .help-section ul { list-style:none; padding:0; }
+    .help-section li { font-size:0.8rem; color:#c9d1d9; line-height:1.9; padding-left:20px; position:relative; }
+    .help-section li:before { content:'•'; position:absolute; left:6px; color:#58a6ff; }
+    .help-section code { background:#21262d; border:1px solid #30363d; border-radius:3px; padding:1px 4px; font-size:0.75rem; color:#f0883e; font-family:'Consolas','Monaco',monospace; }
+    .help-section a { color:#58a6ff; text-decoration:none; }
+    .help-section a:hover { text-decoration:underline; }
+    .help-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+    .help-warning { background:rgba(240,136,62,0.1); border-left:3px solid #f0883e; padding:10px 12px; border-radius:4px; margin-top:8px; }
+
+    /* Footer */
+    #app-footer { background:#161b22; border-top:1px solid #30363d; padding:10px 20px; display:flex; align-items:center; gap:8px; font-size:0.75rem; color:#8b949e; flex-shrink:0; }
+    #app-footer a { color:#58a6ff; text-decoration:none; }
+    #app-footer a:hover { text-decoration:underline; }
+    .footer-sep { color:#30363d; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>JS Dependency Visualizer <span>— node graph</span></h1>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div>Entry Point</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#58a6ff"></div>Connected</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f0883e"></div>Shared Utility</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f85149"></div>Orphan / Unused</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#eac55f"></div>Complex</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#bc8cff"></div>External Import</div>
+  </div>
+  <div class="health-score hidden" id="health-score" title="Project Health Score">
+    <span class="hs-label">Health</span>
+    <span class="hs-value" id="hs-value">—</span>
+  </div>
+  <div class="header-right">
+    <div class="search-box hidden" id="search-box">
+      <input type="text" id="search-input" placeholder="Search functions…" autocomplete="off">
+      <span class="search-count" id="search-count"></span>
+    </div>
+    <button class="btn" id="btn-help" title="Help & Documentation">❓</button>
+    <button class="btn" id="btn-diff" style="display:none">⇄ Diff</button>
+    <button class="btn danger" id="btn-report" style="display:none">🧹 Dead Code</button>
+    <button class="btn" id="btn-reset" style="display:none">↺ Reset</button>
+    <button class="btn" id="btn-css" style="display:none">🎨 CSS</button>
+    <button class="btn primary" id="btn-load">📂 Load Files</button>
+    <input type="file" id="file-input" accept=".js,.mjs,.cjs,.css,.html,.htm" multiple style="display:none">
+  </div>
+</header>
+
+<footer id="app-footer">
+  <span>JS Dependency Visualizer v1.0.0</span>
+  <span class="footer-sep">•</span>
+  <a href="https://github.com/[your-username]/js-dependency-visualizer" target="_blank" rel="noopener">GitHub</a>
+  <span class="footer-sep">•</span>
+  <a href="https://github.com/[your-username]/js-dependency-visualizer/issues" target="_blank" rel="noopener">Report Issues</a>
+  <span class="footer-sep">•</span>
+  <span>MIT License</span>
+</footer>
+
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-header">Files</div>
+    <div class="file-list" id="file-list">
+      <div style="padding:20px 14px;color:#8b949e;font-size:0.78rem;line-height:1.7">Load .js files to see them listed here.</div>
+    </div>
+    <div class="stats-panel" id="stats-panel" style="display:none">
+      <div class="stat"><span>Functions</span><span id="stat-fns">0</span></div>
+      <div class="stat"><span>Connections</span><span id="stat-links">0</span></div>
+      <div class="stat"><span>Orphans</span><span id="stat-orphans" class="orphan-count">0</span></div>
+      <div class="stat"><span>Files</span><span id="stat-files">0</span></div>
+    </div>
+  </div>
+
+  <div class="canvas-area">
+    <div class="drop-zone" id="drop-zone">
+      <div class="drop-icon">🔗</div>
+      <h2>JavaScript Dependency Visualizer</h2>
+      <p>Upload <strong>.js</strong> files to visualize dependencies, <strong>.html</strong> single-file apps to analyze inline scripts, or <strong>.css</strong> files for the CSS Compactor.</p>
+      <div class="drop-area" id="drop-area">
+        <p>⬆ Drop files here</p>
+        <small>.js · .html · .css — or click "Load Files" above</small>
+      </div>
+      <p style="font-size:0.72rem;color:#484f58;margin-top:4px">green = entry · blue = connected · orange = utility · red = orphan</p>
+    </div>
+
+    <svg id="graph-svg" style="display:none"></svg>
+
+    <div class="info-panel" id="info-panel">
+      <span class="info-close" id="info-close">✕</span>
+      <h3 id="ip-name">—</h3>
+      <div class="ip-row">Type: <span id="ip-type">—</span></div>
+      <div class="ip-row">File: <span id="ip-file">—</span></div>
+      <div class="ip-row">Called by: <span id="ip-callers-count">0</span></div>
+      <div class="ip-row">Calls: <span id="ip-calls-count">0</span></div>
+      <div class="caller-list" id="ip-caller-list"></div>
+    </div>
+
+    <div class="controls-overlay hidden" id="ctrl-overlay">
+      <button class="ctrl-btn" id="ctrl-zoom-in">＋</button>
+      <button class="ctrl-btn" id="ctrl-zoom-reset">⊙ Fit</button>
+      <button class="ctrl-btn" id="ctrl-zoom-out">－</button>
+      <span style="color:#30363d;padding:0 4px">|</span>
+      <button class="ctrl-btn" id="ctrl-depth-clear" style="display:none">✕ Depth</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tooltip -->
+<div id="tooltip">
+  <div class="tt-name" id="tt-name">fn</div>
+  <div class="tt-row">File: <span id="tt-file">—</span></div>
+  <div class="tt-row">Role: <span id="tt-role">—</span></div>
+  <div class="tt-row">Called by: <span id="tt-callers">0</span> · Calls: <span id="tt-calls">0</span></div>
+  <div class="tt-row" style="margin-top:4px;font-size:0.7rem;color:#484f58">Double-click → call depth view</div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     DEAD CODE REPORT MODAL
+═══════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="modal-overlay">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>🧹 Dead Code Report</h2>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-tabs">
+      <div class="modal-tab active" data-tab="visual">Dead Code</div>
+      <div class="modal-tab" data-tab="charts">Charts</div>
+      <div class="modal-tab" data-tab="json">JSON Export</div>
+    </div>
+    <div class="modal-body" id="modal-body">
+      <!-- filled by JS -->
+    </div>
+    <div class="modal-footer">
+      <span class="footer-note" id="footer-note">—</span>
+      <button class="btn" id="btn-download-json">⬇ Download JSON</button>
+      <button class="btn primary" id="btn-download-txt">⬇ Download Report (.txt)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     CSS COMPACTOR MODAL
+═══════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="css-modal-overlay">
+  <div class="modal" style="max-width:820px">
+    <div class="modal-header">
+      <h2>🎨 CSS Compactor</h2>
+      <button class="modal-close" id="css-modal-close">✕</button>
+    </div>
+    <div class="modal-tabs">
+      <div class="modal-tab active" data-csstab="summary">Summary</div>
+      <div class="modal-tab" data-csstab="preview">Preview Changes</div>
+      <div class="modal-tab" data-csstab="report">Text Report</div>
+    </div>
+    <div class="modal-body" id="css-modal-body"></div>
+    <div class="modal-footer">
+      <span class="footer-note" id="css-footer-note">—</span>
+      <button class="btn" id="btn-css-report-dl">⬇ Download Report (.txt)</button>
+      <button class="btn primary" id="btn-css-compact-dl">⬇ Download Compacted CSS</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     DIFF TOOL MODAL
+═══════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="diff-modal-overlay">
+  <div class="modal" style="max-width:960px">
+    <div class="modal-header">
+      <h2>⇄ JS Diff Tool</h2>
+      <button class="modal-close" id="diff-modal-close">✕</button>
+    </div>
+    <div style="padding:14px 20px;border-bottom:1px solid #30363d;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+      <div class="diff-file-slot" id="diff-slot-a">
+        <span class="diff-slot-label">Original (A)</span>
+        <button class="btn" id="diff-load-a">📂 Load File A</button>
+        <span class="diff-slot-name" id="diff-name-a">no file loaded</span>
+        <input type="file" id="diff-input-a" accept=".js,.mjs,.cjs" style="display:none">
+      </div>
+      <div style="color:#8b949e;font-size:1.2rem">⇄</div>
+      <div class="diff-file-slot" id="diff-slot-b">
+        <span class="diff-slot-label">Modified (B)</span>
+        <button class="btn" id="diff-load-b">📂 Load File B</button>
+        <span class="diff-slot-name" id="diff-name-b">no file loaded</span>
+        <input type="file" id="diff-input-b" accept=".js,.mjs,.cjs" style="display:none">
+      </div>
+      <button class="btn primary" id="diff-run" style="margin-left:auto" disabled>Run Diff</button>
+    </div>
+    <div class="modal-body" id="diff-modal-body">
+      <div style="text-align:center;padding:40px;color:#8b949e">Load two .js files above then click Run Diff</div>
+    </div>
+    <div class="modal-footer">
+      <span class="footer-note" id="diff-footer-note">—</span>
+      <button class="btn" id="btn-diff-dl" disabled>⬇ Download Applied (.js)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     HELP / DOCUMENTATION MODAL
+═══════════════════════════════════════════════ -->
+<div class="modal-overlay hidden" id="help-modal-overlay">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-header">
+      <h2>❓ Help & Documentation</h2>
+      <button class="modal-close" id="help-modal-close">✕</button>
+    </div>
+    <div class="modal-body" style="padding:24px">
+      
+      <div class="help-section">
+        <h3>🎯 What is this tool?</h3>
+        <p>JS Dependency Visualizer analyzes JavaScript code to show how your functions connect. It's perfect for understanding codebases, finding dead code, and spotting complexity issues.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>📂 Supported Files</h3>
+        <ul>
+          <li><strong>.js / .mjs / .cjs</strong> — JavaScript modules analyzed for dependencies</li>
+          <li><strong>.html</strong> — Inline <code>&lt;script&gt;</code> blocks extracted and analyzed separately</li>
+          <li><strong>.css</strong> — Duplicate selector detection and merging with override tracking</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>🎨 Node Colors</h3>
+        <ul>
+          <li><span class="help-dot" style="background:#3fb950"></span> <strong>Green (Entry Point)</strong> — Called by nothing, but calls others. Likely main/init functions.</li>
+          <li><span class="help-dot" style="background:#58a6ff"></span> <strong>Blue (Connected)</strong> — Normal functions with relationships.</li>
+          <li><span class="help-dot" style="background:#f0883e"></span> <strong>Orange (Shared Utility)</strong> — Called by 3+ functions. Heavily reused code.</li>
+          <li><span class="help-dot" style="background:#eac55f"></span> <strong>Yellow (Complex)</strong> — Calls 6+ functions. May be doing too much.</li>
+          <li><span class="help-dot" style="background:#f85149"></span> <strong>Red (Orphan)</strong> — Neither called nor calls anything. Strong deletion candidate.</li>
+          <li><span class="help-dot" style="background:#bc8cff"></span> <strong>Purple (External)</strong> — Imported from external libraries.</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>⌨️ Interactions</h3>
+        <ul>
+          <li><strong>Click</strong> a node → highlight its connections</li>
+          <li><strong>Double-click</strong> a node → show call depth visualization</li>
+          <li><strong>Drag</strong> nodes to reposition them manually</li>
+          <li><strong>Scroll wheel</strong> → zoom in/out</li>
+          <li><strong>Type in search</strong> → filter and highlight matching functions</li>
+          <li><strong>Click files in sidebar</strong> → filter by source file</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>🧹 Dead Code Report</h3>
+        <p>Scans for unused or isolated functions. <strong>High risk</strong> means fully isolated (safe to delete after review). <strong>Medium risk</strong> means never called but calls others (check for dynamic usage).</p>
+        <p class="help-warning">⚠️ Always search your full codebase for dynamic calls like <code>window[fnName]()</code> or HTML <code>onclick</code> before deleting!</p>
+      </div>
+
+      <div class="help-section">
+        <h3>📊 Health Score</h3>
+        <p>0-100 composite score based on orphan ratio (40%), complexity ratio (30%), entry point presence (15%), and utility balance (15%). Green (75+) is healthy, orange (50-74) needs attention, red (<50) needs cleanup.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>🎨 CSS Compactor</h3>
+        <p>Merges duplicate CSS selectors across files. Shows override history with comments like <code>/* ⚠ color was previously: red (overridden) */</code>. Handles <code>@media</code> blocks separately. Leaves <code>@keyframes</code> and <code>@font-face</code> untouched.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>⇄ Diff Tool</h3>
+        <p>Side-by-side comparison of two .js files. Shows additions (green) and deletions (red) line-by-line. Useful for reviewing refactors before applying.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>⚠️ Limitations</h3>
+        <ul>
+          <li>Uses regex parsing, not a full AST — may miss dynamic calls</li>
+          <li>Cannot detect: <code>obj[methodName]()</code>, <code>eval()</code>, callbacks passed as strings</li>
+          <li>Only analyzes files you load — external dependencies are shown but not analyzed</li>
+          <li>Large files (10,000+ lines) may be slow to process</li>
+        </ul>
+      </div>
+
+      <div class="help-section">
+        <h3>🔒 Privacy</h3>
+        <p>All processing happens locally in your browser. No files are uploaded to any server. No tracking, no analytics, no data leaves your machine.</p>
+      </div>
+
+      <div class="help-section">
+        <h3>📄 License</h3>
+        <p>MIT License • Free and open source • <a href="https://github.com/[your-username]/js-dependency-visualizer" target="_blank">View source on GitHub</a></p>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn primary" id="help-close-btn">Got it!</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+const state = {
+  files: [],
+  cssFiles: [],
+  graph: null,
+  simulation: null,
+  _nodeSel: null,
+  _linkSel: null,
+  zoom: null,
+  svg: null,
+  activeTab: 'visual',
+  activeCssTab: 'summary',
+  _cssResults: null,
+  _depthMode: false,
+  _diffA: null,
+  _diffB: null,
+  _diffResult: null
+};
+
+// ═══════════════════════════════════════════════════════
+//  DOM REFS
+// ═══════════════════════════════════════════════════════
+const dropZone     = document.getElementById('drop-zone');
+const dropArea     = document.getElementById('drop-area');
+const fileInput    = document.getElementById('file-input');
+const btnLoad      = document.getElementById('btn-load');
+const btnReset     = document.getElementById('btn-reset');
+const btnReport    = document.getElementById('btn-report');
+const btnCss       = document.getElementById('btn-css');
+const btnDiff      = document.getElementById('btn-diff');
+const searchBox    = document.getElementById('search-box');
+const searchInput  = document.getElementById('search-input');
+const searchCount  = document.getElementById('search-count');
+const graphSvg     = document.getElementById('graph-svg');
+const fileListEl   = document.getElementById('file-list');
+const statsPanel   = document.getElementById('stats-panel');
+const ctrlOverlay  = document.getElementById('ctrl-overlay');
+const infoPanel    = document.getElementById('info-panel');
+const tooltip      = document.getElementById('tooltip');
+const modalOverlay = document.getElementById('modal-overlay');
+const modalBody    = document.getElementById('modal-body');
+
+// ═══════════════════════════════════════════════════════
+//  FILE LOADING
+// ═══════════════════════════════════════════════════════
+
+// Extract inline <script> blocks from an HTML file.
+// Each block without a src= attribute becomes a virtual JS file.
+// Named: "filename.html [script 1]", "filename.html [script 2]", etc.
+function extractInlineScripts(htmlFile) {
+  const results = [];
+  // Match <script> tags without src attribute
+  // Handles: <script>, <script type="text/javascript">, <script type="module">
+  const re = /<script(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi;
+  let m, idx = 0;
+  while ((m = re.exec(htmlFile.content)) !== null) {
+    const code = m[1].trim();
+    if (code.length < 10) continue; // skip empty/trivial blocks
+    idx++;
+    results.push({
+      name:    `${htmlFile.name} [script ${idx}]`,
+      content: code,
+      ext:     'js',
+      fromHtml: true,
+      htmlSource: htmlFile.name,
+      blockIndex: idx
+    });
+  }
+  return results;
+}
+
+function readFiles(fileList) {
+  const allFiles = Array.from(fileList).filter(f => /\.(js|mjs|cjs|css|html|htm)$/i.test(f.name));
+  if (!allFiles.length) { alert('No supported files found (.js, .css, .html).'); return; }
+
+  const promises = allFiles.map(f => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve({ name: f.name, content: e.target.result, ext: f.name.split('.').pop().toLowerCase() });
+    reader.onerror = reject;
+    reader.readAsText(f);
+  }));
+
+  Promise.all(promises).then(files => {
+    const rawJsFiles  = files.filter(f => /^(js|mjs|cjs)$/.test(f.ext));
+    const htmlFiles   = files.filter(f => /^(html|htm)$/.test(f.ext));
+    const cssFiles    = files.filter(f => /^(css|html|htm)$/.test(f.ext));
+
+    // Extract inline scripts from every HTML file
+    const inlineJs = htmlFiles.flatMap(f => extractInlineScripts(f));
+
+    // All JS sources: real .js files + inline script blocks
+    const jsFiles = [...rawJsFiles, ...inlineJs];
+
+    state.cssFiles = cssFiles;
+
+    if (jsFiles.length) {
+      state.files = jsFiles;
+      const graph  = buildGraph(jsFiles);
+      state.graph  = graph;
+      renderSidebar(jsFiles, graph);
+      renderGraph(graph);
+      updateStats(graph);
+      dropZone.classList.add('hidden');
+      graphSvg.style.display = '';
+      ctrlOverlay.classList.remove('hidden');
+      btnReset.style.display  = '';
+      btnReport.style.display = '';
+      btnDiff.style.display   = '';
+      searchBox.classList.remove('hidden');
+      renderHealthScore(graph);
+    } else if (cssFiles.length) {
+      dropZone.classList.add('hidden');
+      graphSvg.style.display = '';
+      btnReset.style.display = '';
+      const svg = d3.select('#graph-svg');
+      svg.selectAll('*').remove();
+      svg.append('text')
+        .attr('x', '50%').attr('y', '50%')
+        .attr('text-anchor', 'middle').attr('dominant-baseline', 'middle')
+        .attr('fill', '#8b949e').attr('font-size', '1rem').attr('font-family', 'Segoe UI, sans-serif')
+        .text('CSS / HTML files loaded — use the CSS Compactor button above ↑');
+    }
+
+    if (cssFiles.length) btnCss.style.display = '';
+  });
+}
+
+dropArea.addEventListener('click', () => fileInput.click());
+btnLoad.addEventListener('click',  () => fileInput.click());
+fileInput.addEventListener('change', e => readFiles(e.target.files));
+dropArea.addEventListener('dragover',  e => { e.preventDefault(); dropArea.classList.add('drag-over'); });
+dropArea.addEventListener('dragleave', () => dropArea.classList.remove('drag-over'));
+dropArea.addEventListener('drop', e => { e.preventDefault(); dropArea.classList.remove('drag-over'); readFiles(e.dataTransfer.files); });
+
+btnReset.addEventListener('click', () => {
+  state.files = []; state.graph = null; state.cssFiles = []; state._cssResults = null;
+  state._depthMode = false; state._diffA = null; state._diffB = null;
+  if (state.simulation) state.simulation.stop();
+  d3.select('#graph-svg').selectAll('*').remove();
+  graphSvg.style.display = 'none';
+  dropZone.classList.remove('hidden');
+  fileListEl.innerHTML = '<div style="padding:20px 14px;color:#8b949e;font-size:0.78rem">Load .js files to see them listed here.</div>';
+  statsPanel.style.display  = 'none';
+  ctrlOverlay.classList.add('hidden');
+  infoPanel.classList.remove('visible');
+  btnReset.style.display  = 'none';
+  btnReport.style.display = 'none';
+  btnDiff.style.display   = 'none';
+  btnCss.style.display    = 'none';
+  searchBox.classList.add('hidden');
+  searchInput.value = '';
+  document.getElementById('health-score').classList.add('hidden');
+  document.getElementById('ctrl-depth-clear').style.display = 'none';
+  fileInput.value = '';
+});
+
+// ═══════════════════════════════════════════════════════
+//  PARSER
+// ═══════════════════════════════════════════════════════
+function parseFile(name, content) {
+  // Strip comments so we don't accidentally match function names inside them
+  const stripped = content
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+
+  const functions = new Set();
+  const imports   = [];
+
+  const KEYWORDS = new Set(['if','for','while','switch','catch','else','do','return',
+    'typeof','instanceof','new','delete','void','throw','case','default','class',
+    'extends','super','import','export','from','const','let','var','async','await','of','in']);
+
+  const fnPatterns = [
+    /\bfunction\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g,
+    /\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s+)?(?:function\b|\(|[A-Za-z_$][A-Za-z0-9_$]*\s*=>)/g,
+    /\bexport\s+(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)/g,
+    /\bexport\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=/g,
+    /(?:^|\n)\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^)]*\)\s*\{/gm,
+  ];
+
+  fnPatterns.forEach(re => {
+    let m;
+    while ((m = re.exec(stripped)) !== null) {
+      if (!KEYWORDS.has(m[1])) functions.add(m[1]);
+    }
+  });
+
+  const importRe = /(?:import\s+.*?\s+from\s+['"]([^'"]+)['"]|require\s*\(\s*['"]([^'"]+)['"]\s*\))/g;
+  let im;
+  while ((im = importRe.exec(stripped)) !== null) imports.push(im[1] || im[2]);
+
+  return { name, functions: [...functions], imports };
+}
+
+// ═══════════════════════════════════════════════════════
+//  GRAPH BUILDER
+// ═══════════════════════════════════════════════════════
+function escapeReg(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+function buildGraph(files) {
+  const parsed = files.map(f => parseFile(f.name, f.content));
+
+  // Registry: functionName → Set<fileName>
+  const registry = new Map();
+  parsed.forEach(p => p.functions.forEach(fn => {
+    if (!registry.has(fn)) registry.set(fn, new Set());
+    registry.get(fn).add(p.name);
+  }));
+
+  // Call detection: scan each function's approximate body for calls to other known functions
+  const callSet  = new Set();
+  const rawCalls = [];
+
+  parsed.forEach(p => {
+    const src = files.find(f => f.name === p.name).content
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/\/\/[^\n]*/g, ' ');
+
+    p.functions.forEach(fromFn => {
+      const bodyRe = new RegExp(
+        `(?:function\\s+${escapeReg(fromFn)}[^{]*|${escapeReg(fromFn)}\\s*[=:]\\s*(?:async\\s+)?(?:function[^{]*|\\([^)]*\\)\\s*=>\\s*))\\{([\\s\\S]{0,3000})`,
+        'g'
+      );
+      let bm;
+      while ((bm = bodyRe.exec(src)) !== null) {
+        const body = bm[1];
+        registry.forEach((_, toFn) => {
+          if (toFn === fromFn) return;
+          const key = `${fromFn}::${toFn}`;
+          if (!callSet.has(key) && new RegExp(`\\b${escapeReg(toFn)}\\s*\\(`).test(body)) {
+            callSet.add(key);
+            rawCalls.push({ from: fromFn, to: toFn });
+          }
+        });
+      }
+    });
+  });
+
+  // Degree maps
+  const calledBy = new Map();
+  const callsOut = new Map();
+  registry.forEach((_, fn) => { calledBy.set(fn, new Set()); callsOut.set(fn, new Set()); });
+  rawCalls.forEach(({ from, to }) => {
+    calledBy.get(to)?.add(from);
+    callsOut.get(from)?.add(to);
+  });
+
+  // Build nodes with color-coding + complexity scoring
+  // complexity = outDegree >= 6 (calls too many things — does too much)
+  const nodes = [...registry.keys()].map(fn => {
+    const inDeg  = calledBy.get(fn).size;
+    const outDeg = callsOut.get(fn).size;
+    const isComplex = outDeg >= 6;
+
+    // Estimate line count by finding function body in source
+    let lineCount = 0;
+    const srcFile = files.find(f => [...registry.get(fn)][0] === f.name);
+    if (srcFile) {
+      const stripped2 = srcFile.content.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/[^\n]*/g,'');
+      const bodyRe2 = new RegExp(
+        `(?:function\\s+${escapeReg(fn)}[^{]*|${escapeReg(fn)}\\s*[=:]\\s*(?:async\\s+)?(?:function[^{]*|\\([^)]*\\)\\s*=>\\s*))\\{([\\s\\S]{0,5000})`, 'g'
+      );
+      const bm2 = bodyRe2.exec(stripped2);
+      if (bm2) lineCount = (bm2[1].match(/\n/g) || []).length + 1;
+    }
+
+    let type, color, stroke;
+    if      (isComplex)                    { type = 'complex';   color = '#eac55f'; stroke = '#f0d070'; }
+    else if (inDeg === 0 && outDeg > 0)   { type = 'entry';     color = '#3fb950'; stroke = '#56d364'; }
+    else if (inDeg === 0 && outDeg === 0) { type = 'orphan';    color = '#f85149'; stroke = '#ff7b72'; }
+    else if (inDeg >= 3)                  { type = 'utility';   color = '#f0883e'; stroke = '#ffa657'; }
+    else                                  { type = 'connected'; color = '#58a6ff'; stroke = '#79c0ff'; }
+    return {
+      id: fn, file: [...registry.get(fn)][0], files: [...registry.get(fn)],
+      type, color, stroke, inDegree: inDeg, outDegree: outDeg, lineCount,
+      callers: [...calledBy.get(fn)], calls: [...callsOut.get(fn)],
+    };
+  });
+
+  // External imports as purple nodes
+  const seenExt = new Set();
+  parsed.forEach(p => p.imports.forEach(imp => {
+    if (imp.startsWith('.')) return;
+    const label = imp.split('/').pop();
+    if (!seenExt.has(label) && !registry.has(label)) {
+      seenExt.add(label);
+      nodes.push({ id: label, file: '(external)', files: [], type: 'external', color: '#bc8cff', stroke: '#d2a8ff', inDegree: 0, outDegree: 0, callers: [], calls: [] });
+    }
+  }));
+
+  const links = rawCalls.map(({ from, to }) => ({ source: from, target: to }));
+  return { nodes, links };
+}
+
+// ═══════════════════════════════════════════════════════
+//  DEAD CODE ANALYSIS
+//  This is the core logic for the report.
+//  We classify "dead code" into three levels of concern:
+// ═══════════════════════════════════════════════════════
+function analyzeDeadCode(graph) {
+  const results = [];
+
+  graph.nodes.forEach(node => {
+    if (node.type === 'external') return; // skip external imports
+
+    const reasons = [];
+
+    // Reason 1: Never called by anything (inDegree = 0)
+    // This is the primary signal — if nothing calls it, who runs it?
+    if (node.inDegree === 0 && node.type !== 'entry') {
+      reasons.push({ code: 'never-called', label: 'Never called', detail: 'No other function calls this function anywhere in the scanned files.' });
+    }
+
+    // Reason 2: Calls nothing and is never called — fully isolated
+    // An entry point that calls nothing is suspicious too
+    if (node.inDegree === 0 && node.outDegree === 0) {
+      // Replace the never-called reason with a more specific one
+      reasons.length = 0;
+      reasons.push({ code: 'isolated', label: 'Fully isolated', detail: 'This function is neither called by anything nor does it call anything. It exists in complete isolation.' });
+    }
+
+    // Reason 3: Entry point that calls nothing (possibly dead scaffolding)
+    if (node.type === 'entry' && node.outDegree === 0) {
+      reasons.push({ code: 'empty-entry', label: 'Empty entry', detail: 'Declared as if it is a top-level function but has no outbound calls. May be a stub or leftover.' });
+    }
+
+    if (reasons.length > 0) {
+      results.push({
+        name:       node.id,
+        file:       node.file,
+        type:       node.type,
+        inDegree:   node.inDegree,
+        outDegree:  node.outDegree,
+        callers:    node.callers,
+        calls:      node.calls,
+        reasons,
+        // Risk level: isolated = high, never-called = medium
+        risk: reasons.some(r => r.code === 'isolated') ? 'high'
+            : reasons.some(r => r.code === 'never-called') ? 'medium'
+            : 'low'
+      });
+    }
+  });
+
+  // Sort: high risk first, then alphabetically
+  results.sort((a, b) => {
+    const riskOrder = { high: 0, medium: 1, low: 2 };
+    return riskOrder[a.risk] - riskOrder[b.risk] || a.name.localeCompare(b.name);
+  });
+
+  return results;
+}
+
+// ═══════════════════════════════════════════════════════
+//  REPORT MODAL — open, render, tabs, download
+// ═══════════════════════════════════════════════════════
+btnReport.addEventListener('click', () => openReport());
+
+function openReport() {
+  const deadCode = analyzeDeadCode(state.graph);
+  const allFns   = state.graph.nodes.filter(n => n.type !== 'external').length;
+
+  // Store for downloads
+  state._deadCode = deadCode;
+  state._allFns   = allFns;
+
+  document.getElementById('footer-note').textContent =
+    `${deadCode.length} suspect function${deadCode.length !== 1 ? 's' : ''} found across ${state.files.length} file${state.files.length !== 1 ? 's' : ''}`;
+
+  renderReportTab('visual', deadCode, allFns);
+  modalOverlay.classList.remove('hidden');
+}
+
+// Tab switching
+document.querySelectorAll('.modal-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.modal-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.activeTab = tab.dataset.tab;
+    renderReportTab(tab.dataset.tab, state._deadCode, state._allFns);
+  });
+});
+
+function renderReportTab(tab, deadCode, allFns) {
+  if      (tab === 'visual') renderVisualReport(deadCode, allFns);
+  else if (tab === 'charts') renderChartsReport();
+  else                       renderJsonTab(deadCode, allFns);
+}
+
+// ── Visual Report ──────────────────────────────────────
+function renderVisualReport(deadCode, allFns) {
+  const high   = deadCode.filter(d => d.risk === 'high').length;
+  const medium = deadCode.filter(d => d.risk === 'medium').length;
+  const pct    = allFns ? Math.round((deadCode.length / allFns) * 100) : 0;
+
+  let html = `
+    <div class="report-summary">
+      <div class="summary-card sc-red">
+        <div class="sc-num">${deadCode.length}</div>
+        <div class="sc-label">Suspect Functions</div>
+      </div>
+      <div class="summary-card sc-orange">
+        <div class="sc-num">${high}</div>
+        <div class="sc-label">High Risk (isolated)</div>
+      </div>
+      <div class="summary-card sc-blue">
+        <div class="sc-num">${medium}</div>
+        <div class="sc-label">Medium Risk (uncalled)</div>
+      </div>
+      <div class="summary-card sc-gray">
+        <div class="sc-num">${pct}%</div>
+        <div class="sc-label">of Total Functions</div>
+      </div>
+    </div>`;
+
+  if (deadCode.length === 0) {
+    html += `<div style="text-align:center;padding:40px;color:#3fb950;font-size:1rem">✓ No dead code detected! All functions have connections.</div>`;
+    modalBody.innerHTML = html;
+    return;
+  }
+
+  // Group by file for easier reading
+  const byFile = {};
+  deadCode.forEach(d => {
+    if (!byFile[d.file]) byFile[d.file] = [];
+    byFile[d.file].push(d);
+  });
+
+  Object.entries(byFile).forEach(([file, items]) => {
+    html += `<div class="report-section-title">📄 ${file} — ${items.length} issue${items.length !== 1 ? 's' : ''}</div>`;
+    html += `<table class="orphan-table">
+      <thead><tr>
+        <th>Function</th><th>Risk</th><th>Reason</th><th>In / Out</th><th>Details</th>
+      </tr></thead><tbody>`;
+
+    items.forEach(d => {
+      const riskColor = { high: '#f85149', medium: '#f0883e', low: '#8b949e' }[d.risk];
+      const riskLabel = { high: '⬤ High', medium: '⬤ Medium', low: '⬤ Low' }[d.risk];
+      const reasonTags = d.reasons.map(r =>
+        `<span class="reason-tag reason-${r.code}">${r.label}</span>`
+      ).join('');
+      const detail = d.reasons.map(r => r.detail).join(' ');
+
+      html += `<tr>
+        <td><span class="fn-name">${escapeHtml(d.name)}</span></td>
+        <td style="color:${riskColor};font-size:0.75rem;white-space:nowrap">${riskLabel}</td>
+        <td>${reasonTags}</td>
+        <td style="color:#8b949e;white-space:nowrap;font-size:0.75rem">${d.inDegree} ← / → ${d.outDegree}</td>
+        <td style="color:#8b949e;font-size:0.74rem;line-height:1.5">${escapeHtml(detail)}</td>
+      </tr>`;
+    });
+
+    html += `</tbody></table>`;
+  });
+
+  // Recommendations section
+  html += `
+    <div class="report-section-title" style="margin-top:24px">💡 Recommendations</div>
+    <div style="font-size:0.8rem;color:#8b949e;line-height:1.8;background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px">
+      <strong style="color:#c9d1d9">Before deleting anything, consider:</strong><br>
+      • <strong style="color:#f85149">Fully isolated functions</strong> — strongest candidates for removal, but check if they're called dynamically via <code>window[fnName]()</code> or event listeners set up elsewhere.<br>
+      • <strong style="color:#f0883e">Never-called functions</strong> — may be intentional public API exports, callbacks registered externally, or lifecycle hooks. Search for the function name in HTML files too.<br>
+      • <strong style="color:#8b949e">Always search your entire codebase</strong> (including HTML, config, and test files) for the function name as a string before deleting — this parser only sees .js files you loaded.<br>
+      • Consider commenting out the function and running your app/tests before permanently deleting.
+    </div>`;
+
+  modalBody.innerHTML = html;
+}
+
+// ── JSON Tab ───────────────────────────────────────────
+function renderJsonTab(deadCode, allFns) {
+  const jsonObj = buildJsonReport(deadCode, allFns);
+  const jsonStr = JSON.stringify(jsonObj, null, 2);
+
+  // Syntax-highlight line by line — escape each text segment individually
+  // so we never escape the <span> tags we're about to inject.
+  const highlighted = jsonStr.split('\n').map(line => {
+    // Key: value lines
+    const kvMatch = line.match(/^(\s*)("(?:[^"\\]|\\.)*")(\s*:\s*)(.*)$/);
+    if (kvMatch) {
+      const [, indent, key, colon, rest] = kvMatch;
+      let coloredRest = escapeHtml(rest);
+      // Color the value part based on what it looks like
+      if (/^"/.test(rest))        coloredRest = `<span class="json-str">${escapeHtml(rest)}</span>`;
+      else if (/^\d/.test(rest))  coloredRest = `<span class="json-num">${escapeHtml(rest)}</span>`;
+      else if (/^true|false/.test(rest)) coloredRest = `<span class="json-bool">${escapeHtml(rest)}</span>`;
+      return `${escapeHtml(indent)}<span class="json-key">${escapeHtml(key)}</span>${escapeHtml(colon)}${coloredRest}`;
+    }
+    return escapeHtml(line);
+  }).join('\n');
+
+  modalBody.innerHTML = `<div class="json-output">${highlighted}</div>`;
+}
+
+// ── Build the JSON report object ───────────────────────
+function buildJsonReport(deadCode, allFns) {
+  return {
+    meta: {
+      generated:      new Date().toISOString(),
+      tool:           'JS Dependency Visualizer',
+      filesAnalyzed:  state.files.map(f => f.name),
+      totalFunctions: allFns,
+      suspectCount:   deadCode.length,
+      coveragePct:    allFns ? Math.round((deadCode.length / allFns) * 100) : 0
+    },
+    summary: {
+      highRisk:   deadCode.filter(d => d.risk === 'high').length,
+      mediumRisk: deadCode.filter(d => d.risk === 'medium').length,
+      lowRisk:    deadCode.filter(d => d.risk === 'low').length,
+    },
+    // Each suspect function with full detail
+    suspects: deadCode.map(d => ({
+      name:      d.name,
+      file:      d.file,
+      risk:      d.risk,
+      inDegree:  d.inDegree,   // how many things call this
+      outDegree: d.outDegree,  // how many things this calls
+      callers:   d.callers,    // names of callers (empty if none)
+      calls:     d.calls,      // names of callees (empty if none)
+      reasons:   d.reasons.map(r => ({ code: r.code, label: r.label, detail: r.detail })),
+      recommendation: d.risk === 'high'
+        ? 'Strong candidate for removal. Verify no dynamic calls exist before deleting.'
+        : 'Review whether this is an intentional export or API hook before removing.'
+    })),
+    // Group suspects by file for easy file-by-file review
+    byFile: state.files.reduce((acc, f) => {
+      const items = deadCode.filter(d => d.file === f.name);
+      if (items.length) acc[f.name] = items.map(d => ({ name: d.name, risk: d.risk, reasons: d.reasons.map(r => r.code) }));
+      return acc;
+    }, {})
+  };
+}
+
+// ── Download handlers ──────────────────────────────────
+document.getElementById('btn-download-json').addEventListener('click', () => {
+  const jsonObj  = buildJsonReport(state._deadCode, state._allFns);
+  const jsonStr  = JSON.stringify(jsonObj, null, 2);
+  downloadFile('dead-code-report.json', jsonStr, 'application/json');
+});
+
+document.getElementById('btn-download-txt').addEventListener('click', () => {
+  downloadFile('dead-code-report.txt', buildTxtReport(state._deadCode, state._allFns), 'text/plain');
+});
+
+// ── Plain-text report builder ──────────────────────────
+function buildTxtReport(deadCode, allFns) {
+  const line  = '─'.repeat(60);
+  const dline = '═'.repeat(60);
+  const ts    = new Date().toLocaleString();
+  const files = state.files.map(f => f.name).join(', ');
+
+  let txt = `${dline}
+  DEAD CODE REPORT — JS Dependency Visualizer
+${dline}
+Generated : ${ts}
+Files     : ${files}
+Total fns : ${allFns}
+Suspects  : ${deadCode.length} (${allFns ? Math.round((deadCode.length/allFns)*100) : 0}% of total)
+High risk : ${deadCode.filter(d=>d.risk==='high').length}
+Med risk  : ${deadCode.filter(d=>d.risk==='medium').length}
+${dline}
+
+`;
+
+  if (deadCode.length === 0) {
+    txt += '✓ No dead code detected. All functions appear to have connections.\n';
+    return txt;
+  }
+
+  // Group by file
+  const byFile = {};
+  deadCode.forEach(d => { if (!byFile[d.file]) byFile[d.file] = []; byFile[d.file].push(d); });
+
+  Object.entries(byFile).forEach(([file, items]) => {
+    txt += `FILE: ${file}\n${line}\n`;
+    items.forEach(d => {
+      txt += `\n  FUNCTION : ${d.name}\n`;
+      txt += `  RISK     : ${d.risk.toUpperCase()}\n`;
+      txt += `  IN/OUT   : called by ${d.inDegree} function(s) / calls ${d.outDegree} function(s)\n`;
+      d.reasons.forEach(r => {
+        txt += `  REASON   : [${r.label}] ${r.detail}\n`;
+      });
+      if (d.callers.length) txt += `  CALLERS  : ${d.callers.join(', ')}\n`;
+      if (d.calls.length)   txt += `  CALLS    : ${d.calls.join(', ')}\n`;
+      txt += `  ACTION   : ${d.risk === 'high' ? 'Strong candidate for removal — verify no dynamic calls first.' : 'Review before removing — may be an intentional export or API hook.'}\n`;
+    });
+    txt += `\n`;
+  });
+
+  txt += `${dline}
+NOTES
+${line}
+- This parser detects calls via static analysis (regex). It cannot detect:
+    * Dynamic calls: obj[methodName]() or window[fnName]()
+    * Functions called from HTML onclick attributes
+    * Functions passed as string callbacks (setTimeout("fn()", 0))
+    * Functions used only in files NOT included in this scan
+- Always search your full codebase (including HTML/tests) before deleting.
+- Comment out suspect functions and run tests before permanently removing.
+${dline}
+`;
+  return txt;
+}
+
+// ── Modal close ────────────────────────────────────────
+document.getElementById('modal-close').addEventListener('click', () => modalOverlay.classList.add('hidden'));
+modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) modalOverlay.classList.add('hidden'); });
+
+// ── Generic file download helper ──────────────────────
+// Creates a temporary <a> tag, sets its href to a Blob URL,
+// programmatically clicks it, then removes it. Pure JS, no server needed.
+function downloadFile(filename, content, mimeType) {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 200);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════════════════════
+//  SIDEBAR + STATS
+// ═══════════════════════════════════════════════════════
+function renderSidebar(files, graph) {
+  statsPanel.style.display = '';
+  fileListEl.innerHTML = '';
+
+  const allDiv = makeFileItem('≡', 'All Files', graph.nodes.length, true, false);
+  allDiv.addEventListener('click', () => { setActive(allDiv); clearHighlight(); });
+  fileListEl.appendChild(allDiv);
+
+  files.forEach(f => {
+    const count   = graph.nodes.filter(n => n.file === f.name).length;
+    const orphans = graph.nodes.filter(n => n.file === f.name && n.type === 'orphan').length;
+    // HTML-extracted script blocks get a different icon and subtle tint
+    const isHtml  = f.fromHtml === true;
+    const icon    = isHtml ? '⟨/⟩' : 'JS';
+    const div = makeFileItem(icon, f.name, count, false, isHtml);
+    if (orphans > 0) {
+      div.querySelector('.file-name').insertAdjacentHTML('afterend',
+        `<span class="orphan-badge">${orphans} ☠</span>`);
+    }
+    div.addEventListener('click', () => { setActive(div); filterByFile(f.name); });
+    fileListEl.appendChild(div);
+  });
+}
+
+function makeFileItem(icon, name, count, active, isHtml) {
+  const div = document.createElement('div');
+  div.className = 'file-item' + (active ? ' active' : '') + (isHtml ? ' html-script' : '');
+  const iconStyle = isHtml ? 'color:#f0883e;font-size:0.68rem;font-weight:700' : '';
+  div.innerHTML = `<span class="file-icon" style="${iconStyle}">${icon}</span><span class="file-name" title="${name}">${name}</span><span class="file-count">${count}</span>`;
+  return div;
+}
+
+function setActive(el) {
+  document.querySelectorAll('.file-item').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+}
+
+function updateStats(graph) {
+  document.getElementById('stat-fns').textContent     = graph.nodes.filter(n => n.type !== 'external').length;
+  document.getElementById('stat-links').textContent   = graph.links.length;
+  document.getElementById('stat-orphans').textContent = graph.nodes.filter(n => n.type === 'orphan').length;
+  document.getElementById('stat-files').textContent   = state.files.length;
+}
+
+// ═══════════════════════════════════════════════════════
+//  D3 GRAPH RENDERER
+// ═══════════════════════════════════════════════════════
+function renderGraph(graph) {
+  const svg = d3.select('#graph-svg');
+  svg.selectAll('*').remove();
+
+  const W = graphSvg.clientWidth  || 900;
+  const H = graphSvg.clientHeight || 600;
+
+  svg.append('defs').append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 -5 10 10')
+    .attr('refX', 24).attr('refY', 0)
+    .attr('markerWidth', 5).attr('markerHeight', 5)
+    .attr('orient', 'auto')
+    .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#555');
+
+  const g = svg.append('g');
+
+  const zoom = d3.zoom()
+    .scaleExtent([0.08, 4])
+    .on('zoom', e => g.attr('transform', e.transform));
+  svg.call(zoom);
+  state.zoom = zoom; state.svg = svg;
+
+  const nodes = graph.nodes.map(n => ({ ...n }));
+  const links = graph.links.map(l => ({ ...l }));
+
+  // ── Cluster centers — one per unique file ──────────────
+  // We arrange cluster centers in a circle so files start
+  // separated, then the simulation settles them naturally.
+  const fileNames   = [...new Set(nodes.map(n => n.file))];
+  const clusterCount = fileNames.length;
+  const clusterRadius = Math.min(W, H) * 0.3;
+  const clusterCenters = new Map();
+  fileNames.forEach((file, i) => {
+    const angle = (2 * Math.PI * i) / clusterCount - Math.PI / 2;
+    clusterCenters.set(file, {
+      x: W/2 + (clusterCount > 1 ? clusterRadius * Math.cos(angle) : 0),
+      y: H/2 + (clusterCount > 1 ? clusterRadius * Math.sin(angle) : 0)
+    });
+  });
+
+  // Give each node an initial position near its cluster center
+  nodes.forEach(n => {
+    const c = clusterCenters.get(n.file) || { x: W/2, y: H/2 };
+    n.x = c.x + (Math.random() - 0.5) * 80;
+    n.y = c.y + (Math.random() - 0.5) * 80;
+  });
+
+  // ── Hull group (drawn UNDER nodes) ────────────────────
+  const hullG = g.append('g').attr('class', 'hulls');
+
+  // Assign a distinct muted color per file for its hull
+  const hullPalette = [
+    'rgba(88,166,255,0.06)',  'rgba(63,185,80,0.06)',
+    'rgba(240,136,62,0.06)',  'rgba(188,140,255,0.06)',
+    'rgba(234,197,95,0.06)',  'rgba(248,81,73,0.06)',
+  ];
+  const hullStroke = [
+    'rgba(88,166,255,0.18)',  'rgba(63,185,80,0.18)',
+    'rgba(240,136,62,0.18)',  'rgba(188,140,255,0.18)',
+    'rgba(234,197,95,0.18)',  'rgba(248,81,73,0.18)',
+  ];
+  const fileColorMap = new Map();
+  fileNames.forEach((f, i) => fileColorMap.set(f, i % hullPalette.length));
+
+  // We'll update hulls on every tick
+  function updateHulls() {
+    // Group node positions by file
+    const groups = new Map();
+    nodes.forEach(n => {
+      if (!groups.has(n.file)) groups.set(n.file, []);
+      groups.get(n.file).push([n.x, n.y]);
+    });
+
+    hullG.selectAll('.cluster-hull').remove();
+    hullG.selectAll('.cluster-label').remove();
+
+    groups.forEach((pts, file) => {
+      const ci = fileColorMap.get(file) ?? 0;
+      // Need at least 3 points for a hull; pad duplicates if fewer
+      let hullPts = pts;
+      while (hullPts.length < 3) hullPts = [...hullPts, [hullPts[0][0]+1, hullPts[0][1]+1]];
+
+      // Expand hull outward by padding each point away from centroid
+      const cx = d3.mean(hullPts, p => p[0]);
+      const cy = d3.mean(hullPts, p => p[1]);
+      const padded = hullPts.map(p => {
+        const dx = p[0] - cx, dy = p[1] - cy;
+        const len = Math.sqrt(dx*dx + dy*dy) || 1;
+        return [p[0] + dx/len * 30, p[1] + dy/len * 30];
+      });
+
+      const hull = d3.polygonHull(padded);
+      if (!hull) return;
+
+      hullG.append('path')
+        .attr('class', 'cluster-hull')
+        .attr('d', 'M' + hull.join('L') + 'Z')
+        .attr('fill',   hullPalette[ci])
+        .attr('stroke', hullStroke[ci])
+        .attr('stroke-width', 1.5)
+        .attr('stroke-linejoin', 'round');
+
+      // Short label at top of hull
+      const topPt = hull.reduce((a,b) => b[1] < a[1] ? b : a);
+      hullG.append('text')
+        .attr('class', 'cluster-label')
+        .attr('x', topPt[0]).attr('y', topPt[1] - 8)
+        .attr('text-anchor', 'middle')
+        .attr('fill', hullStroke[ci].replace('0.18','0.7'))
+        .attr('font-size', '10')
+        .attr('font-family', 'Segoe UI, sans-serif')
+        .attr('pointer-events', 'none')
+        .text(file.length > 28 ? file.slice(0,26)+'…' : file);
+    });
+  }
+
+  // ── Force simulation ───────────────────────────────────
+  const sim = d3.forceSimulation(nodes)
+    .force('link',      d3.forceLink(links).id(d => d.id).distance(120).strength(0.35))
+    .force('charge',    d3.forceManyBody().strength(-320))
+    .force('center',    d3.forceCenter(W / 2, H / 2).strength(0.05))
+    .force('collision', d3.forceCollide(34))
+    // Cluster force: gently pull each node toward its file's cluster center
+    .force('cluster', () => {
+      nodes.forEach(n => {
+        const c = clusterCenters.get(n.file);
+        if (!c) return;
+        const strength = 0.12;
+        n.vx = (n.vx || 0) + (c.x - n.x) * strength * 0.1;
+        n.vy = (n.vy || 0) + (c.y - n.y) * strength * 0.1;
+      });
+    });
+  state.simulation = sim;
+
+  const linkSel = g.append('g').selectAll('line').data(links).enter()
+    .append('line')
+    .attr('class', 'link')
+    .attr('stroke', '#3d444d')
+    .attr('stroke-width', 1.5)
+    .attr('marker-end', 'url(#arrow)');
+
+  const nodeSel = g.append('g').selectAll('g').data(nodes).enter()
+    .append('g').attr('class', 'node')
+    .call(d3.drag()
+      .on('start', (ev, d) => { if (!ev.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag',  (ev, d) => { d.fx = ev.x; d.fy = ev.y; })
+      .on('end',   (ev, d) => { if (!ev.active) sim.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  nodeSel.append('circle')
+    .attr('r', d => ({ entry:18, utility:16, connected:14, orphan:12, external:10, complex:18 }[d.type] || 14))
+    .attr('fill',   d => d.color)
+    .attr('stroke', d => d.stroke);
+
+  // Complex nodes get a warning ⚡ icon
+  nodeSel.filter(d => d.type === 'complex')
+    .append('text')
+    .attr('text-anchor','middle').attr('dy','0.35em')
+    .attr('font-size','10').attr('fill','#0d1117').attr('pointer-events','none')
+    .text('⚡');
+
+  nodeSel.append('text')
+    .attr('dy', d => ({ entry:31, utility:29, connected:27, orphan:25, external:23, complex:32 }[d.type] || 27))
+    .attr('text-anchor', 'middle')
+    .text(d => d.id.length > 20 ? d.id.slice(0, 18) + '…' : d.id);
+
+  nodeSel
+    .on('mouseover', (ev, d) => {
+      document.getElementById('tt-name').textContent    = d.id;
+      document.getElementById('tt-file').textContent    = d.file;
+      document.getElementById('tt-role').textContent    = roleLabel(d.type);
+      document.getElementById('tt-callers').textContent = d.callers.length;
+      document.getElementById('tt-calls').textContent   = d.calls.length;
+      tooltip.classList.add('visible');
+      positionTooltip(ev);
+    })
+    .on('mousemove', positionTooltip)
+    .on('mouseout',  () => tooltip.classList.remove('visible'))
+    .on('click',     (ev, d) => { ev.stopPropagation(); selectNode(d); })
+    .on('dblclick',  (ev, d) => { ev.stopPropagation(); showCallDepth(d.id); });
+
+  svg.on('click', () => { clearHighlight(); infoPanel.classList.remove('visible'); });
+
+  sim.on('tick', () => {
+    updateHulls();
+    linkSel
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  state._nodeSel = nodeSel;
+  state._linkSel = linkSel;
+
+  document.getElementById('ctrl-zoom-in').onclick    = () => svg.transition().duration(300).call(zoom.scaleBy, 1.4);
+  document.getElementById('ctrl-zoom-out').onclick   = () => svg.transition().duration(300).call(zoom.scaleBy, 0.72);
+  document.getElementById('ctrl-zoom-reset').onclick = () => svg.transition().duration(400).call(zoom.transform, d3.zoomIdentity.translate(W/2, H/2).scale(0.85));
+}
+
+function positionTooltip(ev) {
+  tooltip.style.left = Math.min(ev.clientX + 14, window.innerWidth - 280) + 'px';
+  tooltip.style.top  = Math.max(ev.clientY - 30, 4) + 'px';
+}
+
+function roleLabel(t) {
+  return { entry:'Entry Point', connected:'Connected', utility:'Shared Utility', orphan:'Orphan / Unused', external:'External Import', complex:'Complex (high outbound)' }[t] || t;
+}
+
+function selectNode(d) {
+  const connected = new Set([d.id, ...d.callers, ...d.calls]);
+  state._nodeSel
+    .classed('highlighted', n => n.id === d.id)
+    .classed('dimmed',      n => !connected.has(n.id));
+  state._linkSel
+    .classed('highlighted', l => l.source.id === d.id || l.target.id === d.id)
+    .classed('dimmed',      l => l.source.id !== d.id && l.target.id !== d.id)
+    .style('stroke',        l => (l.source.id === d.id || l.target.id === d.id) ? '#79c0ff' : null)
+    .style('stroke-width',  l => (l.source.id === d.id || l.target.id === d.id) ? '2.5px' : null);
+  showInfoPanel(d);
+}
+
+function clearHighlight() {
+  if (!state._nodeSel) return;
+  state._nodeSel.classed('highlighted', false).classed('dimmed', false);
+  state._linkSel.classed('highlighted', false).classed('dimmed', false).style('stroke', null).style('stroke-width', null);
+}
+
+function filterByFile(fileName) {
+  if (!state._nodeSel) return;
+  state._nodeSel.classed('dimmed', d => d.file !== fileName).classed('highlighted', false);
+  state._linkSel.classed('dimmed', l => l.source.file !== fileName && l.target.file !== fileName).style('stroke', null).style('stroke-width', null);
+}
+
+function showInfoPanel(d) {
+  document.getElementById('ip-name').textContent = d.id;
+  document.getElementById('ip-type').innerHTML   = roleLabel(d.type) + (d.type === 'orphan' ? '<span class="orphan-badge">unused</span>' : '');
+  document.getElementById('ip-file').textContent = d.file;
+  document.getElementById('ip-callers-count').textContent = d.callers.length;
+  document.getElementById('ip-calls-count').textContent   = d.calls.length;
+
+  const list = document.getElementById('ip-caller-list');
+  list.innerHTML = '';
+
+  const addSection = (title, items, arrow) => {
+    if (!items.length) return;
+    const lbl = document.createElement('div');
+    lbl.className = 'ip-section-label';
+    lbl.textContent = title;
+    list.appendChild(lbl);
+    items.forEach(name => {
+      const el = document.createElement('div');
+      el.className = 'caller-item';
+      el.textContent = arrow + ' ' + name;
+      el.onclick = () => { const node = state.graph.nodes.find(n => n.id === name); if (node) selectNode(node); };
+      list.appendChild(el);
+    });
+  };
+
+  addSection('Called by:', d.callers, '←');
+  addSection('Calls:', d.calls, '→');
+  infoPanel.classList.add('visible');
+}
+
+
+// ═══════════════════════════════════════════════════════
+//  HEALTH SCORE
+//  Composite 0-100 score. Factors:
+//   - Orphan ratio (lower = better)
+//   - Override density in CSS (not applicable here, but future)
+//   - Complexity ratio (complex nodes / total)
+//   - Connection health (utility nodes are good, isolated bad)
+// ═══════════════════════════════════════════════════════
+function renderHealthScore(graph) {
+  const total    = graph.nodes.filter(n => n.type !== 'external').length;
+  if (!total) return;
+
+  const orphans  = graph.nodes.filter(n => n.type === 'orphan').length;
+  const complex  = graph.nodes.filter(n => n.type === 'complex').length;
+  const entries  = graph.nodes.filter(n => n.type === 'entry').length;
+  const utility  = graph.nodes.filter(n => n.type === 'utility').length;
+
+  // Each factor scored 0-100, then weighted
+  const orphanScore   = Math.max(0, 100 - (orphans  / total) * 200); // orphans hurt a lot
+  const complexScore  = Math.max(0, 100 - (complex  / total) * 150);
+  const entryScore    = entries > 0 ? Math.min(100, entries * 10) : 50; // some entries = good
+  const utilityScore  = utility > 0 ? Math.min(100, 60 + utility * 5) : 60;
+
+  const score = Math.round(orphanScore * 0.4 + complexScore * 0.3 + entryScore * 0.15 + utilityScore * 0.15);
+  const clamped = Math.max(0, Math.min(100, score));
+
+  const color = clamped >= 75 ? '#3fb950' : clamped >= 50 ? '#f0883e' : '#f85149';
+  const el = document.getElementById('health-score');
+  const val = document.getElementById('hs-value');
+  val.textContent = clamped;
+  val.style.color = color;
+  el.classList.remove('hidden');
+  el.title = `Health Score: ${clamped}/100\nOrphans: ${orphans} · Complex: ${complex} · Entries: ${entries}`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  SEARCH + FILTER
+// ═══════════════════════════════════════════════════════
+searchInput.addEventListener('input', () => {
+  const q = searchInput.value.trim().toLowerCase();
+  if (!state._nodeSel || !state._linkSel) return;
+
+  if (!q) {
+    // Clear search — restore full graph
+    searchCount.textContent = '';
+    clearHighlight();
+    return;
+  }
+
+  const matches = state.graph.nodes.filter(n => n.id.toLowerCase().includes(q));
+  searchCount.textContent = matches.length ? `${matches.length} found` : 'no match';
+  searchCount.style.color = matches.length ? '#3fb950' : '#f85149';
+
+  const matchIds = new Set(matches.map(n => n.id));
+  state._nodeSel
+    .classed('highlighted', n => matchIds.has(n.id))
+    .classed('dimmed',      n => !matchIds.has(n.id));
+  state._linkSel
+    .classed('dimmed', l => !matchIds.has(l.source.id) && !matchIds.has(l.target.id))
+    .style('stroke', null).style('stroke-width', null);
+});
+
+// ═══════════════════════════════════════════════════════
+//  CALL DEPTH VISUALIZATION
+//  Click any node → BFS outward, color nodes by depth ring
+// ═══════════════════════════════════════════════════════
+const DEPTH_COLORS = ['#3fb950','#58a6ff','#bc8cff','#f0883e','#f85149','#e6edf3'];
+
+function showCallDepth(rootId) {
+  if (!state._nodeSel || !state._linkSel) return;
+  state._depthMode = true;
+  document.getElementById('ctrl-depth-clear').style.display = '';
+
+  // BFS from root following outbound calls
+  const depthMap = new Map([[rootId, 0]]);
+  const queue = [rootId];
+  while (queue.length) {
+    const cur = queue.shift();
+    const node = state.graph.nodes.find(n => n.id === cur);
+    if (!node) continue;
+    node.calls.forEach(callee => {
+      if (!depthMap.has(callee)) {
+        depthMap.set(callee, depthMap.get(cur) + 1);
+        queue.push(callee);
+      }
+    });
+  }
+
+  // Color nodes by depth, dim unreachable
+  state._nodeSel
+    .classed('highlighted', false)
+    .classed('dimmed', n => !depthMap.has(n.id))
+    .select('circle')
+    .style('fill',   n => depthMap.has(n.id) ? DEPTH_COLORS[Math.min(depthMap.get(n.id), DEPTH_COLORS.length-1)] : null)
+    .style('stroke', n => depthMap.has(n.id) ? DEPTH_COLORS[Math.min(depthMap.get(n.id), DEPTH_COLORS.length-1)] : null);
+
+  // Remove old depth badges then add new ones
+  state._nodeSel.selectAll('.depth-badge').remove();
+  state._nodeSel.filter(n => depthMap.has(n.id))
+    .append('text')
+    .attr('class','depth-badge')
+    .attr('dy', '-12')
+    .attr('text-anchor','middle')
+    .text(n => `d${depthMap.get(n.id)}`);
+
+  // Highlight edges that are on the depth path
+  state._linkSel
+    .classed('highlighted', l => depthMap.has(l.source.id) && depthMap.has(l.target.id))
+    .classed('dimmed',      l => !depthMap.has(l.source.id) || !depthMap.has(l.target.id));
+}
+
+document.getElementById('ctrl-depth-clear').addEventListener('click', () => {
+  state._depthMode = false;
+  document.getElementById('ctrl-depth-clear').style.display = 'none';
+  clearHighlight();
+  // Restore original node colors
+  if (state._nodeSel) {
+    state._nodeSel.select('circle')
+      .style('fill',   d => d.color)
+      .style('stroke', d => d.stroke);
+    state._nodeSel.selectAll('.depth-badge').remove();
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+//  CHARTS REPORT — D3 bar charts and donut
+// ═══════════════════════════════════════════════════════
+function renderChartsReport() {
+  const nodes = state.graph.nodes.filter(n => n.type !== 'external');
+  modalBody.innerHTML = `<div class="charts-grid">
+    <div class="chart-section" id="chart-loc"></div>
+    <div class="chart-section" id="chart-connections"></div>
+    <div class="chart-section" id="chart-types" style="grid-column:1/-1"></div>
+  </div>`;
+
+  // Allow DOM to paint before D3 measures widths
+  requestAnimationFrame(() => {
+    renderBarChart('chart-loc',
+      nodes.filter(n => n.lineCount > 0).sort((a,b) => b.lineCount - a.lineCount).slice(0,15),
+      d => d.lineCount,
+      d => d.id,
+      '📏 Top Functions by Line Count',
+      '#58a6ff'
+    );
+    renderBarChart('chart-connections',
+      nodes.sort((a,b) => (b.inDegree+b.outDegree) - (a.inDegree+a.outDegree)).slice(0,15),
+      d => d.inDegree + d.outDegree,
+      d => d.id,
+      '🔗 Top Functions by Connections',
+      '#f0883e'
+    );
+    renderDonutChart('chart-types', nodes);
+  });
+}
+
+function renderBarChart(containerId, data, valueFn, labelFn, title, color) {
+  if (!data.length) return;
+  const container = document.getElementById(containerId);
+  const W = container.clientWidth || 340;
+  const barH = 22, gap = 4, marginL = 130, marginR = 50, marginT = 30, marginB = 10;
+  const H = data.length * (barH + gap) + marginT + marginB;
+  const maxVal = d3.max(data, valueFn);
+
+  const xScale = d3.scaleLinear().domain([0, maxVal]).range([0, W - marginL - marginR]);
+
+  const svg = d3.select(`#${containerId}`)
+    .html(`<div class="chart-title">${title}</div>`)
+    .append('svg').attr('width', W).attr('height', H);
+
+  const g = svg.append('g').attr('transform', `translate(${marginL},${marginT})`);
+
+  const rows = g.selectAll('.row').data(data).enter().append('g')
+    .attr('class','row')
+    .attr('transform', (d,i) => `translate(0,${i*(barH+gap)})`);
+
+  // Bar background track
+  rows.append('rect')
+    .attr('x',0).attr('y',0).attr('width', W-marginL-marginR).attr('height', barH)
+    .attr('fill','#21262d').attr('rx',3);
+
+  // Actual bar
+  rows.append('rect')
+    .attr('class','chart-bar')
+    .attr('x',0).attr('y',0)
+    .attr('width', d => Math.max(2, xScale(valueFn(d))))
+    .attr('height', barH)
+    .attr('fill', d => d.color || color)
+    .attr('rx',3)
+    .on('click', (ev, d) => {
+      // Click bar → highlight node on graph
+      const node = state.graph.nodes.find(n => n.id === d.id);
+      if (node) { modalOverlay.classList.add('hidden'); selectNode(node); }
+    });
+
+  // Label (function name)
+  rows.append('text')
+    .attr('class','chart-label')
+    .attr('x',-6).attr('y', barH/2).attr('dy','0.35em')
+    .attr('text-anchor','end')
+    .text(d => { const l = labelFn(d); return l.length > 18 ? l.slice(0,16)+'…' : l; });
+
+  // Value label
+  rows.append('text')
+    .attr('class','chart-value')
+    .attr('x', d => xScale(valueFn(d)) + 6)
+    .attr('y', barH/2).attr('dy','0.35em')
+    .text(d => valueFn(d));
+}
+
+function renderDonutChart(containerId, nodes) {
+  const typeCounts = d3.rollup(nodes, v => v.length, d => d.type);
+  const typeColors = { entry:'#3fb950', connected:'#58a6ff', utility:'#f0883e', orphan:'#f85149', complex:'#eac55f', external:'#bc8cff' };
+  const typeLabels = { entry:'Entry Points', connected:'Connected', utility:'Shared Utility', orphan:'Orphan/Unused', complex:'Complex', external:'External' };
+
+  const data = [...typeCounts.entries()].map(([type, count]) => ({ type, count, color: typeColors[type] || '#8b949e' }));
+  const W = document.getElementById(containerId).clientWidth || 680;
+  const H = 200, R = 80, cx = W/2, cy = H/2;
+
+  const pie = d3.pie().value(d => d.count).sort(null);
+  const arc = d3.arc().innerRadius(R*0.55).outerRadius(R);
+
+  const container = document.getElementById(containerId);
+  container.innerHTML = `<div class="chart-title">🎯 Function Type Distribution</div>`;
+  const svg = d3.select(`#${containerId}`).append('svg').attr('width', W).attr('height', H);
+  const g   = svg.append('g').attr('transform', `translate(${cx},${cy})`);
+
+  const slices = g.selectAll('path').data(pie(data)).enter().append('path')
+    .attr('d', arc)
+    .attr('fill', d => d.data.color)
+    .attr('stroke','#0d1117').attr('stroke-width',2)
+    .style('cursor','pointer')
+    .on('mouseover', function(ev, d) {
+      d3.select(this).attr('transform','scale(1.06)');
+    })
+    .on('mouseout', function() { d3.select(this).attr('transform','scale(1)'); });
+
+  // Center total label
+  g.append('text').attr('text-anchor','middle').attr('dy','-0.2em')
+    .attr('fill','#e6edf3').attr('font-size','1.4rem').attr('font-weight','700')
+    .text(nodes.length);
+  g.append('text').attr('text-anchor','middle').attr('dy','1.2em')
+    .attr('fill','#8b949e').attr('font-size','0.65rem')
+    .text('functions');
+
+  // Legend
+  const legendX = cx + R + 24;
+  let ly = cy - (data.length * 20)/2;
+  data.forEach(d => {
+    svg.append('rect').attr('x', legendX).attr('y', ly-7).attr('width',10).attr('height',10).attr('rx',2).attr('fill', d.color);
+    svg.append('text').attr('x', legendX+14).attr('y', ly+1).attr('fill','#c9d1d9').attr('font-size','11')
+      .text(`${typeLabels[d.type] || d.type} (${d.count})`);
+    ly += 22;
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  DIFF TOOL
+// ═══════════════════════════════════════════════════════
+const diffModalOverlay = document.getElementById('diff-modal-overlay');
+
+btnDiff.addEventListener('click', () => {
+  diffModalOverlay.classList.remove('hidden');
+});
+document.getElementById('diff-modal-close').addEventListener('click', () => diffModalOverlay.classList.add('hidden'));
+diffModalOverlay.addEventListener('click', e => { if (e.target === diffModalOverlay) diffModalOverlay.classList.add('hidden'); });
+
+// File loader for each slot
+function setupDiffSlot(btnId, inputId, nameId, slot) {
+  const btn   = document.getElementById(btnId);
+  const input = document.getElementById(inputId);
+  const name  = document.getElementById(nameId);
+  btn.addEventListener('click', () => input.click());
+  input.addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      state[slot] = { name: f.name, content: ev.target.result };
+      name.textContent = f.name;
+      // Enable run button when both slots filled
+      document.getElementById('diff-run').disabled = !(state._diffA && state._diffB);
+    };
+    reader.readAsText(f);
+  });
+}
+setupDiffSlot('diff-load-a', 'diff-input-a', 'diff-name-a', '_diffA');
+setupDiffSlot('diff-load-b', 'diff-input-b', 'diff-name-b', '_diffB');
+
+document.getElementById('diff-run').addEventListener('click', () => {
+  if (!state._diffA || !state._diffB) return;
+  const result = computeDiff(state._diffA.content, state._diffB.content);
+  state._diffResult = result;
+  renderDiff(result, state._diffA.name, state._diffB.name);
+  document.getElementById('btn-diff-dl').disabled = false;
+  const added   = result.filter(l => l.type === 'add').length;
+  const removed = result.filter(l => l.type === 'del').length;
+  document.getElementById('diff-footer-note').textContent =
+    `+${added} lines added · −${removed} lines removed`;
+});
+
+document.getElementById('btn-diff-dl').addEventListener('click', () => {
+  if (!state._diffResult || !state._diffB) return;
+  // Apply diff = just use file B content (B is the modified version)
+  const base = state._diffB.name.replace(/\.(js|mjs|cjs)$/i, '');
+  downloadFile(`${base}-diff-applied.js`, state._diffB.content, 'text/javascript');
+});
+
+// ── LCS-based line diff ────────────────────────────────
+// We use a simple Myers-style diff: split both files into lines,
+// compute the longest common subsequence, then classify each line
+// as 'same', 'add' (in B not A), or 'del' (in A not B).
+function computeDiff(textA, textB) {
+  const linesA = textA.split('\n');
+  const linesB = textB.split('\n');
+  const result = [];
+
+  // Build LCS table (dynamic programming)
+  const m = linesA.length, n = linesB.length;
+  // For large files, cap to avoid O(n²) freeze
+  if (m * n > 500000) {
+    // Fall back to simple line-by-line for very large files
+    return simpleLineDiff(linesA, linesB);
+  }
+
+  const dp = Array.from({length: m+1}, () => new Int32Array(n+1));
+  for (let i = m-1; i >= 0; i--) {
+    for (let j = n-1; j >= 0; j--) {
+      if (linesA[i] === linesB[j])   dp[i][j] = dp[i+1][j+1] + 1;
+      else if (dp[i+1][j] >= dp[i][j+1]) dp[i][j] = dp[i+1][j];
+      else                                dp[i][j] = dp[i][j+1];
+    }
+  }
+
+  // Trace back through the LCS table
+  let i = 0, j = 0;
+  let lineA = 1, lineB = 1;
+  while (i < m || j < n) {
+    if (i < m && j < n && linesA[i] === linesB[j]) {
+      result.push({ type:'same', text: linesA[i], lineA: lineA++, lineB: lineB++ });
+      i++; j++;
+    } else if (j < n && (i >= m || dp[i][j+1] >= dp[i+1][j])) {
+      result.push({ type:'add',  text: linesB[j], lineA: null, lineB: lineB++ });
+      j++;
+    } else {
+      result.push({ type:'del',  text: linesA[i], lineA: lineA++, lineB: null });
+      i++;
+    }
+  }
+  return result;
+}
+
+function simpleLineDiff(linesA, linesB) {
+  const result = [];
+  const maxLen = Math.max(linesA.length, linesB.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (i >= linesA.length)      result.push({ type:'add',  text: linesB[i], lineA: null,  lineB: i+1 });
+    else if (i >= linesB.length) result.push({ type:'del',  text: linesA[i], lineA: i+1,   lineB: null });
+    else if (linesA[i] === linesB[i]) result.push({ type:'same', text: linesA[i], lineA: i+1, lineB: i+1 });
+    else {
+      result.push({ type:'del',  text: linesA[i], lineA: i+1,   lineB: null });
+      result.push({ type:'add',  text: linesB[i], lineA: null,  lineB: i+1 });
+    }
+  }
+  return result;
+}
+
+function renderDiff(result, nameA, nameB) {
+  // Split into two panes: A (left) shows same+del, B (right) shows same+add
+  const paneA = result.filter(l => l.type !== 'add');
+  const paneB = result.filter(l => l.type !== 'del');
+
+  const makeLines = (lines) => lines.map(l => {
+    const cls  = l.type === 'add' ? 'diff-add' : l.type === 'del' ? 'diff-del' : 'diff-same';
+    const ln   = l.type === 'add' ? l.lineB : l.lineA;
+    const pfx  = l.type === 'add' ? '+' : l.type === 'del' ? '−' : ' ';
+    return `<div class="diff-line ${cls}">
+      <span class="diff-ln">${ln ?? ''}</span>
+      <span class="diff-text">${pfx} ${escapeHtml(l.text)}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('diff-modal-body').innerHTML = `
+    <div class="diff-view">
+      <div class="diff-pane diff-divider">
+        <div class="diff-pane-header">A — ${escapeHtml(nameA)}</div>
+        ${makeLines(paneA)}
+      </div>
+      <div class="diff-pane">
+        <div class="diff-pane-header">B — ${escapeHtml(nameB)}</div>
+        ${makeLines(paneB)}
+      </div>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  HELP MODAL
+// ═══════════════════════════════════════════════════════
+const helpModalOverlay = document.getElementById('help-modal-overlay');
+document.getElementById('btn-help').addEventListener('click', () => helpModalOverlay.classList.remove('hidden'));
+document.getElementById('help-modal-close').addEventListener('click', () => helpModalOverlay.classList.add('hidden'));
+document.getElementById('help-close-btn').addEventListener('click', () => helpModalOverlay.classList.add('hidden'));
+helpModalOverlay.addEventListener('click', e => { if (e.target === helpModalOverlay) helpModalOverlay.classList.add('hidden'); });
+
+// ═══════════════════════════════════════════════════════
+//  EXPORT GRAPH AS PNG
+//  Uses SVG → Canvas → PNG workflow
+// ═══════════════════════════════════════════════════════
+function exportGraphAsPNG() {
+  if (!state.graph) { alert('Load files first to export the graph.'); return; }
+
+  const svgEl = document.getElementById('graph-svg');
+  const svgData = new XMLSerializer().serializeToString(svgEl);
+  
+  // Inline all CSS so the image is self-contained
+  const css = `
+    <style>
+      .node circle { stroke-width:2.5px; }
+      .node text { font-size:10px; fill:#c9d1d9; font-family:'Segoe UI',sans-serif; }
+      .link { stroke:#3d444d; stroke-width:1.5px; fill:none; }
+      .cluster-hull { stroke-linejoin:round; }
+      .cluster-label { font-size:10px; font-family:'Segoe UI',sans-serif; }
+      .depth-badge { font-size:9px; fill:#0d1117; font-weight:700; }
+    </style>
+  `;
+  const styledSvg = svgData.replace('<svg', `<svg xmlns="http://www.w3.org/2000/svg">${css}`);
+  
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  
+  const blob = new Blob([styledSvg], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  
+  img.onload = () => {
+    canvas.width = svgEl.clientWidth * 2;  // 2x for retina
+    canvas.height = svgEl.clientHeight * 2;
+    ctx.scale(2, 2);
+    ctx.fillStyle = '#0d1117';  // dark background
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    
+    canvas.toBlob(blob => {
+      downloadFile('dependency-graph.png', blob, 'image/png');
+      URL.revokeObjectURL(url);
+    });
+  };
+  
+  img.src = url;
+}
+
+// Add export button to controls overlay
+document.getElementById('ctrl-overlay').insertAdjacentHTML('beforeend',
+  '<span style="color:#30363d;padding:0 4px">|</span><button class="ctrl-btn" id="ctrl-export" title="Export as PNG">📷</button>'
+);
+document.getElementById('ctrl-export').addEventListener('click', exportGraphAsPNG);
+
+// ═══════════════════════════════════════════════════════
+//  CSS COMPACTOR ENGINE
+// ═══════════════════════════════════════════════════════
+
+// ── Step 1: Extract raw CSS text from files ────────────
+// For .css files: use the content directly.
+// For .html files: extract everything between <style>...</style> tags.
+// We do NOT touch the HTML file — we just read the CSS out of it.
+function extractCssFromFiles(cssFiles) {
+  const sources = [];
+
+  cssFiles.forEach(f => {
+    if (/\.(css)$/i.test(f.name)) {
+      sources.push({ sourceFile: f.name, type: 'css', css: f.content });
+    } else {
+      // HTML file — pull out all <style> blocks
+      const styleRe = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+      let match;
+      let blockIndex = 0;
+      while ((match = styleRe.exec(f.content)) !== null) {
+        blockIndex++;
+        sources.push({
+          sourceFile: f.name,
+          type: 'html-extracted',
+          blockIndex,
+          css: match[1]
+        });
+      }
+      if (blockIndex === 0) {
+        sources.push({ sourceFile: f.name, type: 'html-extracted', blockIndex: 0, css: '' });
+      }
+    }
+  });
+
+  return sources;
+}
+
+// ── Step 2: Tokenize CSS into blocks ──────────────────
+// A "block" is either:
+//   { type: 'rule',    selector, properties[] }   — normal .foo { ... }
+//   { type: 'at',      keyword, raw }              — @keyframes, @font-face, etc.
+//   { type: 'media',   query, rules[] }            — @media (...) { rules }
+// Properties are: { prop, value }
+//
+// Strategy: walk character-by-character tracking brace depth.
+// This handles nested braces (like @media containing rules)
+// without getting confused by strings or comments.
+function tokenizeCSS(css) {
+  // Strip CSS comments first
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens   = [];
+  let   pos      = 0;
+  const len      = stripped.length;
+
+  while (pos < len) {
+    // Skip whitespace
+    while (pos < len && /\s/.test(stripped[pos])) pos++;
+    if (pos >= len) break;
+
+    // Find next { or end
+    let bracePos = stripped.indexOf('{', pos);
+    if (bracePos === -1) break;
+
+    const prelude = stripped.slice(pos, bracePos).trim();
+    if (!prelude) { pos = bracePos + 1; continue; }
+
+    // Extract the full block content, tracking nested braces
+    let depth = 1;
+    let start = bracePos + 1;
+    let i     = start;
+    while (i < len && depth > 0) {
+      if (stripped[i] === '{') depth++;
+      else if (stripped[i] === '}') depth--;
+      i++;
+    }
+    const blockContent = stripped.slice(start, i - 1);
+    pos = i;
+
+    // Decide what kind of block this is
+    if (/^@keyframes/i.test(prelude) || /^@font-face/i.test(prelude) ||
+        /^@counter-style/i.test(prelude) || /^@page/i.test(prelude)) {
+      // Untouchable @ blocks — pass through raw
+      tokens.push({ type: 'at', keyword: prelude, raw: `${prelude} {\n${blockContent}}` });
+
+    } else if (/^@media/i.test(prelude) || /^@supports/i.test(prelude) ||
+               /^@layer/i.test(prelude) || /^@container/i.test(prelude)) {
+      // Wrapper @ blocks — parse their inner rules so we can merge within them
+      const innerRules = parseRules(blockContent);
+      tokens.push({ type: 'media', query: prelude, rules: innerRules });
+
+    } else {
+      // Normal selector block
+      const properties = parseProperties(blockContent);
+      tokens.push({ type: 'rule', selector: normalizeSelector(prelude), properties });
+    }
+  }
+
+  return tokens;
+}
+
+// Parse "prop: value; prop: value;" into an array of {prop, value}
+function parseProperties(block) {
+  const props = [];
+  // Split on semicolons, but be careful about content inside parens (e.g. calc(), url())
+  const lines = block.split(';');
+  lines.forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    const colonIdx = trimmed.indexOf(':');
+    if (colonIdx === -1) return;
+    const prop  = trimmed.slice(0, colonIdx).trim().toLowerCase();
+    const value = trimmed.slice(colonIdx + 1).trim();
+    if (prop) props.push({ prop, value });
+  });
+  return props;
+}
+
+// Parse a block of CSS rules (used inside @media blocks)
+function parseRules(css) {
+  const rules = [];
+  let pos = 0;
+  const len = css.length;
+  while (pos < len) {
+    while (pos < len && /\s/.test(css[pos])) pos++;
+    if (pos >= len) break;
+    let bracePos = css.indexOf('{', pos);
+    if (bracePos === -1) break;
+    const selector = normalizeSelector(css.slice(pos, bracePos).trim());
+    let depth = 1, i = bracePos + 1;
+    while (i < len && depth > 0) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}') depth--;
+      i++;
+    }
+    const blockContent = css.slice(bracePos + 1, i - 1);
+    pos = i;
+    if (selector) rules.push({ selector, properties: parseProperties(blockContent) });
+  }
+  return rules;
+}
+
+// Normalize selector whitespace so ".home  >" and ".home >" match
+function normalizeSelector(s) {
+  return s.replace(/\s+/g, ' ')
+          .replace(/\s*>\s*/g, ' > ')
+          .replace(/\s*\+\s*/g, ' + ')
+          .replace(/\s*~\s*/g, ' ~ ')
+          .replace(/\s*,\s*/g, ', ')
+          .trim();
+}
+
+// ── Step 3: Merge duplicate selectors ─────────────────
+// For each context (top-level, or per @media query), we:
+//   1. Walk through rules in order
+//   2. For each selector, accumulate properties — last value wins
+//   3. If a property is overridden, record the previous value chain for the comment
+// Returns { mergedRules, stats }
+function mergeRules(rules) {
+  // orderedSelectors preserves the ORDER of first appearance
+  const orderedSelectors = [];
+  // propMap: selector → Map<prop, { value, history[] }>
+  const propMap = new Map();
+  let mergeCount    = 0;
+  let overrideCount = 0;
+
+  rules.forEach(rule => {
+    const sel = rule.selector;
+
+    if (!propMap.has(sel)) {
+      orderedSelectors.push(sel);
+      propMap.set(sel, new Map());
+    } else {
+      mergeCount++; // this selector was already seen — we're merging
+    }
+
+    const existing = propMap.get(sel);
+
+    rule.properties.forEach(({ prop, value }) => {
+      if (existing.has(prop)) {
+        // Property already exists — record the override chain
+        const entry = existing.get(prop);
+        entry.history.push(entry.value); // push current value into history
+        entry.value = value;             // update to new (winning) value
+        overrideCount++;
+      } else {
+        existing.set(prop, { value, history: [] });
+      }
+    });
+  });
+
+  // Build merged rule objects
+  const mergedRules = orderedSelectors.map(sel => {
+    const propEntries = [...propMap.get(sel).entries()];
+    return { selector: sel, propEntries };
+  });
+
+  return { mergedRules, mergeCount, overrideCount };
+}
+
+// ── Step 4: Render merged rules back to CSS text ───────
+// This produces the clean output CSS with override comments
+function renderMergedRules(mergedRules, indent = '') {
+  let out = '';
+  mergedRules.forEach(({ selector, propEntries }) => {
+    out += `${indent}${selector} {\n`;
+    propEntries.forEach(([prop, { value, history }]) => {
+      if (history.length > 0) {
+        // Build the full chain comment
+        const chain = history.join(', then ');
+        out += `${indent}  /* ⚠ ${prop} was previously: ${chain} (overridden) */\n`;
+      }
+      out += `${indent}  ${prop}: ${value};\n`;
+    });
+    out += `${indent}}\n\n`;
+  });
+  return out;
+}
+
+// ── Step 5: Full compaction pipeline for one source ───
+function compactSource(source) {
+  const tokens = tokenizeCSS(source.css);
+
+  let outputCSS       = '';
+  let totalMerges     = 0;
+  let totalOverrides  = 0;
+  let untouchedCount  = 0;
+  const mergeDetails  = []; // for the report
+
+  // Separate top-level rules from @media and untouchable @at blocks
+  const topRules      = tokens.filter(t => t.type === 'rule');
+  const mediaBlocks   = tokens.filter(t => t.type === 'media');
+  const atBlocks      = tokens.filter(t => t.type === 'at');
+
+  // Build a position map so we can reconstruct order
+  // (top rules come first in order of appearance, then media blocks, then @at)
+  // We'll reconstruct in original token order for correctness
+
+  // Process top-level rules
+  const { mergedRules: topMerged, mergeCount: tMerge, overrideCount: tOver } = mergeRules(topRules);
+  totalMerges    += tMerge;
+  totalOverrides += tOver;
+  if (tMerge > 0 || tOver > 0) {
+    mergeDetails.push({ context: 'Top-level', merges: tMerge, overrides: tOver, selectors: topMerged.map(r => r.selector) });
+  }
+
+  // Process each @media block independently
+  const processedMedia = mediaBlocks.map(mb => {
+    const { mergedRules: mMerged, mergeCount: mMerge, overrideCount: mOver } = mergeRules(mb.rules);
+    totalMerges    += mMerge;
+    totalOverrides += mOver;
+    if (mMerge > 0 || mOver > 0) {
+      mergeDetails.push({ context: mb.query, merges: mMerge, overrides: mOver, selectors: mMerged.map(r => r.selector) });
+    }
+    return { query: mb.query, mergedRules: mMerged };
+  });
+
+  untouchedCount = atBlocks.length;
+
+  // ── Reconstruct output in original token order ────
+  // We walk the original token list and output in sequence,
+  // substituting merged versions for rules and media blocks
+  let topRuleIndex   = 0;
+  let mediaIndex     = 0;
+
+  // We need to consume top-level rules in order — but we merged them all.
+  // Solution: output all top-level merged rules first (grouped), then media, then @at.
+  // This preserves the intent even if it reorders slightly — which is safe for CSS
+  // since we're within the same specificity context.
+
+  // Output file header comment
+  const ts = new Date().toLocaleString();
+  outputCSS += `/* ════════════════════════════════════════════════════\n`;
+  outputCSS += `   CSS Compacted by JS Dependency Visualizer\n`;
+  outputCSS += `   Source : ${source.sourceFile}${source.type === 'html-extracted' ? ` (extracted from <style> block ${source.blockIndex})` : ''}\n`;
+  outputCSS += `   Date   : ${ts}\n`;
+  outputCSS += `   Merges : ${totalMerges} duplicate selectors merged\n`;
+  outputCSS += `   Overrides: ${totalOverrides} property values overridden (see ⚠ comments)\n`;
+  outputCSS += `   Untouched: ${untouchedCount} @-rule block(s) passed through unchanged\n`;
+  outputCSS += `════════════════════════════════════════════════════ */\n\n`;
+
+  // Top-level merged rules
+  if (topMerged.length > 0) {
+    outputCSS += renderMergedRules(topMerged);
+  }
+
+  // @media blocks
+  processedMedia.forEach(pm => {
+    outputCSS += `${pm.query} {\n`;
+    outputCSS += renderMergedRules(pm.mergedRules, '  ');
+    outputCSS += `}\n\n`;
+  });
+
+  // Untouched @at blocks (keyframes, font-face, etc.)
+  atBlocks.forEach(at => {
+    outputCSS += `/* Untouched: ${at.keyword.split(' ')[0]} */\n`;
+    outputCSS += at.raw + '\n\n';
+  });
+
+  return {
+    source,
+    outputCSS,
+    totalMerges,
+    totalOverrides,
+    untouchedCount,
+    mergeDetails,
+    topSelectorCount: topMerged.length,
+  };
+}
+
+// ── Run compaction on all loaded CSS/HTML files ────────
+function runCssCompactor() {
+  const sources = extractCssFromFiles(state.cssFiles);
+  const results = sources
+    .filter(s => s.css.trim().length > 0)
+    .map(s => compactSource(s));
+  state._cssResults = results;
+  return results;
+}
+
+// ── Build output filename ──────────────────────────────
+function compactedFilename(source) {
+  const base = source.sourceFile.replace(/\.(css|html|htm)$/i, '');
+  return source.type === 'html-extracted'
+    ? `${base}-extracted-css-compacted.css`
+    : `${base}-compacted.css`;
+}
+
+// ═══════════════════════════════════════════════════════
+//  CSS MODAL — open, tabs, render, download
+// ═══════════════════════════════════════════════════════
+const cssModalOverlay = document.getElementById('css-modal-overlay');
+const cssModalBody    = document.getElementById('css-modal-body');
+
+btnCss.addEventListener('click', () => {
+  const results = runCssCompactor();
+  renderCssTab('summary', results);
+  cssModalOverlay.classList.remove('hidden');
+
+  const totalMerges    = results.reduce((a,r) => a + r.totalMerges, 0);
+  const totalOverrides = results.reduce((a,r) => a + r.totalOverrides, 0);
+  document.getElementById('css-footer-note').textContent =
+    `${results.length} file${results.length !== 1 ? 's' : ''} · ${totalMerges} merge${totalMerges !== 1 ? 's' : ''} · ${totalOverrides} override comment${totalOverrides !== 1 ? 's' : ''}`;
+});
+
+document.getElementById('css-modal-close').addEventListener('click', () => cssModalOverlay.classList.add('hidden'));
+cssModalOverlay.addEventListener('click', e => { if (e.target === cssModalOverlay) cssModalOverlay.classList.add('hidden'); });
+
+// Tab switching
+document.querySelectorAll('[data-csstab]').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('[data-csstab]').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    state.activeCssTab = tab.dataset.csstab;
+    renderCssTab(tab.dataset.csstab, state._cssResults);
+  });
+});
+
+function renderCssTab(tab, results) {
+  if (!results) return;
+  if      (tab === 'summary') renderCssSummary(results);
+  else if (tab === 'preview') renderCssPreview(results);
+  else if (tab === 'report')  renderCssReportTab(results);
+}
+
+// ── Summary tab ────────────────────────────────────────
+function renderCssSummary(results) {
+  const totalMerges    = results.reduce((a,r) => a + r.totalMerges, 0);
+  const totalOverrides = results.reduce((a,r) => a + r.totalOverrides, 0);
+  const totalUntouched = results.reduce((a,r) => a + r.untouchedCount, 0);
+  const totalSelectors = results.reduce((a,r) => a + r.topSelectorCount, 0);
+
+  let html = `
+    <div class="report-summary">
+      <div class="summary-card sc-green"><div class="sc-num">${totalMerges}</div><div class="sc-label">Selectors Merged</div></div>
+      <div class="summary-card sc-orange"><div class="sc-num">${totalOverrides}</div><div class="sc-label">Override Comments Added</div></div>
+      <div class="summary-card sc-blue"><div class="sc-num">${totalSelectors}</div><div class="sc-label">Unique Selectors</div></div>
+      <div class="summary-card sc-gray"><div class="sc-num">${totalUntouched}</div><div class="sc-label">@-Rules Untouched</div></div>
+    </div>`;
+
+  if (totalMerges === 0 && totalOverrides === 0) {
+    html += `<div style="text-align:center;padding:30px;color:#3fb950;font-size:0.95rem">✓ No duplicate selectors found! Your CSS is already clean.</div>`;
+    cssModalBody.innerHTML = html;
+    return;
+  }
+
+  results.forEach(result => {
+    const fname = compactedFilename(result.source);
+    html += `<div class="css-file-section">`;
+    html += `<div class="css-file-header">
+      📄 ${result.source.sourceFile}
+      ${result.source.type === 'html-extracted' ? `<span class="css-badge">&lt;style&gt; block ${result.source.blockIndex}</span>` : ''}
+      → <span style="color:#c9d1d9;font-weight:400;text-transform:none;letter-spacing:0">${fname}</span>
+      <span class="css-badge merged">${result.totalMerges} merged</span>
+      ${result.totalOverrides ? `<span class="css-badge override">${result.totalOverrides} overrides</span>` : ''}
+      ${result.untouchedCount ? `<span class="css-badge untouched">${result.untouchedCount} untouched</span>` : ''}
+    </div>`;
+
+    if (result.mergeDetails.length > 0) {
+      html += `<table class="merge-table">
+        <thead><tr><th>Context</th><th>Selector</th><th>Merges</th><th>Overrides</th></tr></thead><tbody>`;
+      result.mergeDetails.forEach(d => {
+        html += `<tr>
+          <td style="color:#8b949e;font-size:0.75rem;white-space:nowrap">${escapeHtml(d.context)}</td>
+          <td class="prop-list">${d.selectors.map(s => `<span class="sel-name">${escapeHtml(s)}</span>`).join('<br>')}</td>
+          <td style="color:#3fb950">${d.merges}</td>
+          <td style="color:#ffa657">${d.overrides}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+    html += `</div>`;
+  });
+
+  cssModalBody.innerHTML = html;
+}
+
+// ── Preview tab ────────────────────────────────────────
+function renderCssPreview(results) {
+  let html = '';
+  results.forEach(result => {
+    const fname = compactedFilename(result.source);
+    html += `<div class="report-section-title">→ ${fname}</div>`;
+    // Syntax-highlight the output CSS
+    const highlighted = syntaxHighlightCSS(result.outputCSS);
+    html += `<div class="preview-block">${highlighted}</div>`;
+  });
+  cssModalBody.innerHTML = html || '<p style="color:#8b949e;padding:20px">No CSS output generated.</p>';
+}
+
+// ── Text report tab ────────────────────────────────────
+function renderCssReportTab(results) {
+  const txt = buildCssReportTxt(results);
+  cssModalBody.innerHTML = `<div class="json-output">${escapeHtml(txt)}</div>`;
+}
+
+// ── Syntax highlighter for CSS preview ────────────────
+// IMPORTANT: We must escape HTML *per segment*, NOT the whole string first.
+// If we escapeHtml() the whole string first, then inject <span> tags,
+// those span tags themselves get escaped and render as raw text on screen.
+// Instead: split into lines, escape each line's text parts individually,
+// then wrap with span tags so the browser renders them as real HTML elements.
+function syntaxHighlightCSS(css) {
+  return css.split('\n').map(line => {
+    const e = escapeHtml(line); // escape this line's text safely
+
+    // Comment lines (our ⚠ override comments and regular /* */ comments)
+    if (/^\s*\/\*/.test(line)) {
+      return `<span class="preview-comment">${e}</span>`;
+    }
+
+    // @-rule lines (@media, @keyframes header, etc.)
+    if (/^\s*@/.test(line)) {
+      return `<span class="preview-at">${e}</span>`;
+    }
+
+    // Closing brace lines
+    if (/^\s*\}\s*$/.test(line)) {
+      return `<span style="color:#8b949e">${e}</span>`;
+    }
+
+    // Property: value; lines — split at the colon to color prop and value separately
+    const propMatch = line.match(/^(\s*)([\w-]+)(\s*:\s*)(.+?)(;\s*)$/);
+    if (propMatch) {
+      const [, indent, prop, colon, value, semi] = propMatch;
+      return `${escapeHtml(indent)}<span class="preview-property">${escapeHtml(prop)}</span>`
+           + `${escapeHtml(colon)}<span class="preview-value">${escapeHtml(value)}</span>`
+           + `<span style="color:#8b949e">${escapeHtml(semi)}</span>`;
+    }
+
+    // Selector lines (contain { at end, not a property)
+    if (/{$/.test(line.trim())) {
+      const sel = e.replace(/\{$/, '').trimEnd();
+      return `<span class="preview-selector">${sel}</span><span style="color:#8b949e">{</span>`;
+    }
+
+    // Everything else (blank lines, closing headers, etc.)
+    return e;
+  }).join('\n');
+}
+
+// ── Build plain-text report ────────────────────────────
+function buildCssReportTxt(results) {
+  const line  = '─'.repeat(60);
+  const dline = '═'.repeat(60);
+  const ts    = new Date().toLocaleString();
+
+  let txt = `${dline}
+  CSS COMPACTOR REPORT — JS Dependency Visualizer
+${dline}
+Generated : ${ts}
+Files     : ${results.map(r => r.source.sourceFile).join(', ')}
+${dline}
+
+`;
+
+  results.forEach(result => {
+    const fname = compactedFilename(result.source);
+    txt += `SOURCE: ${result.source.sourceFile}`;
+    if (result.source.type === 'html-extracted') txt += ` (<style> block ${result.source.blockIndex})`;
+    txt += `\nOUTPUT : ${fname}\n${line}\n`;
+    txt += `  Selectors merged   : ${result.totalMerges}\n`;
+    txt += `  Override comments  : ${result.totalOverrides}\n`;
+    txt += `  @-rules untouched  : ${result.untouchedCount}\n\n`;
+
+    if (result.mergeDetails.length > 0) {
+      result.mergeDetails.forEach(d => {
+        txt += `  Context: ${d.context}\n`;
+        d.selectors.forEach(s => {
+          txt += `    Selector : ${s}\n`;
+        });
+        txt += `    Merges   : ${d.merges}  |  Overrides: ${d.overrides}\n\n`;
+      });
+    } else {
+      txt += `  No duplicate selectors found in this file.\n\n`;
+    }
+  });
+
+  txt += `${dline}
+NOTES
+${line}
+- Original files were NOT modified.
+- Each output file is safe to review before using.
+- Override comments show the full history of overridden values.
+- @keyframes, @font-face and similar blocks are passed through unchanged.
+- @media blocks are merged internally (same selector within same query).
+- Always diff the output against your original before deploying.
+${dline}
+`;
+  return txt;
+}
+
+// ── Download handlers ──────────────────────────────────
+document.getElementById('btn-css-report-dl').addEventListener('click', () => {
+  if (!state._cssResults) return;
+  downloadFile('css-compactor-report.txt', buildCssReportTxt(state._cssResults), 'text/plain');
+});
+
+document.getElementById('btn-css-compact-dl').addEventListener('click', () => {
+  if (!state._cssResults) return;
+  // If multiple files, download each separately with a small delay
+  state._cssResults.forEach((result, i) => {
+    setTimeout(() => {
+      downloadFile(compactedFilename(result.source), result.outputCSS, 'text/css');
+    }, i * 300);
+  });
+});
+
+document.getElementById('info-close').onclick = () => {
+  infoPanel.classList.remove('visible');
+  clearHighlight();
+};
+</script>
+</body>
+</html>

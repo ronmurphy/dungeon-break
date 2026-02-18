@@ -57,34 +57,34 @@ let savedPlayerPos = new THREE.Vector3();
 let savedFogDensity = 0.045;
 
 // Expose exit function globally
-window.exitBattleIsland = function() {
+window.exitBattleIsland = function () {
     // Always force menu closed when attempting to exit, regardless of state
     hideCombatMenu();
 
     if (CombatManager.isActive) {
         CombatManager.endCombat(activeWanderer);
-        
+
         // Reset Global Flags
         window.inBattleIsland = false;
         inBattleIsland = false;
 
         // Remove the enemy from the world so we don't instantly re-trigger combat
         if (activeWanderer) {
-             const idx = wanderers.indexOf(activeWanderer);
-             if (idx > -1) wanderers.splice(idx, 1);
-             // CombatManager hides the mesh, but we should remove it entirely
-             if (activeWanderer.mesh && activeWanderer.mesh.parent) {
-                 activeWanderer.mesh.parent.remove(activeWanderer.mesh);
-             }
-             activeWanderer = null;
+            const idx = wanderers.indexOf(activeWanderer);
+            if (idx > -1) wanderers.splice(idx, 1);
+            // CombatManager hides the mesh, but we should remove it entirely
+            if (activeWanderer.mesh && activeWanderer.mesh.parent) {
+                activeWanderer.mesh.parent.remove(activeWanderer.mesh);
+            }
+            activeWanderer = null;
         }
-        
+
         // Restore controls immediately so we can click, but delay fog/visuals until camera arrives
-        exitCombatView(); 
-        
+        exitCombatView();
+
         // FIX: Ensure combat modal and menu are closed so they don't block movement raycasts
         document.getElementById('combatModal').style.display = 'none';
-        
+
         // Restore Player Combat Area (Dock) - DISABLED (Replaced by new UI)
         // const combatDocks = document.querySelectorAll('.player-combat-area');
         // combatDocks.forEach(el => el.style.display = 'flex');
@@ -95,7 +95,7 @@ window.exitBattleIsland = function() {
     }
 };
 
- // Store player pos before teleporting to Battle Island
+// Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
 let playerTargetPos = null; // Target position for free movement
 
@@ -1585,11 +1585,11 @@ function on3DClick(event, isRightClick = false) {
     }
     // Prevent interaction if any modal is open (including lockpickUI)
     const blockers = ['combatModal', 'lockpickUI', 'introModal', 'avatarModal', 'inventoryModal', 'classModal'];
-    
+
     // Check if clicking on specific UI elements that should block 3D interaction
-    if (event.target.closest('#combatMenuGrid') || 
-        event.target.closest('#gameplayInventoryBar') || 
-        event.target.closest('.control-box') || 
+    if (event.target.closest('#combatMenuGrid') ||
+        event.target.closest('#gameplayInventoryBar') ||
+        event.target.closest('.control-box') ||
         event.target.closest('.player-combat-area')) {
         return;
     }
@@ -1682,13 +1682,13 @@ function on3DClick(event, isRightClick = false) {
         // Create a temporary raycaster for the floor check to ensure we hit it
         const floorRaycaster = new THREE.Raycaster();
         floorRaycaster.setFromCamera(mouse, camera); // Always use main camera
-        
+
         // Use recursive intersect if target is a Group (Battle Island), otherwise normal
         const floorHits = floorRaycaster.intersectObject(targetFloor, true);
 
         if (floorHits.length > 0) {
             const point = floorHits[0].point;
-            
+
             // Combat Movement Restrictions
             if (isCombatView) {
                 if (combatState.turn !== 'player') {
@@ -2202,13 +2202,13 @@ function animate3D() {
 
     // Animate Player Marker
     const playerObj = use3dModel ? playerMesh : playerSprite;
-    
+
     // --- COMBAT TRIGGER ---
     if (playerObj && !isCombatView && !isAttractMode) {
-        for(let i=0; i<wanderers.length; i++) {
+        for (let i = 0; i < wanderers.length; i++) {
             const w = wanderers[i];
             if (!w || !w.mesh) continue;
-            
+
             const dist = playerObj.position.distanceTo(w.mesh.position);
             // If very close, trigger combat teleport
             if (dist < 2.5) {
@@ -2413,7 +2413,7 @@ function animate3D() {
                             // Combat Trigger (Touch)
                             if (distance < 1.2) {
                                 // Trigger Combat
-                                startCombat(wanderer); 
+                                startCombat(wanderer);
                             }
                         }
                     }
@@ -3048,7 +3048,7 @@ window.startDive = startDive;
 window.selectAvatar = (sex) => {
     game.sex = sex;
     document.getElementById('avatarModal').style.display = 'none';
-    showClassSelection();
+    showStatAllocation();
 };
 
 function showClassSelection() {
@@ -3118,6 +3118,96 @@ function showClassSelection() {
     };
 }
 
+// --- STAT ALLOCATION UI ---
+let tempStats = { str: 1, dex: 1, int: 1, lck: 1 };
+let statPool = 9;
+let tempName = "Scoundrel";
+
+window.showStatAllocation = function () {
+    let modal = document.getElementById('statModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'statModal';
+        modal.className = 'modal-overlay';
+        modal.style.zIndex = '20000';
+        document.body.appendChild(modal);
+    }
+
+    // Reset defaults if opening fresh (simple check)
+    if (statPool === 0 && !game.stats) {
+        tempStats = { str: 1, dex: 1, int: 1, lck: 1 };
+        statPool = 9;
+    }
+
+    const updateStatUI = () => {
+        const isWarning = Object.values(tempStats).some(v => v > 4);
+        const canProceed = statPool === 0 && tempName.trim().length > 0;
+
+        const row = (label, key) => `
+            <div style="display:flex; align-items:center; justify-content:space-between; width:240px; margin:5px auto; background:rgba(255,255,255,0.05); padding:5px 10px; border-radius:4px;">
+                <span style="width:50px; text-align:left; font-weight:bold; color:#d4af37;">${label}</span>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <button class="v2-btn" style="width:30px; height:30px; padding:0; line-height:1;" onclick="modStat('${key}', -1)">-</button>
+                    <span style="width:30px; text-align:center; font-size:1.2rem; font-weight:bold; color:${tempStats[key] > 4 ? '#ff4444' : '#fff'}">${tempStats[key]}</span>
+                    <button class="v2-btn" style="width:30px; height:30px; padding:0; line-height:1;" onclick="modStat('${key}', 1)">+</button>
+                </div>
+            </div>
+        `;
+
+        modal.innerHTML = `
+            <div style="background:rgba(10,10,10,0.95); border:2px solid var(--gold); padding:30px; width:500px; max-width:90%; text-align:center; color:#fff; font-family:'Cinzel'; position:relative; display:flex; flex-direction:column; gap:15px; box-shadow: 0 0 50px rgba(0,0,0,0.8);">
+                <h2 style="color:var(--gold); margin:0; text-shadow:0 2px 4px #000;">ATTRIBUTES</h2>
+                <div style="font-size:0.9rem; color:#aaa; font-family:'Crimson Text';">Forge your destiny, Scoundrel.</div>
+                
+                <div style="margin:10px 0;">
+                    <label style="display:block; color:var(--gold); font-size:0.8rem; margin-bottom:5px;">IDENTITY</label>
+                    <input type="text" id="playerNameInput" value="${tempName}" maxlength="16" 
+                        style="background:#050505; border:1px solid #444; color:#fff; padding:8px; font-family:'Cinzel'; text-align:center; width:70%; font-size:1.2rem; outline:none;" 
+                        oninput="tempName = this.value; document.getElementById('confirmStatsBtn').disabled = (statPool !== 0 || this.value.trim() === '');">
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:5px;">
+                    ${row('STR', 'str')}
+                    ${row('DEX', 'dex')}
+                    ${row('INT', 'int')}
+                    ${row('LCK', 'lck')}
+                </div>
+
+                <div style="margin-top:5px; font-size:1.1rem;">
+                    Points Remaining: <span style="color:${statPool === 0 ? '#4f4' : '#fff'}; font-weight:bold;">${statPool}</span>
+                </div>
+
+                <div style="height:20px;">
+                    ${isWarning ? `<div style="color:#ffaa00; font-size:0.8rem; font-style:italic;">Warning: Stats > 4 may increase difficulty.</div>` : ''}
+                </div>
+
+                <button class="v2-btn" id="confirmStatsBtn" onclick="submitStats()" ${canProceed ? '' : 'disabled style="opacity:0.5; cursor:not-allowed;"'}>Next</button>
+            </div>
+        `;
+    };
+
+    window.modStat = (key, delta) => {
+        if (delta > 0 && statPool > 0) {
+            tempStats[key]++;
+            statPool--;
+        } else if (delta < 0 && tempStats[key] > 1) {
+            tempStats[key]--;
+            statPool++;
+        }
+        updateStatUI();
+    };
+
+    window.submitStats = () => {
+        game.stats = { ...tempStats };
+        game.playerName = tempName;
+        modal.style.display = 'none';
+        showClassSelection();
+    };
+
+    modal.style.display = 'flex';
+    updateStatUI();
+};
+
 function finalizeStartDive() {
     isAttractMode = false;
     // Show Dock when game starts
@@ -3143,6 +3233,23 @@ function finalizeStartDive() {
     game.currentTrack = null;
     game.visitedWaypoints = [];
     game.enemiesDefeated = 0;
+
+    // Apply Hidden Class Bonuses
+    // Ensure stats exist (if skipped via debug)
+    if (!game.stats) game.stats = { str: 1, dex: 1, int: 1, lck: 1 };
+
+    const cid = game.classId;
+    if (cid === 'knight' || cid === 'vanguard' || cid === 'templar') {
+        game.stats.str += 1;
+    } else if (cid === 'rogue' || cid === 'strider' || cid === 'scoundrel') {
+        game.stats.dex += 1;
+    } else if (cid === 'occultist' || cid === 'arcanist' || cid === 'reanimator' || cid === 'tinkerer') {
+        game.stats.int += 1;
+    } else if (cid === 'bard' || cid === 'minstrel' || cid === 'confessor') {
+        game.stats.lck += 1;
+    }
+
+    console.log(`Final Stats for ${game.playerName} (${cid}):`, game.stats);
 
     // Grant Starting Items
     cData.items.forEach(i => {
@@ -3642,9 +3749,9 @@ function startSoulBrokerEncounter() {
 function showCombat() {
     //const overlay = document.getElementById('combatModal');
     const enemyArea = document.getElementById('enemyArea');
-  //  overlay.style.display = 'flex';
-  //  overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
-  //  overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
+    //  overlay.style.display = 'flex';
+    //  overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
+    //  overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
 
     audio.setMusicMuffled(true); // Muffle music during combat
     enemyArea.innerHTML = '';
@@ -4405,15 +4512,15 @@ function closeCombat() {
     if (lockpickUI) lockpickUI.style.display = 'none';
     // Hide merchant portrait when modal is closed
     audio.setMusicMuffled(false); // Unmuffle music
-    const mp = document.getElementById('merchantPortrait'); 
+    const mp = document.getElementById('merchantPortrait');
     if (mp) mp.style.display = 'none';
     updateBossBar(0, 60, false, true); // Hide boss bar
-    
+
     // Restore Player Combat Area - DISABLED
     // const combatDocks = document.querySelectorAll('.player-combat-area');
     // combatDocks.forEach(el => el.style.display = 'flex');
     hideCombatMenu(); // Ensure 3x3 menu is closed
-    
+
     const cLog = document.getElementById('combatLogOverlay');
     if (cLog) cLog.remove();
 
@@ -5358,6 +5465,8 @@ function saveGame() {
     const data = {
         hp: game.hp, maxHp: game.maxHp, floor: game.floor,
         soulCoins: game.soulCoins, ap: game.ap, maxAp: game.maxAp,
+        stats: game.stats,
+        playerName: game.playerName,
         sex: game.sex, classId: game.classId, mode: game.mode,
         isBossFight: game.isBossFight,
         isBrokerFight: game.isBrokerFight,
@@ -6461,7 +6570,7 @@ function startCombat(wanderer) {
         return;
     }
     activeWanderer = wanderer;
-    
+
     // Initialize Enemy Stats (Simple D&D-lite stats)
     if (!activeWanderer.stats) {
         const baseStats = getEnemyStats(activeWanderer.filename);
@@ -6510,7 +6619,7 @@ function startCombat(wanderer) {
 
     // Ensure CombatManager has refs
     CombatManager.init(scene, camera, controls, use3dModel ? playerMesh : playerSprite);
-    
+
     console.log("   -> Calling CombatManager.startCombat()...");
     CombatManager.startCombat(wanderer, currentTheme);
 
@@ -6520,7 +6629,7 @@ function startCombat(wanderer) {
     combatState.turn = 'player';
     combatState.isTargeting = false;
     combatState.isDefending = false;
-    
+
     updateMovementIndicator();
     showCombat();
     console.log("✅ Combat view active.");
@@ -6551,7 +6660,7 @@ function enterCombatView() {
     // NOTE: Player teleportation is now handled by CombatManager.startCombat()
     // We keep this function mainly for state flags and saving camera state.
     // The actual movement logic has been moved to CombatManager to keep it centralized.
-    
+
 
     // Note: Camera movement happens in showCombat, which will now target the arenaPos
 
@@ -6659,7 +6768,7 @@ window.testmfglb = function (arg) {
 
 function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
     let geo;
-    switch(sides) {
+    switch (sides) {
         case 4: geo = new THREE.TetrahedronGeometry(0.5); break;
         case 6: geo = new THREE.BoxGeometry(0.7, 0.7, 0.7); break;
         case 8: geo = new THREE.OctahedronGeometry(0.5); break;
@@ -6669,27 +6778,27 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
         default: geo = new THREE.IcosahedronGeometry(0.5, 0); break;
     }
 
-    const mat = new THREE.MeshStandardMaterial({ 
-        color: colorHex, 
-        roughness: 0.2, 
+    const mat = new THREE.MeshStandardMaterial({
+        color: colorHex,
+        roughness: 0.2,
         metalness: 0.5,
         emissive: colorHex,
         emissiveIntensity: 0.2
     });
     const dice = new THREE.Mesh(geo, mat);
-    
+
     // Position in front of camera (UI-like 3D position)
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-    
+
     const spawnPos = camera.position.clone()
         .add(forward.multiplyScalar(5))
         .add(right.multiplyScalar(positionOffset.x))
         .add(up.multiplyScalar(positionOffset.y));
-    
+
     dice.position.copy(spawnPos);
-    
+
     // Add text label to dice (Billboard)
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
@@ -6705,18 +6814,18 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
     dice.add(label);
 
     scene.add(dice);
-    
+
     // Animate Spin
     const duration = 1000;
     const rotations = 4;
-    
+
     new TWEEN.Tween(dice.rotation)
         .to({ x: Math.PI * rotations, y: Math.PI * rotations, z: Math.PI * rotations }, duration)
         .easing(TWEEN.Easing.Quadratic.Out)
         .onComplete(() => {
             // Show Number Result
             // spawnFloatingText(finalValue.toString(), window.innerWidth/2, window.innerHeight/2 + 50, '#ffffff');
-            
+
             // Cleanup
             setTimeout(() => {
                 scene.remove(dice);
@@ -6729,37 +6838,37 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
 function spawnLootDrop(pos) {
     // Hide UI to focus on loot
     hideCombatMenu();
-    
+
     // Generate Random Loot (Weapon or Potion)
     const isWeapon = Math.random() > 0.5;
     const val = 2 + Math.floor(Math.random() * (game.floor + 2)); // Scale with floor
     const suit = isWeapon ? SUITS.DIAMONDS : SUITS.HEARTS;
     const type = isWeapon ? 'weapon' : 'potion';
-    
+
     // Get Asset Data
     const asset = getAssetData(type, val, suit);
     const tex = getClonedTexture(`assets/images/${asset.file}`);
-    
+
     // Handle Spritesheet
     tex.wrapS = THREE.RepeatWrapping;
     tex.repeat.set(1 / asset.sheetCount, 1);
     tex.offset.set(asset.uv.u, 0);
-    
+
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
     const sprite = new THREE.Sprite(mat);
-    
+
     sprite.position.copy(pos);
     sprite.position.y = 1.0; // Float above ground
     sprite.scale.set(1.5, 1.5, 1.5);
-    
+
     // Store item data in userData for pickup
-    sprite.userData = { 
-        isLoot: true, 
-        item: { type, val, suit, name: isWeapon ? `Looted Weapon (${val})` : `Looted Potion (${val})` } 
+    sprite.userData = {
+        isLoot: true,
+        item: { type, val, suit, name: isWeapon ? `Looted Weapon (${val})` : `Looted Potion (${val})` }
     };
-    
+
     combatGroup.add(sprite);
-    
+
     // Bobbing Animation
     new TWEEN.Tween(sprite.position)
         .to({ y: 1.5 }, 1000)
@@ -6767,8 +6876,8 @@ function spawnLootDrop(pos) {
         .repeat(Infinity)
         .easing(TWEEN.Easing.Quadratic.InOut)
         .start();
-        
-    spawnFloatingText("LOOT DROPPED!", window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
+
+    spawnFloatingText("LOOT DROPPED!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
     logCombat("Enemy dropped loot! Click to claim.", '#ffd700');
 }
 
@@ -6776,10 +6885,10 @@ function claimLoot(sprite) {
     const item = sprite.userData.item;
     if (addToBackpack(item)) {
         logMsg(`Claimed ${item.name}.`);
-        spawnFloatingText("GOT IT!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+        spawnFloatingText("GOT IT!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
     } else {
         logMsg("Backpack full! Loot discarded.");
-        spawnFloatingText("FULL!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+        spawnFloatingText("FULL!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
     }
     setTimeout(() => window.exitBattleIsland(), 500);
 }
@@ -6833,13 +6942,13 @@ window.use3dmodels = function (bool) {
 
 // --- COMBAT LOGIC ---
 
-window.commandAttack = function() {
+window.commandAttack = function () {
     if (combatState.turn !== 'player') {
-        spawnFloatingText("Not your turn!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+        spawnFloatingText("Not your turn!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
         return;
     }
     combatState.isTargeting = true;
-    spawnFloatingText("SELECT TARGET", window.innerWidth/2, window.innerHeight/2 - 150, '#d4af37');
+    spawnFloatingText("SELECT TARGET", window.innerWidth / 2, window.innerHeight / 2 - 150, '#d4af37');
     logMsg("Select a target to attack.");
 };
 
@@ -6855,32 +6964,41 @@ function executePlayerAttack(target) {
     }
 
     // 2. Resolve Math
-    // Player Stats (Simplified for now)
-    const playerStr = CLASS_DATA[game.classId].stats.str || 0;
-    const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 2; // Base 2 for unarmed
-    const playerAC = CLASS_DATA[game.classId].stats.ac || 10;
-    const playerPower = playerStr + weaponVal;
+    // --- NEW STAT-BASED POWER CALCULATION (as per rules.md) ---
+
+    // Determine primary attribute for clash roll based on class.
+    // From rules.md: Scoundrel, Stalker, Minstrel map to rogue, ranger, bard.
+    const dexClasses = ['rogue', 'ranger', 'bard'];
+    const primaryStatName = dexClasses.includes(game.classId) ? 'dex' : 'str';
+    const primaryAttributeValue = (game.stats && game.stats[primaryStatName]) ? game.stats[primaryStatName] : 1;
+
+    // Determine weapon value. Unarmed is a value of 1, providing the +1 bonus to roll/damage.
+    // This also applies to spellcasters like the Arcanist if they have no spell equipped.
+    const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 1;
+
+    const playerPower = primaryAttributeValue + weaponVal;
+    const playerAC = 10 + (game.maxAp || 0); // Base 10 AC + Armor Points
 
     // Enemy Stats
     const enemyStr = target.stats.str || 1;
     const enemyWeapon = 4; // Generic enemy weapon power
     const enemyAC = target.stats.ac || 10;
     const enemyPower = enemyStr + enemyWeapon;
-    
+
     const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
 
     // 3. Spawn Dice Roll Animations (Simultaneous)
     // Player Dice (Left, Blue)
-    spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, {x: -1.5, y: -0.5}, () => {});
-    
+    spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, () => { });
+
     // Enemy Dice (Right, Red)
-    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, {x: 1.5, y: -0.5}, () => {
-        
+    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, () => {
+
         // 4. Apply Result
         if (result.winner === 'attacker') {
             // Player Hits
             target.stats.hp -= result.damage;
-            spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
+            spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
             logCombat(`Player hits! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
             logCombat(`> Dealt ${result.damage} dmg`, '#fff');
 
@@ -6889,7 +7007,7 @@ function executePlayerAttack(target) {
         } else if (result.winner === 'defender') {
             // Enemy Hits (Counter)
             takeDamage(result.damage);
-            spawnFloatingText(`OUCH! -${result.damage}`, window.innerWidth/2 - 100, window.innerHeight/2, '#ff0000');
+            spawnFloatingText(`OUCH! -${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff0000');
             logCombat(`Enemy counters! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
             logCombat(`> Took ${result.damage} dmg`, '#faa');
 
@@ -6897,7 +7015,7 @@ function executePlayerAttack(target) {
 
         } else {
             // Tie
-            spawnFloatingText("CLASH!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
+            spawnFloatingText("CLASH!", window.innerWidth / 2, window.innerHeight / 2, '#ffffff');
             logCombat(`Clash! Both rolled ${result.attacker.total}`, '#aaa');
         }
 
@@ -6906,7 +7024,7 @@ function executePlayerAttack(target) {
         // 5. Check Death
         if (target.stats.hp <= 0) {
             logCombat("Enemy defeated!", '#ffd700');
-            spawnFloatingText("VICTORY!", window.innerWidth/2, window.innerHeight/2, '#ffd700');
+            spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
             setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
         } else if (game.hp <= 0) {
             gameOver();
@@ -6919,17 +7037,17 @@ function executePlayerAttack(target) {
     });
 }
 
-window.commandWait = function() {
+window.commandWait = function () {
     if (combatState.turn !== 'player') return;
     logCombat("Player waits.");
     startEnemyTurn();
 };
 
-window.commandDefend = function() {
+window.commandDefend = function () {
     if (combatState.turn !== 'player') return;
     combatState.isDefending = true;
     logCombat("Defensive Stance! (+4 AC)", '#00ffff');
-    spawnFloatingText("DEFEND", window.innerWidth/2, window.innerHeight/2, '#00ffff');
+    spawnFloatingText("DEFEND", window.innerWidth / 2, window.innerHeight / 2, '#00ffff');
     startEnemyTurn();
 };
 
@@ -6946,8 +7064,8 @@ function startEnemyTurn() {
     const enemy = activeWanderer;
     const playerObj = use3dModel ? playerMesh : playerSprite;
     const dist = enemy.mesh.position.distanceTo(playerObj.position);
-    const attackRange = 2.0; 
-    const moveSpeed = 6.0; 
+    const attackRange = 2.0;
+    const moveSpeed = 6.0;
 
     // Show Enemy Range
     if (enemyRangeIndicator) {
@@ -6961,9 +7079,9 @@ function startEnemyTurn() {
     if (dist > attackRange) {
         // Calculate move target
         const dir = new THREE.Vector3().subVectors(playerObj.position, enemy.mesh.position).normalize();
-        const moveDist = Math.min(dist - (attackRange - 0.5), moveSpeed); 
+        const moveDist = Math.min(dist - (attackRange - 0.5), moveSpeed);
         const targetPos = enemy.mesh.position.clone().add(dir.multiplyScalar(moveDist));
-        
+
         enemy.mesh.lookAt(playerObj.position);
         if (enemy.actions.walk) enemy.actions.walk.play();
         if (enemy.actions.idle) enemy.actions.idle.stop();
@@ -6972,24 +7090,24 @@ function startEnemyTurn() {
             .to({ x: targetPos.x, z: targetPos.z }, 1000)
             .easing(TWEEN.Easing.Quadratic.Out)
             .onUpdate(() => {
-                 // Snap Y to terrain
-                 if (CombatManager.battleGroup) {
-                     const rayOrigin = enemy.mesh.position.clone();
-                     rayOrigin.y = 20;
-                     terrainRaycaster.set(rayOrigin, new THREE.Vector3(0, -1, 0));
-                     const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
-                     if (hits.length > 0) {
-                         enemy.mesh.position.y = hits[0].point.y;
-                     }
-                 }
-                 // Update indicator position
-                 if (enemyRangeIndicator) enemyRangeIndicator.position.copy(enemy.mesh.position);
+                // Snap Y to terrain
+                if (CombatManager.battleGroup) {
+                    const rayOrigin = enemy.mesh.position.clone();
+                    rayOrigin.y = 20;
+                    terrainRaycaster.set(rayOrigin, new THREE.Vector3(0, -1, 0));
+                    const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
+                    if (hits.length > 0) {
+                        enemy.mesh.position.y = hits[0].point.y;
+                    }
+                }
+                // Update indicator position
+                if (enemyRangeIndicator) enemyRangeIndicator.position.copy(enemy.mesh.position);
             })
             .onComplete(() => {
                 if (enemy.actions.walk) enemy.actions.walk.stop();
                 if (enemy.actions.idle) enemy.actions.idle.play();
                 if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
-                
+
                 // Check if can attack now
                 const newDist = enemy.mesh.position.distanceTo(playerObj.position);
                 if (newDist <= attackRange) {
@@ -7007,9 +7125,9 @@ function startEnemyTurn() {
 
 function executeEnemyAttack(enemy) {
     logCombat("Enemy attacks!");
-    
+
     if (enemy.actions.attack) enemy.actions.attack.reset().play();
-    
+
     setTimeout(() => {
         // Player Stats
         const playerStr = CLASS_DATA[game.classId].stats.str || 0;
@@ -7020,32 +7138,32 @@ function executeEnemyAttack(enemy) {
 
         // Enemy Stats
         const enemyStr = enemy.stats.str || 1;
-        const enemyWeapon = 4; 
+        const enemyWeapon = 4;
         const enemyAC = enemy.stats.ac || 10;
         const enemyPower = enemyStr + enemyWeapon;
-        
+
         const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
-        
+
         // Spawn Dice
-        spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, {x: -1.5, y: -0.5}, () => {});
-        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, {x: 1.5, y: -0.5}, () => {
-             
+        spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, () => { });
+        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, () => {
+
             if (result.winner === 'defender') { // Defender is Enemy here (Right side)
-                 // Enemy Wins Clash (Hits Player)
-                 takeDamage(result.damage);
-                 spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth/2 - 100, window.innerHeight/2, '#ff0000');
-                 logCombat(`Enemy hits! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
-                 if (actions.hit) actions.hit.reset().play();
-                 if (combatState.isDefending) logCombat("(Damage reduced by Defense)", '#00ffff');
+                // Enemy Wins Clash (Hits Player)
+                takeDamage(result.damage);
+                spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff0000');
+                logCombat(`Enemy hits! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
+                if (actions.hit) actions.hit.reset().play();
+                if (combatState.isDefending) logCombat("(Damage reduced by Defense)", '#00ffff');
             } else if (result.winner === 'attacker') {
-                 // Player Wins Clash (Counters)
-                 enemy.stats.hp -= result.damage;
-                 spawnFloatingText(`COUNTER! -${result.damage}`, window.innerWidth/2 + 100, window.innerHeight/2, '#00ff00');
-                 logCombat(`Player counters! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
-                 if (enemy.actions.hit) enemy.actions.hit.reset().play();
+                // Player Wins Clash (Counters)
+                enemy.stats.hp -= result.damage;
+                spawnFloatingText(`COUNTER! -${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#00ff00');
+                logCombat(`Player counters! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
+                if (enemy.actions.hit) enemy.actions.hit.reset().play();
             } else {
-                 spawnFloatingText("CLASH!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
-                 logCombat("Clash! No damage.", '#aaa');
+                spawnFloatingText("CLASH!", window.innerWidth / 2, window.innerHeight / 2, '#ffffff');
+                logCombat("Clash! No damage.", '#aaa');
             }
 
             updateUI();
@@ -7054,7 +7172,7 @@ function executeEnemyAttack(enemy) {
                 gameOver();
             } else if (enemy.stats.hp <= 0) {
                 logCombat("Enemy defeated by counter!", '#ffd700');
-                spawnFloatingText("VICTORY!", window.innerWidth/2, window.innerHeight/2, '#ffd700');
+                spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
                 setTimeout(() => spawnLootDrop(enemy.mesh.position), 1000);
             } else {
                 endEnemyTurn();
