@@ -14,14 +14,14 @@ export const DND_CONFIG = {
     },
 
     // Map a total power level (Stat + Weapon) to a Die Size
-    // This makes getting stronger feel visceral (geometry upgrade)
-    getDieSize: (power) => {
-        if (power <= 4) return 4;
-        if (power <= 6) return 6;
-        if (power <= 8) return 8;
-        if (power <= 10) return 10;
-        if (power <= 12) return 12;
-        return 20; // God tier
+    // Returns { sides, bonus }
+    getDiceConfig: (power) => {
+        if (power < 4) return { sides: 4, bonus: 0 }; // Minimum d4
+        const dice = [20, 12, 10, 8, 6, 4];
+        for (let d of dice) {
+            if (power >= d) return { sides: d, bonus: power - d };
+        }
+        return { sides: 4, bonus: 0 };
     }
 };
 
@@ -33,6 +33,43 @@ export class DiceRoller {
 }
 
 export class CombatResolver {
+    /**
+     * Resolves a clash between attacker and defender.
+     * Both roll (Power -> Die + Bonus). Highest total wins and hits.
+     * 
+     * @param {number} attPower - Attacker's Total Power (Str + Weapon)
+     * @param {number} defPower - Defender's Total Power
+     * @param {number} attAC - Attacker's Armor Class
+     * @param {number} defAC - Defender's Armor Class
+     */
+    static resolveClash(attPower, defPower, attAC, defAC) {
+        const attConfig = DND_CONFIG.getDiceConfig(attPower);
+        const defConfig = DND_CONFIG.getDiceConfig(defPower);
+
+        const attRoll = DiceRoller.roll(attConfig.sides);
+        const defRoll = DiceRoller.roll(defConfig.sides);
+
+        const attTotal = attRoll + attConfig.bonus;
+        const defTotal = defRoll + defConfig.bonus;
+
+        let result = {
+            attacker: { roll: attRoll, total: attTotal, config: attConfig },
+            defender: { roll: defRoll, total: defTotal, config: defConfig },
+            winner: 'tie',
+            damage: 0
+        };
+
+        if (attTotal > defTotal) {
+            result.winner = 'attacker';
+            result.damage = Math.max(0, attTotal - defAC);
+        } else if (defTotal > attTotal) {
+            result.winner = 'defender';
+            result.damage = Math.max(0, defTotal - attAC);
+        }
+
+        return result;
+    }
+
     /**
      * Resolves a single attack interaction using the "Dulling Blade" mechanic.
      * 

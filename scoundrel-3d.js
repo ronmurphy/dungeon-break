@@ -36,6 +36,8 @@ let scene, camera, renderer, composer, renderPass, controls, raycaster, mouse;
 let perspectiveCamera; // New camera for Immersive mode
 let hTilt, vTilt, bloomPass, outlineEffect;
 let playerMarker; // Crystal marker
+let enemyRangeIndicator; // Red circle for enemy movement
+let movementRangeIndicator; // Green circle for combat movement
 let torchLight;
 let hemisphereLight; // Soft global fill light to improve readability under fog
 // let fogRings = []; // Fog ring sprites for atmospheric LOD // DEAD CODE
@@ -188,7 +190,10 @@ let combatEntities = []; // Track standees/chests for updates
 let combatState = {
     active: false,
     turn: 'player', // 'player' | 'enemy' | 'busy'
-    isTargeting: false
+    isTargeting: false,
+    maxMove: 6.0, // Default 30ft (1 unit = 5ft)
+    currentMove: 6.0,
+    isDefending: false
 };
 
 const textureLoader = new THREE.TextureLoader();
@@ -1162,6 +1167,22 @@ function init3D() {
 
     scene.add(playerMarker);
 
+    // Movement Range Indicator (Combat)
+    const rangeGeo = new THREE.CircleGeometry(1, 64);
+    const rangeMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+    movementRangeIndicator = new THREE.Mesh(rangeGeo, rangeMat);
+    movementRangeIndicator.rotation.x = -Math.PI / 2;
+    movementRangeIndicator.visible = false;
+    scene.add(movementRangeIndicator);
+
+    // Enemy Range Indicator
+    const eRangeGeo = new THREE.CircleGeometry(1, 64);
+    const eRangeMat = new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+    enemyRangeIndicator = new THREE.Mesh(eRangeGeo, eRangeMat);
+    enemyRangeIndicator.rotation.x = -Math.PI / 2;
+    enemyRangeIndicator.visible = false;
+    scene.add(enemyRangeIndicator);
+
     // Initialize Battle Island
     // BattleIsland.init(scene, getClonedTexture);
 
@@ -1643,6 +1664,12 @@ function on3DClick(event, isRightClick = false) {
                     parent = parent.parent;
                     if (parent === scene) break;
                 }
+
+                // Check for Loot Interaction
+                if (obj.userData && obj.userData.isLoot) {
+                    claimLoot(obj);
+                    return;
+                }
             }
         }
     }
@@ -1661,6 +1688,22 @@ function on3DClick(event, isRightClick = false) {
 
         if (floorHits.length > 0) {
             const point = floorHits[0].point;
+            
+            // Combat Movement Restrictions
+            if (isCombatView) {
+                if (combatState.turn !== 'player') {
+                    logMsg("Not your turn!");
+                    return;
+                }
+                const dist = (use3dModel ? playerMesh : playerSprite).position.distanceTo(point);
+                if (dist > combatState.currentMove) {
+                    logMsg("Too far! (Movement limited)");
+                    return;
+                }
+                combatState.currentMove -= dist;
+                updateMovementIndicator();
+            }
+
             // Move player to point
             movePlayerTo(point, isRightClick); // Pass run flag (Right Click = Run)
         }
@@ -2210,6 +2253,14 @@ function animate3D() {
                 light.intensity = 500 + Math.sin(Date.now() * 0.003) * 150;
             }
         }
+    }
+
+    // Update Movement Indicator Position
+    if (movementRangeIndicator && movementRangeIndicator.visible && playerObj) {
+        movementRangeIndicator.position.set(playerObj.position.x, playerObj.position.y + 0.1, playerObj.position.z);
+        // Pulse opacity slightly
+        const pulse = 0.3 + Math.sin(Date.now() * 0.005) * 0.1;
+        movementRangeIndicator.material.opacity = pulse;
     }
 
     if (isAttractMode) {
@@ -3607,6 +3658,16 @@ function showCombat() {
     const combatDocks = document.querySelectorAll('.player-combat-area');
     combatDocks.forEach(el => el.style.setProperty('display', 'none', 'important'));
 
+    // Create Combat Log if not exists
+    let combatLog = document.getElementById('combatLogOverlay');
+    if (!combatLog) {
+        combatLog = document.createElement('div');
+        combatLog.id = 'combatLogOverlay';
+        combatLog.style.cssText = "position:absolute; top:20px; right:20px; width:250px; max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.6); border:1px solid #444; padding:10px; font-family:'Courier New', monospace; font-size:12px; color:#ccc; pointer-events:none; display:flex; flex-direction:column-reverse;";
+        enemyArea.appendChild(combatLog);
+    }
+    combatLog.innerHTML = ''; // Clear log
+
     // If room is cleared, we show the Exit button, otherwise the Avoid button
     const msgEl = document.getElementById('combatMessage');
     if (game.activeRoom && game.activeRoom.state === 'cleared') {
@@ -4352,6 +4413,10 @@ function closeCombat() {
     // const combatDocks = document.querySelectorAll('.player-combat-area');
     // combatDocks.forEach(el => el.style.display = 'flex');
     hideCombatMenu(); // Ensure 3x3 menu is closed
+    
+    const cLog = document.getElementById('combatLogOverlay');
+    if (cLog) cLog.remove();
+
     document.getElementById('combatModal').style.pointerEvents = 'auto'; // Reset
 
     if (use3dModel) {
@@ -6408,9 +6473,18 @@ function startCombat(wanderer) {
         activeWanderer.stats.str += Math.floor(game.floor / 3);
     }
 
+    // Initialize Movement Budget (1 unit = 5ft)
+    // Base 30ft (6.0), Strider/Scoundrel +10ft (+2.0)
+    const isFast = (game.classId === 'ranger' || game.classId === 'rogue');
+    combatState.maxMove = isFast ? 8.0 : 6.0;
+    combatState.currentMove = combatState.maxMove;
+
     // Set global flags
     inBattleIsland = true;
     window.inBattleIsland = true;
+
+    // Set Combat View flag EARLY so UI updates work correctly
+    isCombatView = true;
 
     // Clear fog for combat clarity
     if (scene.fog) {
@@ -6441,10 +6515,14 @@ function startCombat(wanderer) {
     CombatManager.startCombat(wanderer, currentTheme);
 
     // Show the UI Overlay (Command Menu)
-    combatState = { active: true, turn: 'player', isTargeting: false };
-    showCombat();
+    // Update state properties instead of overwriting the object (preserves maxMove/currentMove)
+    combatState.active = true;
+    combatState.turn = 'player';
+    combatState.isTargeting = false;
+    combatState.isDefending = false;
     
-    isCombatView = true;
+    updateMovementIndicator();
+    showCombat();
     console.log("✅ Combat view active.");
 }
 
@@ -6484,6 +6562,8 @@ function enterCombatView() {
 function exitCombatView() {
     if (!isCombatView) return;
     isCombatView = false;
+    if (movementRangeIndicator) movementRangeIndicator.visible = false;
+    if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
     scene.remove(combatGroup);
 
     // Note: Fog is restored in window.exitBattleIsland after delay
@@ -6577,26 +6657,53 @@ window.testmfglb = function (arg) {
     }
 };
 
-function spawnDice3D(finalValue, callback) {
-    // Create Dice Mesh (Icosahedron)
-    const geo = new THREE.IcosahedronGeometry(0.4, 0);
+function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
+    let geo;
+    switch(sides) {
+        case 4: geo = new THREE.TetrahedronGeometry(0.5); break;
+        case 6: geo = new THREE.BoxGeometry(0.7, 0.7, 0.7); break;
+        case 8: geo = new THREE.OctahedronGeometry(0.5); break;
+        case 10: geo = new THREE.DodecahedronGeometry(0.5); break; // Approx d10 with d12 geo for now
+        case 12: geo = new THREE.DodecahedronGeometry(0.5); break;
+        case 20: geo = new THREE.IcosahedronGeometry(0.5, 0); break;
+        default: geo = new THREE.IcosahedronGeometry(0.5, 0); break;
+    }
+
     const mat = new THREE.MeshStandardMaterial({ 
-        color: 0x880000, 
+        color: colorHex, 
         roughness: 0.2, 
         metalness: 0.5,
-        emissive: 0x220000,
+        emissive: colorHex,
         emissiveIntensity: 0.2
     });
     const dice = new THREE.Mesh(geo, mat);
     
     // Position in front of camera (UI-like 3D position)
     const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-    const spawnPos = camera.position.clone().add(forward.multiplyScalar(4)); // 4 units in front
-    // Offset slightly down
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-    spawnPos.add(up.multiplyScalar(-0.5));
+    
+    const spawnPos = camera.position.clone()
+        .add(forward.multiplyScalar(5))
+        .add(right.multiplyScalar(positionOffset.x))
+        .add(up.multiplyScalar(positionOffset.y));
     
     dice.position.copy(spawnPos);
+    
+    // Add text label to dice (Billboard)
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 40px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(sides, 32, 32);
+    const tex = new THREE.CanvasTexture(canvas);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+    label.scale.set(0.5, 0.5, 0.5);
+    dice.add(label);
+
     scene.add(dice);
     
     // Animate Spin
@@ -6608,7 +6715,7 @@ function spawnDice3D(finalValue, callback) {
         .easing(TWEEN.Easing.Quadratic.Out)
         .onComplete(() => {
             // Show Number Result
-            spawnFloatingText(finalValue.toString(), window.innerWidth/2, window.innerHeight/2 + 50, '#ffffff');
+            // spawnFloatingText(finalValue.toString(), window.innerWidth/2, window.innerHeight/2 + 50, '#ffffff');
             
             // Cleanup
             setTimeout(() => {
@@ -6617,6 +6724,83 @@ function spawnDice3D(finalValue, callback) {
             }, 600);
         })
         .start();
+}
+
+function spawnLootDrop(pos) {
+    // Hide UI to focus on loot
+    hideCombatMenu();
+    
+    // Generate Random Loot (Weapon or Potion)
+    const isWeapon = Math.random() > 0.5;
+    const val = 2 + Math.floor(Math.random() * (game.floor + 2)); // Scale with floor
+    const suit = isWeapon ? SUITS.DIAMONDS : SUITS.HEARTS;
+    const type = isWeapon ? 'weapon' : 'potion';
+    
+    // Get Asset Data
+    const asset = getAssetData(type, val, suit);
+    const tex = getClonedTexture(`assets/images/${asset.file}`);
+    
+    // Handle Spritesheet
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.repeat.set(1 / asset.sheetCount, 1);
+    tex.offset.set(asset.uv.u, 0);
+    
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sprite = new THREE.Sprite(mat);
+    
+    sprite.position.copy(pos);
+    sprite.position.y = 1.0; // Float above ground
+    sprite.scale.set(1.5, 1.5, 1.5);
+    
+    // Store item data in userData for pickup
+    sprite.userData = { 
+        isLoot: true, 
+        item: { type, val, suit, name: isWeapon ? `Looted Weapon (${val})` : `Looted Potion (${val})` } 
+    };
+    
+    combatGroup.add(sprite);
+    
+    // Bobbing Animation
+    new TWEEN.Tween(sprite.position)
+        .to({ y: 1.5 }, 1000)
+        .yoyo(true)
+        .repeat(Infinity)
+        .easing(TWEEN.Easing.Quadratic.InOut)
+        .start();
+        
+    spawnFloatingText("LOOT DROPPED!", window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
+    logCombat("Enemy dropped loot! Click to claim.", '#ffd700');
+}
+
+function claimLoot(sprite) {
+    const item = sprite.userData.item;
+    if (addToBackpack(item)) {
+        logMsg(`Claimed ${item.name}.`);
+        spawnFloatingText("GOT IT!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+    } else {
+        logMsg("Backpack full! Loot discarded.");
+        spawnFloatingText("FULL!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+    }
+    setTimeout(() => window.exitBattleIsland(), 500);
+}
+
+function logCombat(msg, color = '#ccc') {
+    const log = document.getElementById('combatLogOverlay');
+    if (log) {
+        const entry = document.createElement('div');
+        entry.innerHTML = `<span style="color:${color}">${msg}</span>`;
+        log.prepend(entry);
+    }
+}
+
+function updateMovementIndicator() {
+    if (!movementRangeIndicator) return;
+    if (isCombatView && combatState.turn === 'player' && combatState.currentMove > 0.5) {
+        movementRangeIndicator.visible = true;
+        movementRangeIndicator.scale.setScalar(combatState.currentMove);
+    } else {
+        movementRangeIndicator.visible = false;
+    }
 }
 
 window.use3dmodels = function (bool) {
@@ -6674,78 +6858,218 @@ function executePlayerAttack(target) {
     // Player Stats (Simplified for now)
     const playerStr = CLASS_DATA[game.classId].stats.str || 0;
     const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 2; // Base 2 for unarmed
-    const weaponWear = 0; // TODO: Hook up durability
+    const playerAC = CLASS_DATA[game.classId].stats.ac || 10;
+    const playerPower = playerStr + weaponVal;
+
+    // Enemy Stats
+    const enemyStr = target.stats.str || 1;
+    const enemyWeapon = 4; // Generic enemy weapon power
+    const enemyAC = target.stats.ac || 10;
+    const enemyPower = enemyStr + enemyWeapon;
     
-    const result = CombatResolver.resolveAttack(playerStr, weaponVal, weaponWear, target.stats.ac);
+    const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
 
-    // 3. Spawn Dice Roll Animation
-    spawnDice3D(result.roll, () => {
-        // 4. Apply Result (After Dice Lands)
-        setTimeout(() => {
-            // Show Damage
-            if (result.damage > 0) {
-                target.stats.hp -= result.damage;
-                spawnFloatingText(`-${result.damage}`, window.innerWidth/2 + 100, window.innerHeight/2 - 50, '#ff0000');
-                logMsg(`You hit for ${result.damage} damage! (Roll: ${result.roll})`);
-                
-                // Enemy Hit Reaction
-                if (target.actions && target.actions.hit) {
-                    target.actions.hit.reset().play();
-                }
-            } else {
-                spawnFloatingText("MISS", window.innerWidth/2 + 100, window.innerHeight/2 - 50, '#aaa');
-                logMsg(`Attack missed! (Roll: ${result.roll} vs AC ${target.stats.ac})`);
-            }
+    // 3. Spawn Dice Roll Animations (Simultaneous)
+    // Player Dice (Left, Blue)
+    spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, {x: -1.5, y: -0.5}, () => {});
+    
+    // Enemy Dice (Right, Red)
+    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, {x: 1.5, y: -0.5}, () => {
+        
+        // 4. Apply Result
+        if (result.winner === 'attacker') {
+            // Player Hits
+            target.stats.hp -= result.damage;
+            spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
+            logCombat(`Player hits! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
+            logCombat(`> Dealt ${result.damage} dmg`, '#fff');
 
-            // 5. Check Death
-            if (target.stats.hp <= 0) {
-                logMsg("Enemy defeated!");
-                spawnFloatingText("VICTORY!", window.innerWidth/2, window.innerHeight/2, '#ffd700');
-                setTimeout(() => window.exitBattleIsland(), 1500);
-            } else {
-                // 6. End Turn -> Enemy Turn
-                setTimeout(startEnemyTurn, 1000);
-            }
-        }, 200);
+            if (target.actions && target.actions.hit) target.actions.hit.reset().play();
+
+        } else if (result.winner === 'defender') {
+            // Enemy Hits (Counter)
+            takeDamage(result.damage);
+            spawnFloatingText(`OUCH! -${result.damage}`, window.innerWidth/2 - 100, window.innerHeight/2, '#ff0000');
+            logCombat(`Enemy counters! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
+            logCombat(`> Took ${result.damage} dmg`, '#faa');
+
+            if (actions.hit) actions.hit.reset().play();
+
+        } else {
+            // Tie
+            spawnFloatingText("CLASH!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
+            logCombat(`Clash! Both rolled ${result.attacker.total}`, '#aaa');
+        }
+
+        updateUI();
+
+        // 5. Check Death
+        if (target.stats.hp <= 0) {
+            logCombat("Enemy defeated!", '#ffd700');
+            spawnFloatingText("VICTORY!", window.innerWidth/2, window.innerHeight/2, '#ffd700');
+            setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
+        } else if (game.hp <= 0) {
+            gameOver();
+        } else {
+            // 6. End Turn -> Enemy Turn
+            setTimeout(() => {
+                startEnemyTurn();
+            }, 1000);
+        }
     });
 }
 
+window.commandWait = function() {
+    if (combatState.turn !== 'player') return;
+    logCombat("Player waits.");
+    startEnemyTurn();
+};
+
+window.commandDefend = function() {
+    if (combatState.turn !== 'player') return;
+    combatState.isDefending = true;
+    logCombat("Defensive Stance! (+4 AC)", '#00ffff');
+    spawnFloatingText("DEFEND", window.innerWidth/2, window.innerHeight/2, '#00ffff');
+    startEnemyTurn();
+};
+
 function startEnemyTurn() {
     combatState.turn = 'enemy';
-    logMsg("Enemy turn...");
+    updateMovementIndicator(); // Hide player indicator
+    logCombat("Enemy turn...");
 
-    setTimeout(() => {
-        if (!activeWanderer) return;
+    if (!activeWanderer || !activeWanderer.mesh) {
+        endEnemyTurn();
+        return;
+    }
 
-        // Enemy Attack Animation
-        if (activeWanderer.actions && activeWanderer.actions.attack) {
-            activeWanderer.actions.attack.reset().play();
-        }
-        if (audio.initialized) audio.play('attack_blunt', { volume: 0.5 });
+    const enemy = activeWanderer;
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const dist = enemy.mesh.position.distanceTo(playerObj.position);
+    const attackRange = 2.0; 
+    const moveSpeed = 6.0; 
 
-        // Resolve Attack against Player
-        const enemyStr = activeWanderer.stats.str;
-        const playerAC = CLASS_DATA[game.classId].stats.ac || 10;
+    // Show Enemy Range
+    if (enemyRangeIndicator) {
+        enemyRangeIndicator.visible = true;
+        enemyRangeIndicator.scale.setScalar(moveSpeed);
+        enemyRangeIndicator.position.copy(enemy.mesh.position);
+        enemyRangeIndicator.position.y += 0.1;
+    }
+
+    // 1. Move if needed
+    if (dist > attackRange) {
+        // Calculate move target
+        const dir = new THREE.Vector3().subVectors(playerObj.position, enemy.mesh.position).normalize();
+        const moveDist = Math.min(dist - (attackRange - 0.5), moveSpeed); 
+        const targetPos = enemy.mesh.position.clone().add(dir.multiplyScalar(moveDist));
         
-        // Enemy uses generic weapon value (e.g. 4)
-        const result = CombatResolver.resolveAttack(enemyStr, 4, 0, playerAC);
+        enemy.mesh.lookAt(playerObj.position);
+        if (enemy.actions.walk) enemy.actions.walk.play();
+        if (enemy.actions.idle) enemy.actions.idle.stop();
 
-        setTimeout(() => {
-            if (result.damage > 0) {
-                takeDamage(result.damage);
-                spawnFloatingText(`-${result.damage} HP`, window.innerWidth/2 - 100, window.innerHeight/2, '#ff0000');
-                logMsg(`Enemy hits you for ${result.damage}!`);
+        new TWEEN.Tween(enemy.mesh.position)
+            .to({ x: targetPos.x, z: targetPos.z }, 1000)
+            .easing(TWEEN.Easing.Quadratic.Out)
+            .onUpdate(() => {
+                 // Snap Y to terrain
+                 if (CombatManager.battleGroup) {
+                     const rayOrigin = enemy.mesh.position.clone();
+                     rayOrigin.y = 20;
+                     terrainRaycaster.set(rayOrigin, new THREE.Vector3(0, -1, 0));
+                     const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
+                     if (hits.length > 0) {
+                         enemy.mesh.position.y = hits[0].point.y;
+                     }
+                 }
+                 // Update indicator position
+                 if (enemyRangeIndicator) enemyRangeIndicator.position.copy(enemy.mesh.position);
+            })
+            .onComplete(() => {
+                if (enemy.actions.walk) enemy.actions.walk.stop();
+                if (enemy.actions.idle) enemy.actions.idle.play();
+                if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
+                
+                // Check if can attack now
+                const newDist = enemy.mesh.position.distanceTo(playerObj.position);
+                if (newDist <= attackRange) {
+                    executeEnemyAttack(enemy);
+                } else {
+                    endEnemyTurn();
+                }
+            })
+            .start();
+    } else {
+        if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
+        executeEnemyAttack(enemy);
+    }
+}
+
+function executeEnemyAttack(enemy) {
+    logCombat("Enemy attacks!");
+    
+    if (enemy.actions.attack) enemy.actions.attack.reset().play();
+    
+    setTimeout(() => {
+        // Player Stats
+        const playerStr = CLASS_DATA[game.classId].stats.str || 0;
+        const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 2;
+        let playerAC = CLASS_DATA[game.classId].stats.ac || 10;
+        if (combatState.isDefending) playerAC += 4; // Defense Bonus
+        const playerPower = playerStr + weaponVal;
+
+        // Enemy Stats
+        const enemyStr = enemy.stats.str || 1;
+        const enemyWeapon = 4; 
+        const enemyAC = enemy.stats.ac || 10;
+        const enemyPower = enemyStr + enemyWeapon;
+        
+        const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
+        
+        // Spawn Dice
+        spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, {x: -1.5, y: -0.5}, () => {});
+        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, {x: 1.5, y: -0.5}, () => {
+             
+            if (result.winner === 'defender') { // Defender is Enemy here (Right side)
+                 // Enemy Wins Clash (Hits Player)
+                 takeDamage(result.damage);
+                 spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth/2 - 100, window.innerHeight/2, '#ff0000');
+                 logCombat(`Enemy hits! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
+                 if (actions.hit) actions.hit.reset().play();
+                 if (combatState.isDefending) logCombat("(Damage reduced by Defense)", '#00ffff');
+            } else if (result.winner === 'attacker') {
+                 // Player Wins Clash (Counters)
+                 enemy.stats.hp -= result.damage;
+                 spawnFloatingText(`COUNTER! -${result.damage}`, window.innerWidth/2 + 100, window.innerHeight/2, '#00ff00');
+                 logCombat(`Player counters! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
+                 if (enemy.actions.hit) enemy.actions.hit.reset().play();
             } else {
-                spawnFloatingText("MISS", window.innerWidth/2 - 100, window.innerHeight/2, '#aaa');
-                logMsg("Enemy missed you.");
+                 spawnFloatingText("CLASH!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
+                 logCombat("Clash! No damage.", '#aaa');
             }
 
-            // Back to Player
-            combatState.turn = 'player';
-            logMsg("Player turn.");
             updateUI();
-        }, 500);
 
+            if (game.hp <= 0) {
+                gameOver();
+            } else if (enemy.stats.hp <= 0) {
+                logCombat("Enemy defeated by counter!", '#ffd700');
+                spawnFloatingText("VICTORY!", window.innerWidth/2, window.innerHeight/2, '#ffd700');
+                setTimeout(() => spawnLootDrop(enemy.mesh.position), 1000);
+            } else {
+                endEnemyTurn();
+            }
+        });
+    }, 500);
+}
+
+function endEnemyTurn() {
+    setTimeout(() => {
+        combatState.turn = 'player';
+        combatState.currentMove = combatState.maxMove;
+        combatState.isDefending = false; // Reset defense
+        updateMovementIndicator();
+        logCombat("Player turn.");
     }, 1000);
 }
 window.show3dmodels = window.use3dmodels; // Alias

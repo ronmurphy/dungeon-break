@@ -888,10 +888,10 @@ function createCombatMenu() {
         { name: 'Attack', icon: 'icon_attack.png', fn: "window.commandAttack()" },
         { name: 'Skill', icon: 'icon_skill.png', fn: "console.log('Skill')" },
         { name: 'Item', icon: 'icon_item.png', fn: "console.log('Item')" },
-        { name: 'Defend', icon: 'icon_defend.png', fn: "console.log('Defend')" },
+        { name: 'Defend', icon: 'icon_defend.png', fn: "window.commandDefend()" },
         { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
         { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
-        { name: 'Wait', icon: 'icon_wait.png', fn: "console.log('Wait')" },
+        { name: 'Wait', icon: 'icon_wait.png', fn: "window.commandWait()" },
         { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
         { name: 'Tactics', icon: 'icon_tactics.png', fn: "console.log('Tactics')" }
     ];

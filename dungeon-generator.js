@@ -239,7 +239,7 @@ function countNeighbors(grid, x, z, b) {
     return count;
 }
 
-export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null) {
+export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null, isFlat = false) {
     const theme = getThemeForFloor(floor);
     // Larger Map: 2.5x base size + scaling
     const bounds = boundsOverride !== null ? boundsOverride : (30 + (floor * 5));
@@ -341,6 +341,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
 
     // Helper to get height at a specific corner coordinate (world space)
     function getVertexHeight(vx, vz) {
+        if (isFlat) return 0; // Force flat terrain for Battle Arenas
+
         // 1. Flatten near rooms/corridors
         for (const r of rooms) {
             // Check if vertex is inside or on edge of room (with small margin)
@@ -569,6 +571,9 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
 
 export function generateBattleArena(scene, floor, loadTexture, getClonedTexture) {
     // Generate a small CA island (bounds=12, no rooms)
+    // User Request: Random size between 36 and 55 (35 + 0..20)
+    const size = 35 + Math.floor(Math.random() * 21);
+    
     // We pass empty arrays/maps for rooms, corridors, decorations, trees
     return generateFloorCA(
         scene, 
@@ -579,6 +584,7 @@ export function generateBattleArena(scene, floor, loadTexture, getClonedTexture)
         [], 
         loadTexture, 
         getClonedTexture, 
-        24 // Battle Island Size (Increased)
+        size, // Battle Island Size
+        false // isFlat = false (Restore hills/valleys)
     );
 }
