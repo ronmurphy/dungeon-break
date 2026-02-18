@@ -73,7 +73,11 @@ window.exitBattleIsland = function() {
              activeWanderer = null;
         }
         
-        exitCombatView(); // Restore controls and fog
+        // Restore controls immediately so we can click, but delay fog/visuals until camera arrives
+        exitCombatView(); 
+        
+        // Restore Fog AFTER camera flies back (800ms tween in CombatManager)
+        setTimeout(() => { if (scene.fog) scene.fog.density = savedFogDensity; }, 850);
         spawnFloatingText("ESCAPED!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00', 40);
     }
 };
@@ -1565,7 +1569,8 @@ function on3DClick(event, isRightClick = false) {
 
     if (mouse.x < -1 || mouse.x > 1 || mouse.y < -1 || mouse.y > 1) return;
 
-    raycaster.setFromCamera(mouse, isCombatView ? combatCamera : camera);
+    // FIX: Always use the main camera for raycasting, as we now use it for both Exploration and Combat views
+    raycaster.setFromCamera(mouse, camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
 
     // Iterate to find first CLICKABLE object (skipping particles)
@@ -1609,11 +1614,16 @@ function on3DClick(event, isRightClick = false) {
     }
 
     // If no interactable object was clicked, check for Floor (Movement)
-    if (!isCombatView && globalFloorMesh) {
+    // Allow movement on Battle Island if in combat
+    const targetFloor = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+
+    if (targetFloor) {
         // Create a temporary raycaster for the floor check to ensure we hit it
         const floorRaycaster = new THREE.Raycaster();
-        floorRaycaster.setFromCamera(mouse, camera);
-        const floorHits = floorRaycaster.intersectObject(globalFloorMesh);
+        floorRaycaster.setFromCamera(mouse, camera); // Always use main camera
+        
+        // Use recursive intersect if target is a Group (Battle Island), otherwise normal
+        const floorHits = floorRaycaster.intersectObject(targetFloor, true);
 
         if (floorHits.length > 0) {
             const point = floorHits[0].point;
@@ -2511,7 +2521,10 @@ function movePlayerTo(targetVec, isRunning = false) {
         .to({ x: targetVec.x, z: targetVec.z }, duration)
         .easing(TWEEN.Easing.Linear.None) // Linear for walking
         .onUpdate(() => {
-            if (globalFloorMesh) {
+            // Determine which floor to snap to (Dungeon or Battle Island)
+            const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+
+            if (targetMesh) {
                 const offset = use3dModel ? 0.1 : 0.75;
                 const down = new THREE.Vector3(0, -1, 0);
                 const rayOriginHeight = playerObj.position.y + 3.0; // Cast from above head
@@ -2519,7 +2532,7 @@ function movePlayerTo(targetVec, isRunning = false) {
                 // 1. Ground Snapping (Current Position)
                 // Keep player glued to the floor at their CURRENT X/Z
                 terrainRaycaster.set(new THREE.Vector3(playerObj.position.x, rayOriginHeight, playerObj.position.z), down);
-                const currentHits = terrainRaycaster.intersectObject(globalFloorMesh);
+                const currentHits = terrainRaycaster.intersectObject(targetMesh, true);
 
                 if (currentHits.length > 0) {
                     playerObj.position.y = currentHits[0].point.y + offset;
@@ -2531,7 +2544,7 @@ function movePlayerTo(targetVec, isRunning = false) {
                 const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
                 terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
-                const aheadHits = terrainRaycaster.intersectObject(globalFloorMesh);
+                const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
 
                 if (aheadHits.length > 0) {
                     const nextY = aheadHits[0].point.y;
@@ -3553,24 +3566,7 @@ function showCombat() {
     audio.setMusicMuffled(true); // Muffle music during combat
     enemyArea.innerHTML = '';
 
-    // --- 3D COMBAT SETUP (Legacy Standee Logic Removed) ---
-    if (use3dModel) {
-        const alreadyInCombat = isCombatView;
-        enterCombatView();
-        
-        // Re-enable clicks on specific UI elements
-        const interactables = ['exitCombatBtn', 'modalAvoidBtn', 'descendBtn', 'bonfireNotNowBtn'];
-        interactables.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.style.pointerEvents = 'auto';
-        });
-
-        // Clear previous 3D entities
-        // while (combatGroup.children.length > 0) {
-        //     combatGroup.remove(combatGroup.children[0]);
-        // }
-        // combatEntities = [];
-    } else {
+    if (!use3dModel) {
         overlay.style.background = 'rgba(0,0,0,0.85)';
     }
 
@@ -3596,7 +3592,7 @@ function showCombat() {
     // If room is cleared, we show the Exit button, otherwise the Avoid button
     const msgEl = document.getElementById('combatMessage');
     if (game.activeRoom && game.activeRoom.state === 'cleared') {
-        if (game.activeRoom.isFinal) {
+        if (game.activeRoom.isFinal && !game.isBrokerFight) {
             // Updated AllCleared Logic: Matches HUD (Exclude Bonfires/Specials)
             const allCleared = game.rooms.every(r =>
                 r.isWaypoint ||
@@ -3659,6 +3655,13 @@ function showCombat() {
         mp.style.display = 'none';
     }
     document.getElementById('bonfireNotNowBtn').style.display = (game.activeRoom && (game.activeRoom.isBonfire || (game.activeRoom.isSpecial && isMerchant)) && game.activeRoom.state !== 'cleared') ? 'inline-block' : 'none';
+
+    // Ensure controls are set to the correct camera for Battle Island
+    if (use3dModel && controls) {
+        controls.object = camera; // Use Main Ortho Camera
+        controls.enableRotate = true;
+        controls.update();
+    }
 
     updateUI();
 }
@@ -4321,7 +4324,7 @@ function closeCombat() {
     if (lockpickUI) lockpickUI.style.display = 'none';
     // Hide merchant portrait when modal is closed
     audio.setMusicMuffled(false); // Unmuffle music
-    const mp = document.getElementById('merchantPortrait');
+    const mp = document.getElementById('merchantPortrait'); 
     if (mp) mp.style.display = 'none';
     updateBossBar(0, 60, false, true); // Hide boss bar
     document.getElementById('combatModal').style.pointerEvents = 'auto'; // Reset
@@ -6434,10 +6437,7 @@ function exitCombatView() {
     isCombatView = false;
     scene.remove(combatGroup);
 
-    // Restore Fog
-    if (scene.fog) {
-        scene.fog.density = savedFogDensity;
-    }
+    // Note: Fog is restored in window.exitBattleIsland after delay
 
     // Restore Room Mesh Visibility (Safety check)
     if (game.activeRoom && roomMeshes.has(game.activeRoom.id)) {
