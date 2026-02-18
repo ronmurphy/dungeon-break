@@ -6766,7 +6766,7 @@ window.testmfglb = function (arg) {
     }
 };
 
-function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
+function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, callback) {
     let geo;
     switch (sides) {
         case 4: geo = new THREE.TetrahedronGeometry(0.5); break;
@@ -6812,6 +6812,25 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, callback) {
     const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
     label.scale.set(0.5, 0.5, 0.5);
     dice.add(label);
+
+    // Add Name Label (Above Die)
+    if (labelText) {
+        const canvas2 = document.createElement('canvas');
+        canvas2.width = 256; canvas2.height = 64;
+        const ctx2 = canvas2.getContext('2d');
+        ctx2.fillStyle = 'white';
+        ctx2.font = 'bold 32px Arial';
+        ctx2.textAlign = 'center';
+        ctx2.textBaseline = 'middle';
+        ctx2.shadowColor = 'black';
+        ctx2.shadowBlur = 4;
+        ctx2.fillText(labelText, 128, 32);
+        const tex2 = new THREE.CanvasTexture(canvas2);
+        const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex2, transparent: true }));
+        labelSprite.scale.set(2, 0.5, 1);
+        labelSprite.position.set(0, 1.2, 0);
+        dice.add(labelSprite);
+    }
 
     scene.add(dice);
 
@@ -6988,33 +7007,35 @@ function executePlayerAttack(target) {
     const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
 
     // 3. Spawn Dice Roll Animations (Simultaneous)
-    // Player Dice (Left, Blue)
-    spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, () => { });
+    // Player Dice (Left, Blue) - Label: "You" or Player Name
+    spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, game.playerName || "You", () => { });
 
-    // Enemy Dice (Right, Red)
-    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, () => {
+    // Enemy Dice (Right, Red) - Label: Enemy Name
+    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name || "Enemy", () => {
 
         // 4. Apply Result
         if (result.winner === 'attacker') {
             // Player Hits
+            spawnFloatingText("HIT!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for hit
             target.stats.hp -= result.damage;
-            spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
+            spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
             logCombat(`Player hits! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
             logCombat(`> Dealt ${result.damage} dmg`, '#fff');
 
             if (target.actions && target.actions.hit) target.actions.hit.reset().play();
 
         } else if (result.winner === 'defender') {
-            // Enemy Hits (Counter)
+            // Enemy Hits (Player takes damage)
+            spawnFloatingText("OUCH!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#ff0000'); // Player's side, red for damage taken
             takeDamage(result.damage);
-            spawnFloatingText(`OUCH! -${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff0000');
+            spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2 + 50, '#ff0000'); // Player's side, red for damage taken
             logCombat(`Enemy counters! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
             logCombat(`> Took ${result.damage} dmg`, '#faa');
 
             if (actions.hit) actions.hit.reset().play();
 
         } else {
-            // Tie
+            // Tie (Clash)
             spawnFloatingText("CLASH!", window.innerWidth / 2, window.innerHeight / 2, '#ffffff');
             logCombat(`Clash! Both rolled ${result.attacker.total}`, '#aaa');
         }
@@ -7145,20 +7166,22 @@ function executeEnemyAttack(enemy) {
         const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
 
         // Spawn Dice
-        spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, () => { });
-        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, () => {
+        spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, game.playerName || "You", () => { });
+        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemy.name || "Enemy", () => {
 
             if (result.winner === 'defender') { // Defender is Enemy here (Right side)
                 // Enemy Wins Clash (Hits Player)
+                spawnFloatingText("OUCH!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#ff0000'); // Player's side, red for damage taken
                 takeDamage(result.damage);
-                spawnFloatingText(`HIT! -${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff0000');
+                spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2 + 50, '#ff0000'); // Player's side, red for damage taken
                 logCombat(`Enemy hits! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
                 if (actions.hit) actions.hit.reset().play();
                 if (combatState.isDefending) logCombat("(Damage reduced by Defense)", '#00ffff');
             } else if (result.winner === 'attacker') {
                 // Player Wins Clash (Counters)
+                spawnFloatingText("COUNTER!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for counter
                 enemy.stats.hp -= result.damage;
-                spawnFloatingText(`COUNTER! -${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#00ff00');
+                spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
                 logCombat(`Player counters! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
                 if (enemy.actions.hit) enemy.actions.hit.reset().play();
             } else {

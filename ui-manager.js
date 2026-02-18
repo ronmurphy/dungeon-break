@@ -224,6 +224,7 @@ function updateMapHUD() {
 
     // --- NEW UI POSITIONING (Step 1 & 3) ---
     // This applies to both default and gothic HUDs, as it's a layout change.
+    // The gothic check below only adds a class, it doesn't set position.
     mapHud.style.left = '20px';
     mapHud.style.bottom = '20px';
     mapHud.style.transform = 'none'; // Override centered `translateX(-50%)`
@@ -862,23 +863,16 @@ function toggleCombatMenu() {
     if (!menu) {
         createCombatMenu();
         menu = document.getElementById('combatMenuGrid');
-        menu = document.getElementById('combatMenuGrid'); // Re-fetch after creation
     }
 
-    if (menu.style.display === 'none' || menu.style.display === '') {
-        menu.style.display = 'grid';
-        // Re-apply scale on show, in case window was resized while hidden
-        const scale = Math.min(1.0, Math.max(0.75, window.innerHeight / 1200));
-        menu.style.transform = `scale(${scale})`;
-        menu.style.transformOrigin = 'bottom center';
-    } else {
-        menu.style.display = 'none';
-    }
+    // Slide Logic: Toggle between on-screen (20px) and off-screen (-350px)
+    const isVisible = menu.style.left === '20px';
+    menu.style.left = isVisible ? '-350px' : '20px';
 }
 
 export function hideCombatMenu() {
     const menu = document.getElementById('combatMenuGrid');
-    if (menu) menu.style.display = 'none';
+    if (menu) menu.style.left = '-350px';
 }
 
 function createCombatMenu() {
@@ -890,8 +884,8 @@ function createCombatMenu() {
 
     menu.style.cssText = `
         position: fixed; 
-        bottom: 120px; /* 90px HUD height + 20px bottom margin + 10px gap */
-        left: 170px; /* (20px HUD left + 300px HUD half-width) - 150px menu half-width */
+        bottom: 20px; 
+        left: -350px; /* Start off-screen to the left */
         transform: scale(${scale});
         transform-origin: bottom center;
         width: 300px; height: 300px;
@@ -904,6 +898,7 @@ function createCombatMenu() {
         padding: 5px;
         z-index: 6000;
         box-shadow: 0 0 30px #000;
+        transition: left 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     `;
 
     const actions = [
