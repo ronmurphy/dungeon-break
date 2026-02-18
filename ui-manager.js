@@ -222,6 +222,20 @@ function updateMapHUD() {
     const mapHud = document.getElementById('gameplayInventoryBar');
     if (!mapHud) return;
 
+    // --- NEW UI POSITIONING (Step 1 & 3) ---
+    // This applies to both default and gothic HUDs, as it's a layout change.
+    mapHud.style.left = '20px';
+    mapHud.style.bottom = '20px';
+    mapHud.style.transform = 'none'; // Override centered `translateX(-50%)`
+
+    const gpOpt = document.getElementById('gameplayOptionsBtn');
+    if (gpOpt) {
+        gpOpt.style.position = 'fixed';
+        gpOpt.style.right = '20px';
+        gpOpt.style.bottom = '20px';
+        gpOpt.style.left = 'auto'; // Unset left if it was set elsewhere
+    }
+
     // Check for Gothic HUD (Once per session)
     if (window.hasCheckedGothicHUD === undefined) {
         window.hasCheckedGothicHUD = false;
@@ -236,11 +250,6 @@ function updateMapHUD() {
             console.log("Gothic HUD not found. Using default style.");
             window.hasCheckedGothicHUD = true;
         };
-    }
-
-    // Do not overwrite styles if Gothic HUD is active
-    if (mapHud.classList.contains('gothic-hud-active')) {
-        return;
     }
 
     // --- NEW HUD STYLING (Default) ---
@@ -853,10 +862,15 @@ function toggleCombatMenu() {
     if (!menu) {
         createCombatMenu();
         menu = document.getElementById('combatMenuGrid');
+        menu = document.getElementById('combatMenuGrid'); // Re-fetch after creation
     }
 
     if (menu.style.display === 'none' || menu.style.display === '') {
         menu.style.display = 'grid';
+        // Re-apply scale on show, in case window was resized while hidden
+        const scale = Math.min(1.0, Math.max(0.75, window.innerHeight / 1200));
+        menu.style.transform = `scale(${scale})`;
+        menu.style.transformOrigin = 'bottom center';
     } else {
         menu.style.display = 'none';
     }
@@ -870,8 +884,16 @@ export function hideCombatMenu() {
 function createCombatMenu() {
     const menu = document.createElement('div');
     menu.id = 'combatMenuGrid';
+
+    // --- NEW SCALING & POSITIONING (Step 4) ---
+    const scale = Math.min(1.0, Math.max(0.75, window.innerHeight / 1200));
+
     menu.style.cssText = `
-        position: fixed; bottom: 165px; left: 50%; transform: translateX(-50%);
+        position: fixed; 
+        bottom: 120px; /* 90px HUD height + 20px bottom margin + 10px gap */
+        left: 170px; /* (20px HUD left + 300px HUD half-width) - 150px menu half-width */
+        transform: scale(${scale});
+        transform-origin: bottom center;
         width: 300px; height: 300px;
         background: rgba(10, 10, 10, 0.95);
         border: 2px solid #d4af37;
