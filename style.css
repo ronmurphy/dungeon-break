@@ -1634,3 +1634,79 @@ h1 {
     transition: width 1s ease-out;
     box-shadow: 0 0 10px #ff0000;
 }
+
+/* --- GOTHIC MASTER HUD OVERRIDE --- */
+#gameplayInventoryBar.gothic-hud-active {
+    background: url('assets/images/ui/combat/gothic_master_hud.png') no-repeat center bottom !important;
+    background-size: 667px 256px !important;
+    width: 667px !important;
+    height: 256px !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    /* Reset flex layout to allow absolute positioning of children */
+    display: block !important; 
+    /* Ensure it stays fixed at bottom center */
+    bottom: 0px !important; 
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    /* Ensure pointer events work on children */
+    pointer-events: none; 
+}
+
+#gameplayInventoryBar.gothic-hud-active > * {
+    pointer-events: auto; /* Re-enable clicks on children */
+    position: absolute !important;
+}
+
+/* 1. The Orb (Weapon Button) */
+#gameplayInventoryBar.gothic-hud-active #mapWeaponBtn {
+    /* Position for the large circular area on the left */
+    width: 116px !important; 
+    height: 116px !important;
+    border-radius: 50% !important;
+    border: none !important;
+    /* Adjust these based on the image layout */
+    left: 43px !important; 
+    top: 57px !important;
+    /* Ensure image covers the circle */
+    background-color: transparent !important;
+    /* Remove default border/background constraints */
+    box-shadow: none !important;
+    z-index: 10;
+}
+
+/* 2. The Hotbar Slots */
+#gameplayInventoryBar.gothic-hud-active #mapHotbar {
+    /* Container for the 6 slots */
+    display: flex !important;
+    gap: 18px !important; /* Estimated gap between slots in image */
+    left: 192px !important; /* Start to the right of the orb */
+    top: 120px !important;   /* Vertical alignment */
+    width: auto !important;
+    height: auto !important;
+}
+
+/* Individual Slots */
+#gameplayInventoryBar.gothic-hud-active #mapHotbar > div {
+    /* Make them transparent to show the HUD background slots */
+    width: 58px !important;
+    height: 58px !important;
+    border: none !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    
+    /* Ensure item icons inside are centered/sized correctly */
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* Hide the default fuel bar or move it? */
+#gameplayInventoryBar.gothic-hud-active .fuel-meter-container {
+    /* Maybe hide it for now, or position it creatively */
+    display: none !important;
+}

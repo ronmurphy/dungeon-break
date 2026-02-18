@@ -222,7 +222,28 @@ function updateMapHUD() {
     const mapHud = document.getElementById('gameplayInventoryBar');
     if (!mapHud) return;
 
-    // --- NEW HUD STYLING ---
+    // Check for Gothic HUD (Once per session)
+    if (window.hasCheckedGothicHUD === undefined) {
+        window.hasCheckedGothicHUD = false;
+        const img = new Image();
+        img.src = 'assets/images/ui/combat/gothic_master_hud.png';
+        img.onload = () => {
+            console.log("Gothic HUD Found! Applying style.");
+            window.hasCheckedGothicHUD = true;
+            mapHud.classList.add('gothic-hud-active');
+        };
+        img.onerror = () => {
+             console.log("Gothic HUD not found. Using default style.");
+             window.hasCheckedGothicHUD = true;
+        };
+    }
+
+    // Do not overwrite styles if Gothic HUD is active
+    if (mapHud.classList.contains('gothic-hud-active')) {
+        return; 
+    }
+
+    // --- NEW HUD STYLING (Default) ---
     // Overwrite default styles for a cleaner, darker look
     mapHud.style.background = "linear-gradient(to top, #000000, #1a1a1a)";
     mapHud.style.borderTop = "2px solid #444";
