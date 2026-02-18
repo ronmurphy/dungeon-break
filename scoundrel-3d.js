@@ -9,6 +9,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { HorizontalTiltShiftShader } from 'three/addons/shaders/HorizontalTiltShiftShader.js';
 import { VerticalTiltShiftShader } from 'three/addons/shaders/VerticalTiltShiftShader.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { runSmartBenchmark, PROFILES } from './benchmark.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { generateHouse } from './house-generator.js';
 import { SoundManager } from './sound-manager.js';
@@ -42,6 +43,7 @@ let torchLight;
 let hemisphereLight; // Soft global fill light to improve readability under fog
 // let fogRings = []; // Fog ring sprites for atmospheric LOD // DEAD CODE
 let roomMeshes = new Map();
+let animationFrameId = null; // To prevent multiple render loops
 let terrainMeshes = new Map();
 let waypointMeshes = new Map();
 let corridorMeshes = new Map();
@@ -196,6 +198,14 @@ let combatState = {
     isDefending: false
 };
 
+let benchmarkState = {
+    active: false,
+    startTime: 0,
+    frames: 0,
+    duration: 3000,
+    isDefending: false
+};
+
 const textureLoader = new THREE.TextureLoader();
 const glbCache = new Map(); // Cache for loaded GLB assets
 const loadingPromises = new Map(); // Deduplicate in-flight loads
@@ -213,8 +223,9 @@ function loadTexture(path) {
 function getClonedTexture(path) {
     const original = loadTexture(path);
     const clone = original.clone();
-    clone.needsUpdate = true;
-    // Ensure update happens when image loads
+    // The initial `clone.needsUpdate = true` could cause a warning if the image
+    // wasn't loaded yet. This polling check ensures we only flag for update
+    // once the image data is actually available.
     const checkLoad = () => {
         if (original.image && original.image.complete) clone.needsUpdate = true;
         else requestAnimationFrame(checkLoad);
@@ -1045,6 +1056,11 @@ const ColorBandShader = {
 };
 
 function init3D() {
+    // Cancel any existing animation loop to prevent multiple loops from running
+    if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+    }
+
     const container = document.getElementById('v3-container');
     if (renderer) {
         // Already initialized, just need new scene/camera
@@ -1056,7 +1072,10 @@ function init3D() {
         scene.background = new THREE.Color(0x0a0a0a);
         scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
 
-        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer = new THREE.WebGLRenderer({ 
+            antialias: true,
+            powerPreference: "high-performance" // Hint to browser to use dGPU (NVIDIA/AMD) over iGPU
+        });
         renderer.setSize(container.clientWidth, container.clientHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Cap pixel ratio for performance
         renderer.shadowMap.enabled = true;
@@ -1332,6 +1351,18 @@ function loadPlayerModel() {
     }, 0.7, configKey);
 }
 
+function updateLODs() {
+    if (!gameSettings.lod) return;
+    console.log(`Applying LOD distances: near=${gameSettings.lod.near}, far=${gameSettings.lod.far}`);
+    wanderers.forEach(w => {
+        if (w.mesh && w.mesh.isLOD) { // Check mesh exists and is LOD
+            const levels = w.mesh.levels;
+            if (levels[0]) levels[0].distance = gameSettings.lod.near;
+            if (levels[1]) levels[1].distance = gameSettings.lod.far;
+        }
+    });
+}
+
 function initWanderers() {
     // Cleanup existing
     wanderers.forEach(w => {
@@ -1346,6 +1377,20 @@ function initWanderers() {
         const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
 
         loadGLB(`assets/images/glb/${file}`, (model, animations) => {
+            // --- NEW LOD LOGIC ---
+            const lod = new THREE.LOD();
+
+            // Level 0: Full model
+            lod.addLevel(model, gameSettings.lod.near || 40);
+
+            // Level 1: Placeholder box
+            const boxGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6); // Approx size
+            const boxMat = new THREE.MeshBasicMaterial({ color: 0x333333, wireframe: true });
+            const box = new THREE.Mesh(boxGeo, boxMat);
+            box.name = "LOD_Placeholder_Box";
+            lod.addLevel(box, gameSettings.lod.far || 80);
+
+            // The mixer needs to animate the original model, which is now a child of the LOD
             // Find valid spawn point
             let valid = false;
             let sx = 0, sz = 0, sy = 0;
@@ -1378,10 +1423,10 @@ function initWanderers() {
                 }
             }
 
-            model.position.set(sx, sy, sz);
-            scene.add(model);
+            lod.position.set(sx, sy, sz);
+            scene.add(lod);
 
-            const mixer = new THREE.AnimationMixer(model);
+            const mixer = new THREE.AnimationMixer(model); // Animate the high-poly model inside the LOD
 
             // Improved Animation Discovery
             const findAnim = (terms) => {
@@ -1404,7 +1449,8 @@ function initWanderers() {
                 actions.idle = mixer.clipAction(idleClip);
             }
 
-            const wanderer = { mesh: model, mixer: mixer, actions: actions, filename: file };
+            // Store the LOD object as the mesh
+            const wanderer = { mesh: lod, mixer: mixer, actions: actions, filename: file };
             wanderers.push(wanderer);
             pickWandererTarget(wanderer);
         }, 0.7);
@@ -1580,11 +1626,17 @@ function on3DClick(event, isRightClick = false) {
     if (isAttractMode) return;
 
     // Check if mouse moved significantly (drag/rotate) > 5 pixels
+    // If the click is on any modal overlay, block it.
+    if (event.target.closest('.modal-overlay')) {
+        // This prevents clicks on the options/benchmark/etc modals from passing through to the game world.
+        return;
+    }
+
     if (Math.abs(event.clientX - clickStart.x) > 5 || Math.abs(event.clientY - clickStart.y) > 5) {
         return;
     }
     // Prevent interaction if any modal is open (including lockpickUI)
-    const blockers = ['combatModal', 'lockpickUI', 'introModal', 'avatarModal', 'inventoryModal', 'classModal'];
+    const blockers = ['combatModal', 'lockpickUI', 'introModal', 'avatarModal', 'inventoryModal', 'classModal', 'optionsModal', 'benchmarkModal', 'helpModal'];
 
     // Check if clicking on specific UI elements that should block 3D interaction
     if (event.target.closest('#combatMenuGrid') ||
@@ -2193,7 +2245,29 @@ function updateMusicForFloor() {
 }
 
 function animate3D() {
-    requestAnimationFrame(animate3D);
+    animationFrameId = requestAnimationFrame(animate3D);
+
+    if (benchmarkState.active) {
+        const now = performance.now();
+        benchmarkState.frames++;
+
+        if (benchmarkState.orbit) {
+            const time = now * 0.0002;
+            const dist = 35;
+            camera.position.x = Math.sin(time) * dist;
+            camera.position.z = Math.cos(time) * dist;
+            camera.position.y = 12;
+            camera.lookAt(0, 0, 0);
+            controls.target.set(0,0,0);
+        }
+
+        if (now - benchmarkState.startTime >= benchmarkState.duration) {
+            const fps = Math.round(benchmarkState.frames / (benchmarkState.duration / 1000));
+            if (benchmarkState.resolve) benchmarkState.resolve(fps);
+            benchmarkState.active = false; // Stop benchmarking
+        }
+    }
+
     update3DScene();
     updateFX();
     // Update UI FX canvas (draw on top of modal as needed)
@@ -2454,7 +2528,10 @@ function animate3D() {
     if (use3dModel && mixer) {
         const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches
         mixer.update(delta * globalAnimSpeed);
-        wanderers.forEach(w => { if (w.mixer) w.mixer.update(delta * globalAnimSpeed); });
+        wanderers.forEach(w => {
+            if (w.mixer) w.mixer.update(delta * globalAnimSpeed);
+            if (w.mesh && w.mesh.isLOD) w.mesh.update(camera);
+        });
     } else if (!use3dModel) {
         animatePlayerSprite();
     }
@@ -3747,11 +3824,11 @@ function startSoulBrokerEncounter() {
 }
 
 function showCombat() {
-    //const overlay = document.getElementById('combatModal');
+    const overlay = document.getElementById('combatModal');
     const enemyArea = document.getElementById('enemyArea');
-    //  overlay.style.display = 'flex';
-    //  overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
-    //  overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
+    overlay.style.display = 'flex';
+    overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
+    overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
 
     audio.setMusicMuffled(true); // Muffle music during combat
     enemyArea.innerHTML = '';
@@ -5013,22 +5090,31 @@ let gameSettings = {
     masterVolume: 0.5,
     musicMuted: false,
     sfxMuted: false,
-    enhancedGraphics: true,
+    graphicsProfile: 'high', // low, medium, high, ultra, custom
+    enhancedGraphics: true, // Controlled by profile
     tiltShiftMode: 'threejs', // 'off', 'css', 'threejs'
-    bloomEnabled: true,
+    bloomEnabled: true,      // Controlled by profile
+    shadowsEnabled: 'medium', // false, 'low', 'medium', 'high'
     celShadingEnabled: false,
-    celOutlineEnabled: true
+    celOutlineEnabled: true,
+    lod: { near: 40, far: 80 }, // Default LOD distances
+    pixelRatio: 1.5
 };
 
 function loadSettings() {
     const s = localStorage.getItem('scoundrelSettings');
     if (s) {
-        gameSettings = JSON.parse(s);
+        const loaded = JSON.parse(s);
+        gameSettings = { ...gameSettings, ...loaded }; // Merge to add new settings to old saves
+
+        if (!gameSettings.lod) gameSettings.lod = { near: 40, far: 80 };
+        if (!gameSettings.pixelRatio) gameSettings.pixelRatio = 1.5;
         // Migration for old boolean setting
         if (gameSettings.tiltShift !== undefined) {
             gameSettings.tiltShiftMode = gameSettings.tiltShift ? 'css' : 'off';
             delete gameSettings.tiltShift;
         }
+
         // Apply graphics setting if present
         if (gameSettings.enhancedGraphics !== undefined) use3dModel = gameSettings.enhancedGraphics;
         applyTiltShiftMode(gameSettings.tiltShiftMode);
@@ -5068,6 +5154,14 @@ window.showOptionsModal = function () {
     modal.innerHTML = `
         <div style="background:rgba(0,0,0,0.9); border:2px solid var(--gold); padding:30px; width:300px; text-align:center; color:#fff; font-family:'Cinzel'; position:relative;">
             <h2 style="color:var(--gold); margin-top:0; margin-bottom:20px;">OPTIONS</h2>
+
+            <div style="margin:10px 0; text-align:left;">
+                <label style="display:block; margin-bottom:5px;">Graphics Profile</label>
+                <select id="graphicsProfileSelect" onchange="window.applyAndSaveProfile(this.value)" style="width:100%; padding: 8px; background: #111; color: #fff; border: 1px solid #555;">
+                    <option value="custom">Custom</option>
+                    ${Object.entries(PROFILES).map(([key, val]) => `<option value="${key}">${val.name}</option>`).join('')}
+                </select>
+            </div>
             
             <div style="margin:20px 0; text-align:left;">
                 <label style="display:block; margin-bottom:5px;">Master Volume</label>
@@ -5075,7 +5169,7 @@ window.showOptionsModal = function () {
             </div>
 
             <div style="margin:10px 0; padding:10px; border:1px dashed #555; text-align:center;">
-                <button class="v2-btn" onclick="runBenchmark()" style="font-size:0.8rem; width:100%;">Auto-Detect Graphics</button>
+                <button class="v2-btn" onclick="runBenchmark()" style="font-size:0.8rem; width:100%;">Auto-Detect Best Profile</button>
                 <div id="benchmarkResult" style="font-size:0.7rem; color:#aaa; margin-top:5px;"></div>
             </div>
             
@@ -5108,6 +5202,16 @@ window.showOptionsModal = function () {
                 <input type="checkbox" id="celOutline" ${gameSettings.celOutlineEnabled ? 'checked' : ''} onchange="updateSetting('celOutline', this.checked)">
                 <label for="celOutline" style="font-size:0.9rem; color:#aaa;">Use Outlines</label>
             </div>
+            
+            <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px; border-top: 1px solid #444; padding-top: 15px;">
+                <label for="shadowsEnabled" style="flex-grow:1;">Shadow Quality</label>
+                <select id="shadowsEnabled" onchange="updateSetting('shadows', this.value)" style="padding: 5px; background: #111; color: #fff; border: 1px solid #555;">
+                    <option value="false" ${!gameSettings.shadowsEnabled ? 'selected' : ''}>Off</option>
+                    <option value="low" ${gameSettings.shadowsEnabled === 'low' ? 'selected' : ''}>Low</option>
+                    <option value="medium" ${gameSettings.shadowsEnabled === 'medium' ? 'selected' : ''}>Medium</option>
+                    <option value="high" ${gameSettings.shadowsEnabled === 'high' ? 'selected' : ''}>High</option>
+                </select>
+            </div>
 
             ${graphicsOption}
 
@@ -5121,6 +5225,16 @@ window.showOptionsModal = function () {
         </div>
     `;
     modal.style.display = 'flex';
+};
+
+window.applyAndSaveProfile = function (profileName) {
+    if (!PROFILES[profileName]) return;
+    gameSettings.graphicsProfile = profileName;
+    const profile = PROFILES[profileName];
+    console.log(`Applying Graphics Profile: "${profile.name}"`, profile.settings);
+    Object.entries(profile.settings).forEach(([key, value]) => updateSetting(key, value));
+    updateOptionsUI();
+    saveSettings();
 };
 
 window.updateSetting = function (type, val) {
@@ -5150,6 +5264,41 @@ window.updateSetting = function (type, val) {
         gameSettings.celOutlineEnabled = val;
         rebuildComposer();
     }
+    if (type === 'shadows') {
+        // Handle string "false" from select
+        const shadowVal = val === 'false' ? false : val;
+        gameSettings.shadowsEnabled = shadowVal;
+        if (renderer) renderer.shadowMap.enabled = !!shadowVal;
+        if (torchLight) {
+            torchLight.castShadow = !!shadowVal;
+            let mapSize = 512;
+            if (shadowVal === 'medium') mapSize = 1024;
+            else if (shadowVal === 'high') mapSize = 2048;
+            if (torchLight.shadow.mapSize.width !== mapSize) {
+                torchLight.shadow.mapSize.width = mapSize;
+                torchLight.shadow.mapSize.height = mapSize;
+                // This is a heavy operation, but Three.js handles it.
+            }
+        }
+    }
+    if (type === 'lod') {
+        gameSettings.lod = val;
+        updateLODs();
+    }
+    if (type === 'pixelRatio') {
+        gameSettings.pixelRatio = val;
+        if (renderer) {
+            renderer.setPixelRatio(val);
+            if (composer) composer.setPixelRatio(val);
+        }
+    }
+
+    // If a graphics-related setting is changed manually, set profile to custom
+    const graphicSettings = ['graphics', 'tiltShift', 'bloom', 'cel', 'celOutline', 'shadows', 'lod', 'pixelRatio'];
+    if (graphicSettings.includes(type)) {
+        gameSettings.graphicsProfile = 'custom';
+        updateOptionsUI();
+    }
 
     saveSettings();
     if (type !== 'graphics') applyAudioSettings();
@@ -5174,73 +5323,77 @@ function applyTiltShiftMode(mode) {
     }
 }
 
-// --- BENCHMARK SYSTEM (Glenn's Request) ---
-window.runBenchmark = function () {
-    const resEl = document.getElementById('benchmarkResult');
-    if (resEl) resEl.innerText = "Testing... (3s)";
+function updateOptionsUI() {
+    if (!document.getElementById('optionsModal')) return;
 
-    let frames = 0;
-    let startTime = performance.now();
-    let active = true;
+    const get = (id) => document.getElementById(id);
+    if (get('graphicsProfileSelect')) get('graphicsProfileSelect').value = gameSettings.graphicsProfile;
+    if (get('enhancedGfx')) get('enhancedGfx').checked = gameSettings.enhancedGraphics;
+    if (get('tiltShift')) get('tiltShift').checked = (gameSettings.tiltShiftMode === 'threejs');
+    if (get('bloomFX')) get('bloomFX').checked = gameSettings.bloomEnabled;
+    if (get('celShading')) get('celShading').checked = gameSettings.celShadingEnabled;
+    if (get('celOutline')) get('celOutline').checked = gameSettings.celOutlineEnabled;
+    if (get('shadowsEnabled')) get('shadowsEnabled').value = String(gameSettings.shadowsEnabled);
 
-    // Force high load temporarily
-    // We modify gameSettings so animate3D renders full FX during the test
-    gameSettings.tiltShiftMode = 'threejs';
-    gameSettings.bloomEnabled = true;
-    gameSettings.celShadingEnabled = true;
-    gameSettings.celOutlineEnabled = true;
-    if (bloomPass) bloomPass.enabled = true;
-    rebuildComposer();
-
-    const loop = () => {
-        if (!active) return;
-        frames++;
-        const now = performance.now();
-        if (now - startTime >= 3000) {
-            active = false;
-            const fps = Math.round((frames / 3) * 10) / 10;
-
-            // Decision Matrix
-            let mode = "Classic";
-            if (fps > 55) {
-                updateSetting('graphics', true); updateSetting('tiltShift', true); updateSetting('bloom', true); updateSetting('cel', false); updateSetting('celOutline', false);
-                mode = "Ultra (Enhanced + FX)";
-            } else if (fps > 40) {
-                updateSetting('graphics', true); updateSetting('tiltShift', true); updateSetting('bloom', false); updateSetting('cel', false); updateSetting('celOutline', false);
-                mode = "High (Enhanced + Tilt)";
-            } else if (fps > 25) {
-                updateSetting('graphics', false); updateSetting('tiltShift', true); updateSetting('bloom', true); updateSetting('cel', false); updateSetting('celOutline', false);
-                mode = "Medium (Classic + FX)";
-            } else {
-                updateSetting('graphics', false); updateSetting('tiltShift', false); updateSetting('bloom', false); updateSetting('cel', false); updateSetting('celOutline', false);
-                mode = "Low (Classic)";
-            }
-
-            if (resEl) resEl.innerText = `Result: ${fps} FPS -> Set to ${mode}`;
-
-            // Restore UI toggles
-            const gfxCheck = document.getElementById('enhancedGfx');
-            if (gfxCheck) gfxCheck.checked = gameSettings.enhancedGraphics;
-
-            const tiltCheck = document.getElementById('tiltShift');
-            if (tiltCheck) tiltCheck.checked = (gameSettings.tiltShiftMode === 'threejs');
-
-            const bloomCheck = document.getElementById('bloomFX');
-            if (bloomCheck) bloomCheck.checked = gameSettings.bloomEnabled;
-
-            const celCheck = document.getElementById('celShading');
-            if (celCheck) celCheck.checked = gameSettings.celShadingEnabled;
-
-            const outlineCheck = document.getElementById('celOutline');
-            if (outlineCheck) outlineCheck.checked = gameSettings.celOutlineEnabled;
-
-            showBenchmarkModal(fps);
-        } else {
-            requestAnimationFrame(loop);
-        }
-    };
-    loop();
+    const sub = document.getElementById('celOutlineDiv');
+    if (sub) sub.style.display = gameSettings.celShadingEnabled ? 'flex' : 'none';
 }
+
+// --- BENCHMARK SYSTEM (Glenn's Request) ---
+window.runBenchmark = async function () {
+    const resEl = document.getElementById('benchmarkResult');
+    if (resEl) resEl.innerText = "Testing... Please wait.";
+
+    // Save camera state to restore it after the test
+    const savedCamera = {
+        pos: camera.position.clone(),
+        target: controls.target.clone(),
+        zoom: camera.zoom
+    };
+    const wasAttract = isAttractMode;
+    isAttractMode = false; // Temporarily disable attract mode orbit to use our own
+
+    // This function will be passed to the benchmark runner.
+    // It applies a profile and measures FPS.
+    const testProfile = async (profileName) => {
+        console.log(`  > Testing profile: ${profileName}`);
+        window.applyAndSaveProfile(profileName);
+
+        // Wait a moment for settings to apply and scene to settle
+        // Increased to 2000ms to allow reloadScene() and GLB loading to finish before measuring
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        return new Promise(resolve => {
+            // Hook into the main animate3D loop for measurement
+            benchmarkState = {
+                active: true,
+                startTime: performance.now(),
+                frames: 0,
+                duration: 3000,
+                orbit: true, // Force orbit for consistent stress test
+                resolve: resolve
+            };
+        });
+    };
+
+    // Run the smart benchmark
+    const { profile: bestProfile, fps: finalFps } = await runSmartBenchmark(testProfile);
+
+    // Apply the final chosen profile
+    window.applyAndSaveProfile(bestProfile);
+
+    // Restore camera to its original state before showing the results
+    camera.position.copy(savedCamera.pos);
+    controls.target.copy(savedCamera.target);
+    camera.zoom = savedCamera.zoom;
+    camera.updateProjectionMatrix();
+    controls.update();
+    isAttractMode = wasAttract; // Restore attract mode if it was on
+
+    if (resEl) resEl.innerText = `Result: ${finalFps} FPS -> Set to ${PROFILES[bestProfile].name}`;
+
+    showBenchmarkModal(finalFps); // Show the detailed analysis modal
+};
 
 function showBenchmarkModal(fps) {
     let modal = document.getElementById('benchmarkModal');
@@ -5257,14 +5410,26 @@ function showBenchmarkModal(fps) {
     const canTilt = fps > 25;
     const canBloom = fps > 50;
     const canCel = fps > 35;
+    const canLOD = canEnhanced; // LOD is only relevant for 3D models
 
     const check = (bool) => bool ? '✅' : '❌';
     const color = (bool) => bool ? '#4f4' : '#f44';
     const rowStyle = "display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px solid #333; padding-bottom:2px;";
 
+    // Get Active GPU Name
+    let gpuName = "Unknown GPU";
+    if (renderer) {
+        const gl = renderer.getContext();
+        const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+        if (debugInfo) {
+            gpuName = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+        }
+    }
+
     modal.innerHTML = `
         <div style="background:rgba(10,10,10,0.98); border:2px solid var(--gold); padding:30px; width:400px; max-width:90%; text-align:center; color:#fff; font-family:'Cinzel'; position:relative; box-shadow: 0 0 50px rgba(0,0,0,0.8);">
             <h2 style="color:var(--gold); margin-top:0; margin-bottom:10px; text-shadow:0 2px 4px #000;">SYSTEM ANALYSIS</h2>
+            <div style="font-size:0.75rem; color:#666; margin-bottom:15px; font-family:sans-serif;">${gpuName}</div>
             <div style="font-size:1.0rem; margin-bottom:20px; color:#aaa; font-family:'Special Elite';">Stress Test Result: <span style="color:#fff; font-weight:bold; font-size:1.2rem;">${fps} FPS</span></div>
             
             <div style="text-align:left; background:rgba(255,255,255,0.03); padding:20px; border:1px solid #444; margin-bottom:20px; font-family:'Crimson Text'; font-size:1.1rem;">
@@ -5279,6 +5444,9 @@ function showBenchmarkModal(fps) {
                 </div>
                 <div style="display:flex; justify-content:space-between;">
                     <span>Bloom Lighting</span> <span style="color:${color(canBloom)}">${check(canBloom)}</span>
+                </div>
+                <div style="${rowStyle}">
+                    <span>Level of Detail (LOD)</span> <span style="color:${color(canLOD)}">${check(canLOD)}</span>
                 </div>
                 <div style="display:flex; justify-content:space-between;">
                     <span>Cel Shading</span> <span style="color:${color(canCel)}">${check(canCel)}</span>
@@ -6828,8 +6996,10 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
         const tex2 = new THREE.CanvasTexture(canvas2);
         const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex2, transparent: true }));
         labelSprite.scale.set(2, 0.5, 1);
-        labelSprite.position.set(0, 1.2, 0);
-        dice.add(labelSprite);
+        
+        labelSprite.position.copy(spawnPos).add(new THREE.Vector3(0, 0.8, 0));
+        scene.add(labelSprite);
+        dice.userData.nameLabel = labelSprite;
     }
 
     scene.add(dice);
@@ -6848,6 +7018,7 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
             // Cleanup
             setTimeout(() => {
                 scene.remove(dice);
+                if (dice.userData.nameLabel) scene.remove(dice.userData.nameLabel);
                 if (callback) callback();
             }, 600);
         })
