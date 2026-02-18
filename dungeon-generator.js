@@ -579,6 +579,6 @@ export function generateBattleArena(scene, floor, loadTexture, getClonedTexture)
         [], 
         loadTexture, 
         getClonedTexture, 
-        18 // Small bounds override (Increased size)
+        24 // Battle Island Size (Increased)
     );
 }

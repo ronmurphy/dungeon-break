@@ -20,7 +20,7 @@ import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu } from './ui-manager.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
 
@@ -55,6 +55,9 @@ let savedFogDensity = 0.045;
 
 // Expose exit function globally
 window.exitBattleIsland = function() {
+    // Always force menu closed when attempting to exit, regardless of state
+    hideCombatMenu();
+
     if (CombatManager.isActive) {
         CombatManager.endCombat(activeWanderer);
         
@@ -75,6 +78,9 @@ window.exitBattleIsland = function() {
         
         // Restore controls immediately so we can click, but delay fog/visuals until camera arrives
         exitCombatView(); 
+        
+        // FIX: Ensure combat modal and menu are closed so they don't block movement raycasts
+        document.getElementById('combatModal').style.display = 'none';
         
         // Restore Fog AFTER camera flies back (800ms tween in CombatManager)
         setTimeout(() => { if (scene.fog) scene.fog.density = savedFogDensity; }, 850);
@@ -1547,6 +1553,15 @@ function on3DClick(event, isRightClick = false) {
     }
     // Prevent interaction if any modal is open (including lockpickUI)
     const blockers = ['combatModal', 'lockpickUI', 'introModal', 'avatarModal', 'inventoryModal', 'classModal'];
+    
+    // Check if clicking on specific UI elements that should block 3D interaction
+    if (event.target.closest('#combatMenuGrid') || 
+        event.target.closest('#gameplayInventoryBar') || 
+        event.target.closest('.control-box') || 
+        event.target.closest('.player-combat-area')) {
+        return;
+    }
+
     const isBlocked = blockers.some(id => {
         // Exception: Allow combatModal if in 3D Combat View (it's transparent)
         if (id === 'combatModal' && isCombatView) return false;
@@ -3563,24 +3578,9 @@ function showCombat() {
         overlay.style.background = 'rgba(0,0,0,0.85)';
     }
 
-    // --- NEW COMMAND MENU UI ---
-    // This replaces the card grid with a tactical menu
-    const menu = document.createElement('div');
-    menu.className = 'command-menu';
-    menu.style.cssText = `
-        position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
-        display: flex; gap: 15px; pointer-events: auto;
-    `;
-    
-    const btnStyle = "padding: 15px 30px; font-size: 1.2rem; font-family: 'Cinzel'; background: rgba(0,0,0,0.8); border: 2px solid var(--gold); color: var(--gold); cursor: pointer; transition: all 0.2s;";
-    
-    menu.innerHTML = `
-        <button style="${btnStyle}" onclick="console.log('Attack Clicked')">ATTACK</button>
-        <button style="${btnStyle}" onclick="console.log('Item Clicked')">ITEM</button>
-        <button style="${btnStyle}" onclick="window.exitBattleIsland()">FLEE</button>
-    `;
-    
-    enemyArea.appendChild(menu);
+    // Hide Player Combat Area (Hero Plate / Loot Locker container)
+    const combatDock = document.querySelector('.player-combat-area');
+    if (combatDock) combatDock.style.display = 'none';
 
     // If room is cleared, we show the Exit button, otherwise the Avoid button
     const msgEl = document.getElementById('combatMessage');
@@ -4322,6 +4322,11 @@ function closeCombat() {
     const mp = document.getElementById('merchantPortrait'); 
     if (mp) mp.style.display = 'none';
     updateBossBar(0, 60, false, true); // Hide boss bar
+    
+    // Restore Player Combat Area
+    const combatDock = document.querySelector('.player-combat-area');
+    if (combatDock) combatDock.style.display = 'flex';
+    hideCombatMenu(); // Ensure 3x3 menu is closed
     document.getElementById('combatModal').style.pointerEvents = 'auto'; // Reset
 
     if (use3dModel) {

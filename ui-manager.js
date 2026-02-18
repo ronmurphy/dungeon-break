@@ -222,6 +222,14 @@ function updateMapHUD() {
     const mapHud = document.getElementById('gameplayInventoryBar');
     if (!mapHud) return;
 
+    // --- NEW HUD STYLING ---
+    // Overwrite default styles for a cleaner, darker look
+    mapHud.style.background = "linear-gradient(to top, #000000, #1a1a1a)";
+    mapHud.style.borderTop = "2px solid #444";
+    mapHud.style.boxShadow = "0 -5px 20px rgba(0,0,0,0.8)";
+    mapHud.style.borderRadius = "0"; // Sharp corners
+    mapHud.style.height = "90px"; // Slightly taller
+
     // Visibility Logic
     const combatModal = document.getElementById('combatModal');
     const invModal = document.getElementById('inventoryModal');
@@ -780,9 +788,9 @@ export function handleDrop(e, targetType, targetIdx) {
 window.handleDrop = handleDrop;
 
 window.toggleInventory = function () {
-    // If in battle island, exit immediately instead of toggling UI
-    if (window.inBattleIsland && window.exitBattleIsland) {
-        window.exitBattleIsland();
+    // If in battle island, toggle the Combat Menu instead of Inventory
+    if (window.inBattleIsland) {
+        toggleCombatMenu();
         return;
     }
 
@@ -795,6 +803,80 @@ window.toggleInventory = function () {
         updateUI();
     }
 };
+
+function toggleCombatMenu() {
+    let menu = document.getElementById('combatMenuGrid');
+    if (!menu) {
+        createCombatMenu();
+        menu = document.getElementById('combatMenuGrid');
+    }
+    
+    if (menu.style.display === 'none' || menu.style.display === '') {
+        menu.style.display = 'grid';
+    } else {
+        menu.style.display = 'none';
+    }
+}
+
+export function hideCombatMenu() {
+    const menu = document.getElementById('combatMenuGrid');
+    if (menu) menu.style.display = 'none';
+}
+
+function createCombatMenu() {
+    const menu = document.createElement('div');
+    menu.id = 'combatMenuGrid';
+    menu.style.cssText = `
+        position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+        width: 300px; height: 300px;
+        background: rgba(10, 10, 10, 0.95);
+        border: 2px solid #d4af37;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        grid-template-rows: repeat(3, 1fr);
+        gap: 5px;
+        padding: 5px;
+        z-index: 6000;
+        box-shadow: 0 0 30px #000;
+    `;
+
+    const actions = [
+        { name: 'Attack', icon: 'icon_attack.png', fn: "console.log('Attack')" },
+        { name: 'Skill', icon: 'icon_skill.png', fn: "console.log('Skill')" },
+        { name: 'Item', icon: 'icon_item.png', fn: "console.log('Item')" },
+        { name: 'Defend', icon: 'icon_defend.png', fn: "console.log('Defend')" },
+        { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
+        { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
+        { name: 'Wait', icon: 'icon_wait.png', fn: "console.log('Wait')" },
+        { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
+        { name: 'Tactics', icon: 'icon_tactics.png', fn: "console.log('Tactics')" }
+    ];
+
+    actions.forEach(act => {
+        const btn = document.createElement('div');
+        btn.style.cssText = `
+            background: #222; border: 1px solid #444; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: all 0.1s;
+        `;
+        btn.onmouseenter = () => { btn.style.background = '#333'; btn.style.borderColor = '#d4af37'; };
+        btn.onmouseleave = () => { btn.style.background = '#222'; btn.style.borderColor = '#444'; };
+        btn.onclick = () => { 
+            // Execute function string
+            new Function(act.fn)(); 
+            // Optional: Close menu after action?
+            // menu.style.display = 'none'; 
+        };
+
+        btn.innerHTML = `
+            <img src="assets/images/ui/combat/${act.icon}" style="width:48px; height:48px; margin-bottom:5px;" onerror="this.style.display='none'">
+            <span style="font-family:'Cinzel'; font-size:12px; color:#ccc;">${act.name}</span>
+        `;
+        menu.appendChild(btn);
+    });
+
+    document.body.appendChild(menu);
+}
 
 window.openInventory = () => {
     if (!document.getElementById('inventoryModal')) setupInventoryUI();
