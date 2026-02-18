@@ -31,7 +31,7 @@ const INTRO_STORY_DEFAULTS = [
 ];
 
 // --- 3D RENDERING (Three.js Tableau) ---
-let scene, camera, combatCamera, renderer, composer, renderPass, controls, raycaster, mouse;
+let scene, camera, renderer, composer, renderPass, controls, raycaster, mouse;
 let perspectiveCamera; // New camera for Immersive mode
 let hTilt, vTilt, bloomPass, outlineEffect;
 let playerMarker; // Crystal marker
@@ -152,7 +152,6 @@ function preloadCardImages() {
 
 let ghosts = []; // Active ghost sprites
 let viewMode = 1; // 0: 2D, 1: 3D Iso (Default), 2: 3D Free/FPS
-let combatCameraActive = false; // User preference for rotating camera in combat
 let isAttractMode = false; // Title screen mode
 let use3dModel = true; // Default to 3D models
 let playerSprite;
@@ -987,10 +986,6 @@ function handleWindowResize() {
         camera.top = d;
         camera.bottom = -d;
         camera.updateProjectionMatrix();
-        if (combatCamera) {
-            combatCamera.aspect = aspect;
-            combatCamera.updateProjectionMatrix();
-        }
         renderer.setSize(container.clientWidth, container.clientHeight);
         if (composer) {
             composer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -1082,7 +1077,6 @@ function init3D() {
     camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
     camera.position.set(20, 20, 20);
     camera.lookAt(0, 0, 0);
-    combatCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000);
     perspectiveCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000); // Devin's Camera
 
     controls = new OrbitControls(camera, renderer.domElement);
@@ -2340,9 +2334,7 @@ function animate3D() {
     // Throttled render so we don't render >30fps
     if (now - lastRenderTime >= RENDER_INTERVAL) {
         // Determine active camera based on mode
-        // FIX: Always use the main camera (Ortho). CombatManager moves THIS camera to the Battle Island.
-        // The separate 'combatCamera' (Perspective) was staying at 0,0,0, causing the view bug.
-        let activeCam = camera; 
+        let activeCam = camera;
 
         const lockpickActive = document.getElementById('lockpickUI') && document.getElementById('lockpickUI').style.display !== 'none';
 
@@ -2914,37 +2906,37 @@ function clear3DScene() {
     torchLight = null;
 }
 
-function toggleView() {
-    combatCameraActive = !combatCameraActive;
-    const btn = document.getElementById('viewToggleBtn');
+// function toggleView() {
+//     combatCameraActive = !combatCameraActive;
+//     const btn = document.getElementById('viewToggleBtn');
 
-    if (btn) {
-        btn.innerText = `Combat Camera: ${combatCameraActive ? 'On' : 'Off'}`;
-        btn.style.background = combatCameraActive ? '#d4af37' : ''; // Visual feedback
-    }
+//     if (btn) {
+//         btn.innerText = `Combat Camera: ${combatCameraActive ? 'On' : 'Off'}`;
+//         btn.style.background = combatCameraActive ? '#d4af37' : ''; // Visual feedback
+//     }
 
-    // If currently in combat, apply immediately
-    if (isCombatView) {
-        controls.enableRotate = combatCameraActive;
-        controls.autoRotate = combatCameraActive;
-        if (!combatCameraActive) {
-            // Reset to default combat view if turned off
-            const arenaPos = BattleIsland.getAnchor();
-            const anchorX = arenaPos.x;
-            const anchorZ = arenaPos.z;
-            const anchorY = 0.1;
-            const forward = new THREE.Vector3(0, 0, 1);
-            const endPos = new THREE.Vector3(anchorX, anchorY + 1.6, anchorZ).addScaledVector(forward, -3.5);
-            new TWEEN.Tween(combatCamera.position).to({ x: endPos.x, y: endPos.y, z: endPos.z }, 500).easing(TWEEN.Easing.Quadratic.Out).start();
-            controls.target.copy(new THREE.Vector3(anchorX, anchorY + 1.2, anchorZ));
-        }
-    }
+//     // If currently in combat, apply immediately
+//     if (isCombatView) {
+//         controls.enableRotate = combatCameraActive;
+//         controls.autoRotate = combatCameraActive;
+//         if (!combatCameraActive) {
+//             // Reset to default combat view if turned off
+//             const arenaPos = BattleIsland.getAnchor();
+//             const anchorX = arenaPos.x;
+//             const anchorZ = arenaPos.z;
+//             const anchorY = 0.1;
+//             const forward = new THREE.Vector3(0, 0, 1);
+//             const endPos = new THREE.Vector3(anchorX, anchorY + 1.6, anchorZ).addScaledVector(forward, -3.5);
+//             new TWEEN.Tween(combatCamera.position).to({ x: endPos.x, y: endPos.y, z: endPos.z }, 500).easing(TWEEN.Easing.Quadratic.Out).start();
+//             controls.target.copy(new THREE.Vector3(anchorX, anchorY + 1.2, anchorZ));
+//         }
+//     }
 
-    camera.updateProjectionMatrix();
-}
-window.toggleView = toggleView;
-const viewBtn = document.getElementById('viewToggleBtn');
-if (viewBtn) viewBtn.onclick = toggleView;
+//     camera.updateProjectionMatrix();
+// }
+// window.toggleView = toggleView;
+// const viewBtn = document.getElementById('viewToggleBtn');
+// if (viewBtn) viewBtn.onclick = toggleView;
 
 function startDive() {
     // Hide Logo
@@ -3565,6 +3557,7 @@ function showCombat() {
 
     audio.setMusicMuffled(true); // Muffle music during combat
     enemyArea.innerHTML = '';
+    enemyArea.style.pointerEvents = 'none'; // Ensure container doesn't block 3D controls
 
     if (!use3dModel) {
         overlay.style.background = 'rgba(0,0,0,0.85)';
@@ -3660,6 +3653,8 @@ function showCombat() {
     if (use3dModel && controls) {
         controls.object = camera; // Use Main Ortho Camera
         controls.enableRotate = true;
+        controls.enablePan = true; // Allow panning on Battle Island
+        controls.enabled = true;
         controls.update();
     }
 
@@ -6445,7 +6440,6 @@ function exitCombatView() {
     }
 
     // Restore camera
-    controls.object = camera; // Switch controls back to Ortho camera
     controls.enableRotate = true; // Restore rotation
     controls.enablePan = true;
     controls.autoRotate = false; // Stop spinning
@@ -6495,75 +6489,6 @@ window.addEventListener('keydown', (e) => {
         console.log(`Cinematic Mode: ${isHidden ? 'OFF' : 'ON'}`);
     }
 });
-
-// --- DEBUG CONSOLE COMMANDS ---
-window.setgame = function (mode, arg) {
-    console.log(`Debug Command: ${mode}`, arg || '');
-    switch (mode.toLowerCase()) {
-        case 'finalboss':
-            game.floor = 9;
-            if (!game.activeRoom) game.activeRoom = game.rooms[0];
-            startSoulBrokerEncounter();
-            break;
-        case 'boss':
-            if (!game.activeRoom) game.activeRoom = game.rooms[0];
-            startBossFight();
-            break;
-        case 'merchant':
-            if (game.activeRoom) {
-                game.activeRoom.isSpecial = true;
-                game.activeRoom.isBonfire = false;
-                game.activeRoom.isTrap = false;
-                game.activeRoom.state = 'uncleared';
-                game.activeRoom.generatedContent = null;
-                enterRoom(game.activeRoom.id);
-            }
-            break;
-        case 'bonfire':
-            if (game.activeRoom) {
-                game.activeRoom.isBonfire = true;
-                game.activeRoom.isSpecial = false;
-                game.activeRoom.isTrap = false;
-                game.activeRoom.state = 'uncleared';
-                game.activeRoom.restRemaining = 3;
-                enterRoom(game.activeRoom.id);
-            }
-            break;
-        case 'showhidden':
-            game.rooms.forEach(r => {
-                r.isRevealed = true;
-                if (!r.correveals) r.correveals = {};
-                r.connections.forEach(cid => r.correveals[`cor_${r.id}_${cid}`] = true);
-            });
-            break;
-        case 'godmode':
-            game.hp = 100;
-            game.maxHp = 100;
-            game.soulCoins = 5000;
-            game.ap = 20;
-            game.maxAp = 20;
-            updateUI();
-            logMsg("God Mode Enabled.");
-            break;
-        case 'floor':
-            if (arg) {
-                game.floor = parseInt(arg) - 1;
-                descendToNextFloor();
-            }
-            break;
-        case 'lockpick':
-            if (game.activeRoom) startLockpickGame(game.activeRoom);
-            break;
-        case 'trap':
-            if (game.activeRoom) showTrapUI();
-            break;
-        case 'potion':
-            startPotionGame(game.activeRoom);
-            break;
-        default:
-            console.log("Commands: finalboss, boss, merchant, bonfire, showhidden, godmode, floor [n], lockpick, trap");
-    }
-};
 
 window.testmfglb = function (arg) {
     if (!playerMesh) {
