@@ -42,7 +42,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'rusty_sword', val: 4, suit: '♦', name: "Rusty Sword" }, { type: 'armor', id: 0 }],
         icon: { type: 'class-icon', val: 0 },
         spellCap: 0,
-        stats: { str: 3, dex: 0, int: 0, ac: 14 } // Tanky, hits hard
+        stats: { str: 3, dex: 0, int: 0, ac: 14 }, // Tanky, hits hard
+        skills: [{ id: 'power_strike', name: "Power Strike", desc: "Attack with +3 Power. (Once/Battle)" }]
     },
     rogue: {
         name: "Scoundrel",
@@ -51,7 +52,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'knife', val: 2, suit: '♦', name: "Thief's Knife" }, { type: 'item', id: 2 }, { type: 'item', id: 8 }],
         icon: { type: 'class-icon', val: 1 },
         spellCap: 0,
-        stats: { str: 1, dex: 4, int: 1, ac: 12 } // Fast, hard to hit
+        stats: { str: 1, dex: 4, int: 1, ac: 12 }, // Fast, hard to hit
+        skills: [{ id: 'cheap_shot', name: "Cheap Shot", desc: "Guaranteed Hit if Enemy HP < 50%. (Once/Battle)" }]
     },
     occultist: {
         name: "Arcanist",
@@ -60,7 +62,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'dagger', val: 2, suit: '♦', name: "Ritual Dagger" }, { type: 'item', id: 1 }],
         icon: { type: 'class-icon', val: 2 },
         spellCap: 14,
-        stats: { str: 0, dex: 1, int: 5, ac: 10 } // Glass cannon
+        stats: { str: 0, dex: 1, int: 5, ac: 10 }, // Glass cannon
+        skills: [{ id: 'eldritch_blast', name: "Eldritch Blast", desc: "Deal 1d8 Magic DMG (Ignores AC). (Once/Battle)" }]
     },
     priest: {
         name: "Confessor",
@@ -69,7 +72,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'mace', val: 3, suit: '♣', name: "Cleric's Mace" }, { type: 'item', id: 5 }], // Herbs
         icon: { type: 'class-icon', val: 3 },
         spellCap: 3,
-        stats: { str: 2, dex: 0, int: 3, ac: 13 }
+        stats: { str: 2, dex: 0, int: 3, ac: 13 },
+        skills: [{ id: 'smite', name: "Smite", desc: "Deal 2 DMG, Heal 2 HP. (Once/Battle)" }]
     },
     ranger: {
         name: "Strider",
@@ -78,7 +82,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'knife', val: 2, suit: '♦', name: "Hunting Knife" }, { type: 'armor', id: 5 }, { type: 'item', id: 7 }], // Leather Armor, Music Box
         icon: { type: 'class-icon', val: 4 },
         spellCap: 2,
-        stats: { str: 2, dex: 3, int: 1, ac: 12 }
+        stats: { str: 2, dex: 3, int: 1, ac: 12 },
+        skills: [{ id: 'snipe', name: "Snipe", desc: "High Crit Chance Attack. (Once/Battle)" }]
     },
     bard: {
         name: "Minstrel",
@@ -87,7 +92,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'dirk', val: 2, suit: '♦', name: "Hidden Dirk" }, { type: 'item', id: 6 }], // Silver Mirror
         icon: { type: 'class-icon', val: 5 },
         spellCap: 5,
-        stats: { str: 1, dex: 3, int: 3, ac: 11 }
+        stats: { str: 1, dex: 3, int: 3, ac: 11 },
+        skills: [{ id: 'distract', name: "Distract", desc: "Enemy rolls d4 next turn. (Once/Battle)" }]
     },
     paladin: {
         name: "Templar",
@@ -96,7 +102,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'hammer', val: 3, suit: '♦', name: "Warhammer" }, { type: 'armor', id: 7 }], // Steel Breastplate (4 AP)
         icon: { type: 'class-icon', val: 6 },
         spellCap: 2,
-        stats: { str: 4, dex: 0, int: 1, ac: 16 } // Heavy tank
+        stats: { str: 4, dex: 0, int: 1, ac: 16 }, // Heavy tank
+        skills: [{ id: 'holy_bash', name: "Holy Bash", desc: "Deal Weapon DMG + Gain 2 AP. (Once/Battle)" }]
     },
     necromancer: {
         name: "Reanimator",
@@ -105,7 +112,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'cursed_blade', val: 12, suit: '♦', name: "Bloodthirst Blade", isCursed: true }],
         icon: { type: 'class-icon', val: 7 },
         spellCap: 5,
-        stats: { str: 2, dex: 1, int: 4, ac: 11 }
+        stats: { str: 2, dex: 1, int: 4, ac: 11 },
+        skills: [{ id: 'siphon', name: "Siphon Life", desc: "Deal 3 DMG, Heal 3 HP. (Once/Battle)" }]
     },
     artificer: {
         name: "Tinkerer",
@@ -114,7 +122,8 @@ export const CLASS_DATA = {
         items: [{ type: 'weapon', id: 'wrench', val: 3, suit: '♦', name: "Heavy Wrench" }, { type: 'item', id: 0 }, { type: 'item', id: 2 }], // Bomb, Key
         icon: { type: 'class-icon', val: 8 },
         spellCap: 2,
-        stats: { str: 1, dex: 2, int: 4, ac: 12 }
+        stats: { str: 1, dex: 2, int: 4, ac: 12 },
+        skills: [{ id: 'flashbang', name: "Flashbang", desc: "Stun Enemy (Skip Turn). (Once/Battle)" }]
     }
 };
 

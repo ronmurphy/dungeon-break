@@ -15,7 +15,7 @@ import { generateHouse } from './house-generator.js';
 import { SoundManager } from './sound-manager.js';
 import { MagicCircleFX } from './magic-circle.js';
 import { CombatTerrain, updateCombatVisibility } from './combat-mechanics.js';
-import { CombatResolver } from './dnd-mechanics.js';
+import { CombatResolver, DND_CONFIG, DiceRoller } from './dnd-mechanics.js';
 import { CardDesigner } from './card-designer.js';
 import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
@@ -112,7 +112,8 @@ const WANDERER_MODELS = [
     'skeleton-web.glb',
     'female_evil-web.glb', 'female_evil-true-web.glb',
     'male_evil-web.glb', 'male_evil-true-web.glb',
-    'female-web.glb', 'male-web.glb', 'ironjaw-web.glb'
+    'ironjaw-web.glb',
+    'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb'
 ];
 const terrainRaycaster = new THREE.Raycaster();
 
@@ -195,8 +196,12 @@ let combatState = {
     isTargeting: false,
     maxMove: 6.0, // Default 30ft (1 unit = 5ft)
     currentMove: 6.0,
-    isDefending: false
+    isDefending: false,
+    skillUsed: false,
+    activeSkill: null
 };
+
+let savedMapState = null; // For True Dungeon recursion
 
 let benchmarkState = {
     active: false,
@@ -1266,7 +1271,7 @@ function loadPlayerModel() {
     const isTrueEndingUnlocked = (wins.m && wins.f);
 
     const suffix = isTrueEndingUnlocked ? '_evil' : '';
-    const path = `assets/images/glb/${game.sex === 'm' ? 'male' : 'female'}${suffix}-web.glb`;
+    const path = `assets/images/glb/wanderers/${game.sex === 'm' ? 'male' : 'female'}${suffix}-web.glb`;
     const configKey = path.split('/').pop();
 
     loadGLB(path, (model, animations) => {
@@ -1371,12 +1376,12 @@ function initWanderers() {
     });
     wanderers = [];
 
-    const count = 1 + Math.floor(game.floor / 2);
+    const count = 3 + Math.floor(game.floor); // Increased density: 3 + floor
 
     for (let i = 0; i < count; i++) {
         const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
 
-        loadGLB(`assets/images/glb/${file}`, (model, animations) => {
+        loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
             // --- NEW LOD LOGIC ---
             const lod = new THREE.LOD();
 
@@ -1674,6 +1679,12 @@ function on3DClick(event, isRightClick = false) {
             executePlayerAttack(activeWanderer);
             return;
         }
+        // Check if using a skill
+        if (combatState.activeSkill) {
+            // If we have a skill active, clicking the enemy executes it
+            executePlayerSkill(activeWanderer);
+            return;
+        }
         // If we clicked elsewhere, maybe cancel targeting?
         // For now, just return to prevent moving while trying to attack
         logMsg("Select a valid target.");
@@ -1894,7 +1905,8 @@ function update3DScene() {
                 if (r.isFinal) {
                     // Tower/Deep Pit
                     // Use Gothic Tower GLB if available
-                    if (use3dModel) customModelPath = 'assets/images/glb/gothic_tower-web.glb';
+                    // Randomize between Gothic Tower and Dreadspire Citadel
+                    if (use3dModel) customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/gothic_tower-web.glb' : 'assets/images/glb/Dreadspire_Citadel-web.glb';
                     customScale = 2.5; // Increased size
                     // Fallback geometry while loading or if fails
                     geo = new THREE.BoxGeometry(rw, 10, rh);
@@ -1902,7 +1914,8 @@ function update3DScene() {
                     // Circular Campfire Ring 
                     // Use a Cylinder. radius ~ min(w,h)/2.
                     // Use Campfire Tower GLB
-                    if (use3dModel) customModelPath = 'assets/images/glb/campfire_tower-web.glb';
+                    // Randomize between Campfire Tower and Emberwatch Tower
+                    if (use3dModel) customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/campfire_tower-web.glb' : 'assets/images/glb/Emberwatch_Tower-web.glb';
                     customScale = 2.0; // Increased size
                     const rad = Math.min(rw, rh) * 0.4;
                     geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
@@ -1910,8 +1923,37 @@ function update3DScene() {
                     // Secret Room: Large Boulder/Mound or Custom GLB
                     geo = new THREE.DodecahedronGeometry(Math.min(rw, rh) * 0.9, 1);
                     if (use3dModel) {
-                        customModelPath = 'assets/images/glb/room_secret-web.glb';
+                        // Randomize between Secret Rock and Whispering Obelisk
+                        customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/room_secret-web.glb' : 'assets/images/glb/Whispering_Obelisk-marker-web.glb';
                         customScale = 0.5;
+                    }
+                } else if (r.isSpecial) {
+                    // Merchant / Special Room -> Whispering Manor
+                    geo = new THREE.BoxGeometry(rw, rDepth, rh);
+                    if (use3dModel) {
+                        customModelPath = 'assets/images/glb/Whispering_Manor-web.glb';
+                        customScale = 1.5;
+                    }
+                } else if (r.isAlchemy) {
+                    // Alchemy Lab -> Arcane Altar
+                    geo = new THREE.CylinderGeometry(Math.min(rw, rh) * 0.4, Math.min(rw, rh) * 0.4, rDepth, 6);
+                    if (use3dModel) {
+                        customModelPath = 'assets/images/glb/Arcane_Altar-marker-web.glb';
+                        customScale = 1.2;
+                    }
+                } else if (r.isTrap) {
+                    // Trap Room -> Warden Cube or Eldritch Hex Cube
+                    geo = new THREE.BoxGeometry(rw, rDepth, rh);
+                    if (use3dModel) {
+                        customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/Warden_Cube-marker-web.glb' : 'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb';
+                        customScale = 1.0;
+                    }
+                } else if (r.isLocked) {
+                    // Locked Room -> Cursed Treasure Chest Marker
+                    geo = new THREE.BoxGeometry(rw, rDepth, rh);
+                    if (use3dModel) {
+                        customModelPath = 'assets/images/glb/Cursed_Treasure_Chest-marker-web.glb';
+                        customScale = 1.0;
                     }
                 } else {
                     // Varied Shapes
@@ -1932,13 +1974,23 @@ function update3DScene() {
                     } else if (r.shape === 'spire') {
                         geo = new THREE.ConeGeometry(Math.min(rw, rh) * 0.6, rDepth, 4);
                         if (use3dModel) {
-                            customModelPath = 'assets/images/glb/room_spire-web.glb';
+                            // Randomize between Spire and Spiralwood Tower
+                            customModelPath = (r.id % 3 === 0) ? 'assets/images/glb/Spiralwood_Tower-web.glb' : 'assets/images/glb/room_spire-web.glb';
                             customScale = 0.5;
                         }
                     } else {
                         geo = new THREE.BoxGeometry(rw, rDepth, rh);
                         if (use3dModel) {
-                            customModelPath = 'assets/images/glb/room_rect-web.glb';
+                            // Start Room (ID 0) gets Azure Flame Obelisk
+                            if (r.id === 0) {
+                                customModelPath = 'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb';
+                                customScale = 1.0;
+                            } else if (r.isShrine) {
+                                customModelPath = 'assets/images/glb/Stone_Wat-web.glb';
+                                customScale = 1.0;
+                            } else {
+                                customModelPath = 'assets/images/glb/room_rect-web.glb';
+                            }
                             customScale = 0.5;
                         }
                     }
@@ -2523,6 +2575,19 @@ function animate3D() {
                 const tiltActive = (gameSettings.tiltShiftMode === 'threejs') && !isCombatView && !lockpickActive;
                 hTilt.enabled = tiltActive;
                 vTilt.enabled = tiltActive;
+
+                // Dynamic Focus: Follow Player
+                if (tiltActive) {
+                    const p = use3dModel ? playerMesh : playerSprite;
+                    if (p) {
+                        const vec = p.position.clone();
+                        vec.project(activeCam); // Get NDC (-1 to 1)
+                        const cx = (vec.x + 1) / 2; // Map to 0..1
+                        const cy = (vec.y + 1) / 2;
+                        hTilt.uniforms.r.value = cy; // H-Blur depends on Y dist
+                        vTilt.uniforms.r.value = cx; // V-Blur depends on X dist
+                    }
+                }
             }
 
             renderPass.camera = activeCam;
@@ -3015,15 +3080,22 @@ function takeDamage(amount) {
 function updateAtmosphere(floor) {
     const theme = getThemeForFloor(floor);
 
-    const black = new THREE.Color(0x050505);
-    scene.background = black;
+    // Default to black, but use Red for Cursed Realm
+    let bg = new THREE.Color(0x050505);
+    let fogColor = new THREE.Color(0x000000);
+
+    if (floor === 99) {
+        bg = new THREE.Color(0x220000); // Dark Red Background
+        fogColor = new THREE.Color(0x440000); // Red Fog
+    }
+    scene.background = bg;
 
     // --- DYNAMIC FOG DENSITY ---
     // Calculate density based on current LOD settings to hide pop-in.
     const visibilityAtFar = 0.15; // 15% visible at the far LOD distance
     const farDist = (gameSettings.lod && gameSettings.lod.far) ? gameSettings.lod.far : 80; // Default to 80
     const density = -Math.log(visibilityAtFar) / farDist;
-    scene.fog = new THREE.FogExp2(0x000000, isEditMode ? 0 : density);
+    scene.fog = new THREE.FogExp2(fogColor, isEditMode ? 0 : density);
     // --- END DYNAMIC FOG ---
 
     // Update ambient and hemisphere lights to match mood
@@ -3611,8 +3683,10 @@ function enterRoom(id) {
     if (room.state === 'cleared' && room.isFinal) { game.activeRoom = room; showCombat(); return; }
 
     if (room.isLocked && room.state !== 'cleared') {
+        // Check if this is the Cursed Chest (True Dungeon Trigger)
+        // For now, we assume ALL locked rooms use the Cursed Chest marker and trigger this.
         game.activeRoom = room;
-        startLockpickGame(room);
+        showDungeonPrompt(room);
         return;
     }
 
@@ -4446,6 +4520,12 @@ function finishRoom() {
         document.getElementById('exitCombatBtn').style.display = 'none';
         document.getElementById('modalAvoidBtn').style.display = 'none';
 
+        // True Dungeon Victory
+        if (game.inTrueDungeon && game.activeRoom.isFinal) {
+            setTimeout(exitTrueDungeon, 3000);
+            return;
+        }
+
         if (isBroker) {
             // Check Phase (Broker Defeated Logic)
             if (game.brokerPhase < 4) {
@@ -4535,6 +4615,12 @@ function finishRoom() {
     );
 
     if (allCleared) {
+        if (game.inTrueDungeon) {
+            // If in True Dungeon, clearing everything (or just reaching end) allows exit
+            // But usually we wait for the Final Room of the dungeon.
+            // Let's let the player walk to the final room to trigger exit.
+        }
+
         if (game.activeRoom.isFinal) {
             // Check for Final Boss Trigger (Floor 9)
             if (game.floor === 9 && !game.isBrokerFight) {
@@ -6175,6 +6261,112 @@ window.blastLock = function () {
     }
 };
 
+// --- TRUE DUNGEON SYSTEM ---
+function showDungeonPrompt(room) {
+    const overlay = document.getElementById('combatModal');
+    overlay.style.display = 'flex';
+    document.getElementById('combatContainer').style.display = 'none';
+    document.getElementById('bonfireUI').style.display = 'none';
+
+    let trapUI = document.getElementById('trapUI');
+    if (!trapUI) {
+        trapUI = document.createElement('div');
+        trapUI.id = 'trapUI';
+        document.body.appendChild(trapUI);
+    }
+    trapUI.style.display = 'flex';
+
+    trapUI.innerHTML = `
+        <h2 style="font-family:'Cinzel'; font-size:3rem; color:#aa00ff; text-shadow:0 0 20px #440088; margin-bottom:20px;">CURSED CHEST</h2>
+        <div style="font-style:italic; margin-bottom:40px; color:#aaa; text-align:center; max-width:400px;">
+            A voice echoes from within the chest...<br><br>
+            <span style="color:#fff; font-size:1.2rem;">"Are you ready?"</span>
+        </div>
+        <div style="display:flex; gap:20px;">
+            <button class="v2-btn" onclick="enterTrueDungeon()" style="width:140px; background:#440088; color:#fff;">YES</button>
+            <button class="v2-btn" onclick="closeCombat()" style="background:#444; width:140px;">NO</button>
+        </div>
+    `;
+}
+
+window.enterTrueDungeon = function() {
+    logMsg("The world twists and warps...");
+    closeCombat();
+
+    // 1. Save State
+    savedMapState = {
+        rooms: JSON.parse(JSON.stringify(game.rooms)), // Deep copy
+        floor: game.floor,
+        currentRoomIdx: game.currentRoomIdx,
+        playerPos: (use3dModel ? playerMesh : playerSprite).position.clone(),
+        camPos: camera.position.clone(),
+        camTarget: controls.target.clone(),
+        lockedRoomId: game.activeRoom.id
+    };
+
+    // 2. Setup New Dungeon
+    game.inTrueDungeon = true;
+    game.floor = 99; // Special floor ID for theme/difficulty
+    game.rooms = generateDungeon(game.floor); // Generate new layout
+    game.currentRoomIdx = 0;
+    game.visitedWaypoints = [];
+    
+    // 3. Re-init Scene
+    clear3DScene();
+    init3D();
+    preloadFXTextures();
+
+    // Generate Flat Floor (True Dungeon Mode)
+    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, null, true);
+
+    updateAtmosphere(game.floor); // Will use floor 99 theme (wraps to one of the existing)
+    initWanderers();
+
+    updateUI();
+    logMsg("You have entered the Cursed Realm.");
+    enterRoom(0);
+};
+
+window.exitTrueDungeon = function() {
+    logMsg("Escaping the Cursed Realm...");
+    
+    // 1. Restore State
+    game.inTrueDungeon = false;
+    game.rooms = savedMapState.rooms;
+    game.floor = savedMapState.floor;
+    game.currentRoomIdx = savedMapState.currentRoomIdx;
+
+    // 2. Re-init Scene
+    clear3DScene();
+    init3D();
+    preloadFXTextures();
+
+    // Regenerate Original Floor (Not Flat)
+    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, null, false);
+
+    updateAtmosphere(game.floor);
+    initWanderers();
+
+    // 3. Restore Position
+    const p = use3dModel ? playerMesh : playerSprite;
+    p.position.copy(savedMapState.playerPos);
+    camera.position.copy(savedMapState.camPos);
+    controls.target.copy(savedMapState.camTarget);
+
+    // 4. Unlock the Chest Room
+    const room = game.rooms.find(r => r.id === savedMapState.lockedRoomId);
+    if (room) {
+        room.isLocked = false;
+        room.state = 'cleared';
+        // Maybe give a reward here?
+        spawnFloatingText("CURSE BROKEN", window.innerWidth/2, window.innerHeight/2, '#d4af37');
+        logMsg("The Cursed Chest opens. (Reward pending)");
+    }
+
+    savedMapState = null;
+    updateUI();
+};
+
 // --- POTION MINIGAME ---
 let potionState = null;
 const potionImages = { bottle: new Image(), mask: new Image(), buffer: document.createElement('canvas') };
@@ -6498,7 +6690,7 @@ class Standee extends THREE.Group {
         this.textMesh = null;
 
         // Load the Standee GLB
-        loadGLB('assets/images/glb/standee-web.glb', (model) => {
+        loadGLB('assets/images/glb/wanderers/standee-web.glb', (model) => {
             this.add(model);
 
             // Find the face for art (Material named 'CardFace' OR Mesh named 'CardFace')
@@ -6857,6 +7049,8 @@ function startCombat(wanderer) {
     combatState.turn = 'player';
     combatState.isTargeting = false;
     combatState.isDefending = false;
+    combatState.skillUsed = false;
+    combatState.activeSkill = null;
 
     updateMovementIndicator();
     showCombat();
@@ -7228,6 +7422,113 @@ window.commandAttack = function () {
     logMsg("Select a target to attack.");
 };
 
+window.commandSkill = function () {
+    if (combatState.turn !== 'player') {
+        spawnFloatingText("Not your turn!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+        return;
+    }
+    if (combatState.skillUsed) {
+        spawnFloatingText("Skill exhausted!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+        logMsg("You have already used your skill this battle.");
+        return;
+    }
+
+    const cData = CLASS_DATA[game.classId];
+    if (!cData.skills || cData.skills.length === 0) {
+        logMsg("No skills available.");
+        return;
+    }
+
+    // For now, auto-select the first skill
+    const skill = cData.skills[0];
+    combatState.activeSkill = skill;
+    combatState.isTargeting = true;
+    
+    spawnFloatingText(`${skill.name.toUpperCase()}`, window.innerWidth / 2, window.innerHeight / 2 - 150, '#00ffff');
+    logMsg(`Skill selected: ${skill.name}. Select target.`);
+};
+
+function executePlayerSkill(target) {
+    if (!combatState.activeSkill) return;
+    
+    const skill = combatState.activeSkill;
+    combatState.isTargeting = false;
+    combatState.turn = 'busy';
+    combatState.skillUsed = true;
+    combatState.activeSkill = null;
+
+    logMsg(`Used ${skill.name}!`);
+    
+    // Animation
+    if (use3dModel && actions.attack) {
+        actions.attack.reset().play();
+    }
+
+    // Skill Logic Switch
+    setTimeout(() => {
+        let damage = 0;
+        let msg = "";
+        let color = '#00ffff';
+
+        if (skill.id === 'power_strike') { // Knight
+            // +3 Power
+            const str = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1) + 3;
+            const res = CombatResolver.resolveClash(str, 4, 10, target.stats.ac || 10);
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Power Strike", () => {});
+            if (res.attacker.total > res.defender.total) {
+                damage = res.damage;
+                msg = `Power Strike hits for ${damage}!`;
+            } else {
+                msg = "Power Strike missed!";
+            }
+        } 
+        else if (skill.id === 'cheap_shot') { // Rogue
+            const hpPct = target.stats.hp / target.stats.maxHp;
+            if (hpPct < 0.5) {
+                damage = (game.stats.dex || 1) * 2 + 2;
+                msg = `Cheap Shot crit for ${damage}!`;
+                color = '#ff0000';
+            } else {
+                damage = 2;
+                msg = "Cheap Shot (Target healthy).";
+            }
+        }
+        else if (skill.id === 'eldritch_blast') { // Occultist
+            damage = Math.floor(Math.random() * 8) + 1; // 1d8
+            msg = `Eldritch Blast deals ${damage} magic dmg!`;
+            color = '#aa00ff';
+            spawnAboveModalTexture('twirl_01.png', window.innerWidth/2, window.innerHeight/2, 10, { tint:'#aa00ff', blend:'lighter' });
+        }
+        else if (skill.id === 'smite') { // Priest
+            damage = 2;
+            game.hp = Math.min(game.maxHp, game.hp + 2);
+            msg = `Smite! 2 Dmg, +2 HP.`;
+            spawnFloatingText("+2 HP", window.innerWidth/2, window.innerHeight/2 + 50, '#00ff00');
+        }
+        else if (skill.id === 'holy_bash') { // Paladin
+            damage = (game.equipment.weapon ? game.equipment.weapon.val : 1);
+            game.ap = Math.min(game.maxAp, game.ap + 2);
+            msg = `Holy Bash! ${damage} Dmg, +2 AP.`;
+        }
+        else {
+            // Default fallback
+            damage = 2;
+            msg = `${skill.name} hits for 2.`;
+        }
+
+        if (damage > 0) {
+            target.stats.hp -= damage;
+            spawnFloatingText(`-${damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, color);
+            if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
+            if (target.actions && target.actions.hit) target.actions.hit.reset().play();
+        }
+        
+        logCombat(msg, color);
+        updateUI();
+        checkCombatEnd(target);
+    }, 600);
+}
+
 function executePlayerAttack(target) {
     combatState.isTargeting = false;
     combatState.turn = 'busy';
@@ -7317,20 +7618,23 @@ function executePlayerAttack(target) {
 
         updateUI();
 
-        // 5. Check Death
-        if (target.stats.hp <= 0) {
-            logCombat("Enemy defeated!", '#ffd700');
-            spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
-            setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
-        } else if (game.hp <= 0) {
-            gameOver();
-        } else {
-            // 6. End Turn -> Enemy Turn
-            setTimeout(() => {
-                startEnemyTurn();
-            }, 1000);
-        }
+        checkCombatEnd(target);
     });
+}
+
+function checkCombatEnd(target) {
+    if (target.stats.hp <= 0) {
+        logCombat("Enemy defeated!", '#ffd700');
+        spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
+        setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
+    } else if (game.hp <= 0) {
+        gameOver();
+    } else {
+        // 6. End Turn -> Enemy Turn
+        setTimeout(() => {
+            startEnemyTurn();
+        }, 1000);
+    }
 }
 
 window.commandWait = function () {

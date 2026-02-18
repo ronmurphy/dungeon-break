@@ -18,6 +18,9 @@ export function getEnemyStats(filename) {
     if (lower.includes('ironjaw')) return { ...ENEMY_DATA['ironjaw'] };
     if (lower.includes('evil')) return { ...ENEMY_DATA['evil'] };
     if (lower.includes('male') || lower.includes('female')) return { ...ENEMY_DATA['human'] };
+    if (lower.includes('gwark')) return { ...ENEMY_DATA['ironjaw'], name: "Gwark" };
+    if (lower.includes('gremlin')) return { ...ENEMY_DATA['skeleton'], name: "Gremlin", hp: 6, ac: 0 };
+    if (lower.includes('stolem')) return { ...ENEMY_DATA['ironjaw'], name: "Stone Golem", hp: 25, ac: 4, str: 4 };
     
     return { ...ENEMY_DATA['skeleton'] }; // Fallback
 }

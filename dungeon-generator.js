@@ -13,6 +13,18 @@ export const THEMES = [
 ];
 
 export function getThemeForFloor(floor) {
+    // Special Theme for True Dungeon (Floor 99)
+    if (floor === 99) {
+        return { 
+            id: 99, 
+            name: 'Cursed Realm', 
+            tile: 7, // Abyss/Dark tiles
+            color: 0x880000, // Deep Red Lighting
+            fogDensity: 0.06, 
+            hemiIntensity: 0.2, 
+            weather: 'ember' 
+        };
+    }
     // map floor 1 -> index 0 (theme 1)
     // wrap around 1-9
     const idx = (floor - 1) % 9;
@@ -198,11 +210,19 @@ export function generateDungeon(floor) {
         }
     }
 
-    // 6. Randomly Lock 1 other room (High value or random)
-    const potentialLocks = rooms.filter(r => !r.isWaypoint && !r.isSpecial && !r.isBonfire && !r.isTrap && r.id !== 0);
-    if (potentialLocks.length > 0) {
-        const r = potentialLocks[Math.floor(Math.random() * potentialLocks.length)];
-        r.isLocked = true;
+    // 6. Randomly Lock 1-2 other rooms (Cursed Chests)
+    // Skip this for Floor 99 (True Dungeon) to prevent nested dungeons
+    if (floor !== 99) {
+        const potentialLocks = rooms.filter(r => !r.isWaypoint && !r.isSpecial && !r.isBonfire && !r.isTrap && r.id !== 0);
+        const lockCount = 1 + (Math.random() > 0.5 ? 1 : 0); // 1 or 2 chests
+        for (let i = 0; i < lockCount; i++) {
+            if (potentialLocks.length > 0) {
+                const idx = Math.floor(Math.random() * potentialLocks.length);
+                const r = potentialLocks[idx];
+                r.isLocked = true;
+                potentialLocks.splice(idx, 1); // Remove so we don't pick it again
+            }
+        }
     }
 
     return rooms;
