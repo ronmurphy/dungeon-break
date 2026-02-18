@@ -4,10 +4,10 @@
  */
 
 export const ENEMY_DATA = {
-    'skeleton': { name: "Skeleton", hp: 8, ac: 10, str: 1, xp: 10 },
-    'ironjaw': { name: "Ironjaw", hp: 15, ac: 12, str: 3, xp: 20 },
-    'human': { name: "Bandit", hp: 20, ac: 11, str: 2, xp: 25 },
-    'evil': { name: "Cultist", hp: 30, ac: 14, str: 4, xp: 40 }
+    'skeleton': { name: "Skeleton", hp: 8, ac: 1, str: 1, xp: 10 },
+    'ironjaw': { name: "Ironjaw", hp: 15, ac: 2, str: 3, xp: 20 },
+    'human': { name: "Bandit", hp: 20, ac: 1, str: 2, xp: 25 },
+    'evil': { name: "Cultist", hp: 30, ac: 3, str: 4, xp: 40 }
 };
 
 export function getEnemyStats(filename) {

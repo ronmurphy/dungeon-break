@@ -48,7 +48,7 @@ export const CLASS_DATA = {
         name: "Scoundrel",
         desc: "Cunning and greedy. Can flee consecutive rooms.",
         hp: 20,
-        items: [{ type: 'item', id: 2 }, { type: 'item', id: 8 }],
+        items: [{ type: 'weapon', id: 'knife', val: 2, suit: '♦', name: "Thief's Knife" }, { type: 'item', id: 2 }, { type: 'item', id: 8 }],
         icon: { type: 'class-icon', val: 1 },
         spellCap: 0,
         stats: { str: 1, dex: 4, int: 1, ac: 12 } // Fast, hard to hit
@@ -57,7 +57,7 @@ export const CLASS_DATA = {
         name: "Arcanist",
         desc: "Seeker of forbidden knowledge. Spells may Echo (20%).",
         hp: 15,
-        items: [{ type: 'item', id: 1 }],
+        items: [{ type: 'weapon', id: 'dagger', val: 2, suit: '♦', name: "Ritual Dagger" }, { type: 'item', id: 1 }],
         icon: { type: 'class-icon', val: 2 },
         spellCap: 14,
         stats: { str: 0, dex: 1, int: 5, ac: 10 } // Glass cannon
@@ -75,7 +75,7 @@ export const CLASS_DATA = {
         name: "Strider",
         desc: "Wilderness survivor. Waypoints reveal surroundings.",
         hp: 20,
-        items: [{ type: 'armor', id: 5 }, { type: 'item', id: 7 }], // Leather Armor, Music Box
+        items: [{ type: 'weapon', id: 'knife', val: 2, suit: '♦', name: "Hunting Knife" }, { type: 'armor', id: 5 }, { type: 'item', id: 7 }], // Leather Armor, Music Box
         icon: { type: 'class-icon', val: 4 },
         spellCap: 2,
         stats: { str: 2, dex: 3, int: 1, ac: 12 }
@@ -84,7 +84,7 @@ export const CLASS_DATA = {
         name: "Minstrel",
         desc: "Jack of all trades. Shop prices -20%.",
         hp: 18,
-        items: [{ type: 'item', id: 6 }], // Silver Mirror
+        items: [{ type: 'weapon', id: 'dirk', val: 2, suit: '♦', name: "Hidden Dirk" }, { type: 'item', id: 6 }], // Silver Mirror
         icon: { type: 'class-icon', val: 5 },
         spellCap: 5,
         stats: { str: 1, dex: 3, int: 3, ac: 11 }
@@ -93,7 +93,7 @@ export const CLASS_DATA = {
         name: "Templar",
         desc: "Righteous crusader. +1 AP every 5 kills.",
         hp: 22,
-        items: [{ type: 'armor', id: 7 }], // Steel Breastplate (4 AP)
+        items: [{ type: 'weapon', id: 'hammer', val: 3, suit: '♦', name: "Warhammer" }, { type: 'armor', id: 7 }], // Steel Breastplate (4 AP)
         icon: { type: 'class-icon', val: 6 },
         spellCap: 2,
         stats: { str: 4, dex: 0, int: 1, ac: 16 } // Heavy tank
@@ -111,7 +111,7 @@ export const CLASS_DATA = {
         name: "Tinkerer",
         desc: "Master of gadgets. 15% chance to save consumables.",
         hp: 20,
-        items: [{ type: 'item', id: 0 }, { type: 'item', id: 2 }], // Bomb, Key
+        items: [{ type: 'weapon', id: 'wrench', val: 3, suit: '♦', name: "Heavy Wrench" }, { type: 'item', id: 0 }, { type: 'item', id: 2 }], // Bomb, Key
         icon: { type: 'class-icon', val: 8 },
         spellCap: 2,
         stats: { str: 1, dex: 2, int: 4, ac: 12 }

@@ -214,6 +214,18 @@ export function updateUI() {
     // Update Map HUD
     updateMapHUD();
 
+    // --- NEW HUD BAR LOGIC ---
+    const hudHpBar = document.getElementById('hudHpBar');
+    if (hudHpBar) {
+        const hpPct = Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100));
+        hudHpBar.style.width = `${hpPct}%`;
+    }
+    const hudApBar = document.getElementById('hudApBar');
+    if (hudApBar) {
+        const apPct = game.maxAp > 0 ? Math.max(0, Math.min(100, (game.ap / game.maxAp) * 100)) : 0;
+        hudApBar.style.width = `${apPct}%`;
+    }
+
     // Render Full Inventory if open
     renderInventoryUI();
 }

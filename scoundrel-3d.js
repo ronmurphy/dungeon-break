@@ -376,7 +376,7 @@ function preloadFXTextures() {
 
 // Spawn simple DOM-based UI particles that sit above the modal overlay
 function spawnDOMParticles(name, x, y, count = 10, opts = {}) {
-    if (use3dModel) return; // Disable in Enhanced Mode
+    // if (use3dModel) return; // Allowed in 3D mode for UI FX
     const container = document.createElement('div');
     container.className = 'ui-fx';
     document.body.appendChild(container);
@@ -544,7 +544,7 @@ function spawnTextureParticles(name, x, y, count = 12, opts = {}) {
 
 // UI canvas variants (draw above modal)
 function spawnUITextureParticles(name, x, y, count = 12, opts = {}) {
-    if (use3dModel) return; // Disable in Enhanced Mode
+    // if (use3dModel) return; // Allowed in 3D mode for UI FX
     const img = loadFXImage(name);
     // Make space if we're near cap
     while (uiParticles.length + count > MAX_UI_PARTICLES) {
@@ -572,7 +572,7 @@ function spawnUITextureParticles(name, x, y, count = 12, opts = {}) {
 
 // Helper: spawn a texture either on the UI canvas (above modal) or the scene canvas depending on modal visibility
 function spawnAboveModalTexture(name, x, y, count = 12, opts = {}) {
-    if (use3dModel) return; // Disable in Enhanced Mode
+    // if (use3dModel) return; // Allowed in 3D mode for UI FX
     const modal = document.getElementById('combatModal');
     const modalOpen = modal && (modal.style.display === 'flex' || modal.style.display === 'block');
     if (modalOpen && typeof spawnUITextureParticles === 'function' && uiFxCanvas) {
@@ -1385,7 +1385,7 @@ function initWanderers() {
 
             // Level 1: Placeholder box
             const boxGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6); // Approx size
-            const boxMat = new THREE.MeshBasicMaterial({ color: 0x333333, wireframe: true });
+            const boxMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
             const box = new THREE.Mesh(boxGeo, boxMat);
             box.name = "LOD_Placeholder_Box";
             lod.addLevel(box, gameSettings.lod.far || 80);
@@ -2482,7 +2482,18 @@ function animate3D() {
                             wanderer.mesh.lookAt(playerPos.x, wanderer.mesh.position.y, playerPos.z);
 
                             const moveDist = speed * dt;
-                            const nextPos = wandererPos.clone().add(dir.multiplyScalar(moveDist));
+                            // Only move if not already in combat range
+                            if (distance > 1.2) {
+                                wanderer.mesh.position.add(dir.multiplyScalar(moveDist));
+                                // Snap to floor to prevent flying/sinking
+                                if (globalFloorMesh) {
+                                    terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
+                                    const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                                    if (hits.length > 0) {
+                                        wanderer.mesh.position.y = hits[0].point.y;
+                                    }
+                                }
+                            }
 
                             // Combat Trigger (Touch)
                             if (distance < 1.2) {
@@ -3004,11 +3015,16 @@ function takeDamage(amount) {
 function updateAtmosphere(floor) {
     const theme = getThemeForFloor(floor);
 
-    // Darker, cleaner atmosphere (No colored fog)
     const black = new THREE.Color(0x050505);
     scene.background = black;
-    // Black fog creates "fade to darkness" LOD effect
-    scene.fog = new THREE.FogExp2(0x000000, isEditMode ? 0 : 0.045);
+
+    // --- DYNAMIC FOG DENSITY ---
+    // Calculate density based on current LOD settings to hide pop-in.
+    const visibilityAtFar = 0.15; // 15% visible at the far LOD distance
+    const farDist = (gameSettings.lod && gameSettings.lod.far) ? gameSettings.lod.far : 80; // Default to 80
+    const density = -Math.log(visibilityAtFar) / farDist;
+    scene.fog = new THREE.FogExp2(0x000000, isEditMode ? 0 : density);
+    // --- END DYNAMIC FOG ---
 
     // Update ambient and hemisphere lights to match mood
     const amb = scene.children.find(c => c.isAmbientLight);
@@ -3847,7 +3863,7 @@ function showCombat() {
     if (!combatLog) {
         combatLog = document.createElement('div');
         combatLog.id = 'combatLogOverlay';
-        combatLog.style.cssText = "position:absolute; top:20px; right:20px; width:250px; max-height:300px; overflow-y:auto; background:rgba(0,0,0,0.6); border:1px solid #444; padding:10px; font-family:'Courier New', monospace; font-size:12px; color:#ccc; pointer-events:none; display:flex; flex-direction:column-reverse;";
+        combatLog.style.cssText = "position:absolute; top:20px; right:20px; width:320px; max-height:350px; overflow-y:hidden; background:rgba(12, 12, 12, 0.9); border:1px solid #d4af37; border-left: 4px solid #d4af37; padding:15px; font-family:'Crimson Text', serif; font-size:1.1rem; color:#e0e0e0; pointer-events:none; display:flex; flex-direction:column-reverse; box-shadow: 0 5px 25px rgba(0,0,0,0.8); border-radius: 2px;";
         enemyArea.appendChild(combatLog);
     }
     combatLog.innerHTML = ''; // Clear log
@@ -5216,7 +5232,10 @@ window.showOptionsModal = function () {
             ${graphicsOption}
 
             <div style="border-top:1px solid #444; margin-top:20px; padding-top:10px;">
-                <button class="v2-btn" onclick="showHelpModal()" style="width:100%; margin-bottom:10px;">How to Play</button>
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <button class="v2-btn" onclick="showHelpModal()" style="flex:1;">How to Play</button>
+                    <button class="v2-btn" onclick="resetSettings()" style="flex:1; background:#444; font-size:0.8rem;">Reset Defaults</button>
+                </div>
                 <div style="display:flex; gap:10px;">
                     <button class="v2-btn" onclick="if(confirm('Abandon current run?')){ initAttractMode(); document.getElementById('optionsModal').style.display='none'; }" style="flex:1; background:#440000; color:#ffaaaa;">Abandon</button>
                     <button class="v2-btn" onclick="document.getElementById('optionsModal').style.display='none'" style="flex:1;">Close</button>
@@ -5235,6 +5254,12 @@ window.applyAndSaveProfile = function (profileName) {
     Object.entries(profile.settings).forEach(([key, value]) => updateSetting(key, value));
     updateOptionsUI();
     saveSettings();
+};
+
+window.resetSettings = function() {
+    if(!confirm("Reset all graphics and audio settings to default?")) return;
+    localStorage.removeItem('scoundrelSettings');
+    location.reload();
 };
 
 window.updateSetting = function (type, val) {
@@ -5284,6 +5309,13 @@ window.updateSetting = function (type, val) {
     if (type === 'lod') {
         gameSettings.lod = val;
         updateLODs();
+        // Dynamically adjust fog density to match the far LOD distance.
+        if (scene && scene.fog) {
+            // We want objects to be ~15% visible (85% fog) at the 'far' LOD distance.
+            const visibilityAtFar = 0.15;
+            const newDensity = -Math.log(visibilityAtFar) / val.far;
+            scene.fog.density = newDensity;
+        }
     }
     if (type === 'pixelRatio') {
         gameSettings.pixelRatio = val;
@@ -6750,6 +6782,18 @@ function startCombat(wanderer) {
         activeWanderer.stats.str += Math.floor(game.floor / 3);
     }
 
+    // Add HP Bar to enemy
+    const barGeo = new THREE.PlaneGeometry(1.5, 0.15);
+    const barMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+    const healthBarMesh = new THREE.Mesh(barGeo, barMat);
+    healthBarMesh.position.y = 2.2; // Position above head
+    // Make it a billboard (always face camera)
+    healthBarMesh.onBeforeRender = function (renderer, scene, camera) {
+        this.quaternion.copy(camera.quaternion);
+    };
+    activeWanderer.mesh.add(healthBarMesh);
+    activeWanderer.healthBar = healthBarMesh;
+
     // Initialize Movement Budget (1 unit = 5ft)
     // Base 30ft (6.0), Strider/Scoundrel +10ft (+2.0)
     const isFast = (game.classId === 'ranger' || game.classId === 'rogue');
@@ -6762,6 +6806,12 @@ function startCombat(wanderer) {
 
     // Set Combat View flag EARLY so UI updates work correctly
     isCombatView = true;
+
+    // Ensure combatGroup is in scene for loot/fx and clear old items
+    if (combatGroup.parent !== scene) scene.add(combatGroup);
+    while (combatGroup.children.length > 0) {
+        combatGroup.remove(combatGroup.children[0]);
+    }
 
     // Clear fog for combat clarity
     if (scene.fog) {
@@ -7031,55 +7081,76 @@ function spawnLootDrop(pos) {
 
     // Generate Random Loot (Weapon or Potion)
     const isWeapon = Math.random() > 0.5;
-    const val = 2 + Math.floor(Math.random() * (game.floor + 2)); // Scale with floor
+    const val = 1 + Math.floor(Math.random() * (game.floor + 1)); // Scale with floor
     const suit = isWeapon ? SUITS.DIAMONDS : SUITS.HEARTS;
     const type = isWeapon ? 'weapon' : 'potion';
+    const soulCoins = 5 + Math.floor(Math.random() * (game.floor * 3));
 
     // Get Asset Data
     const asset = getAssetData(type, val, suit);
     const tex = getClonedTexture(`assets/images/${asset.file}`);
 
     // Handle Spritesheet
-    tex.wrapS = THREE.RepeatWrapping;
-    tex.repeat.set(1 / asset.sheetCount, 1);
-    tex.offset.set(asset.uv.u, 0);
+    if (asset.sheetCount > 1) {
+        tex.wrapS = THREE.RepeatWrapping;
+        tex.repeat.set(1 / asset.sheetCount, 1);
+        tex.offset.set(asset.uv.u, 0);
+    }
 
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
     const sprite = new THREE.Sprite(mat);
 
     sprite.position.copy(pos);
-    sprite.position.y = 1.0; // Float above ground
+    sprite.position.y += 1.5; // Float above ground (Relative to Battle Island floor)
     sprite.scale.set(1.5, 1.5, 1.5);
 
     // Store item data in userData for pickup
     sprite.userData = {
         isLoot: true,
-        item: { type, val, suit, name: isWeapon ? `Looted Weapon (${val})` : `Looted Potion (${val})` }
+        item: {
+            type, val, suit,
+            name: isWeapon ? `Looted Weapon (${val})` : `Looted Potion (${val})`,
+            coins: soulCoins,
+            asset: asset // For logging
+        }
     };
 
     combatGroup.add(sprite);
 
     // Bobbing Animation
+    const targetY = sprite.position.y + 0.5;
     new TWEEN.Tween(sprite.position)
-        .to({ y: 1.5 }, 1000)
+        .to({ y: targetY }, 1000)
         .yoyo(true)
         .repeat(Infinity)
         .easing(TWEEN.Easing.Quadratic.InOut)
         .start();
 
     spawnFloatingText("LOOT DROPPED!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
-    logCombat("Enemy dropped loot! Click to claim.", '#ffd700');
+    
+    // Log with icon
+    const iconHtml = `<div style="display:inline-block; width:24px; height:24px; vertical-align:middle; margin-right:8px; background:url('assets/images/${asset.file}'); background-size:${asset.sheetCount * 100}% 100%; background-position:${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%;"></div>`;
+    logCombat(`${iconHtml} Dropped ${sprite.userData.item.name} & ${soulCoins} Coins!`, '#ffd700');
 }
 
 function claimLoot(sprite) {
     const item = sprite.userData.item;
-    if (addToBackpack(item)) {
+
+    // Add coins
+    if (item.coins) {
+        game.soulCoins += item.coins;
+    }
+
+    if (addToBackpack({ ...item, coins: undefined })) { // Don't add coins property to backpack item
         logMsg(`Claimed ${item.name}.`);
         spawnFloatingText("GOT IT!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
+        // Remove sprite to prevent re-clicking or persistence
+        if (sprite.parent) sprite.parent.remove(sprite);
     } else {
         logMsg("Backpack full! Loot discarded.");
         spawnFloatingText("FULL!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
     }
+    updateUI(); // Update coin display
     setTimeout(() => window.exitBattleIsland(), 500);
 }
 
@@ -7087,8 +7158,13 @@ function logCombat(msg, color = '#ccc') {
     const log = document.getElementById('combatLogOverlay');
     if (log) {
         const entry = document.createElement('div');
-        entry.innerHTML = `<span style="color:${color}">${msg}</span>`;
+        entry.style.cssText = "margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid rgba(212, 175, 55, 0.15); text-shadow: 0 1px 2px #000; line-height: 1.3;";
+        entry.innerHTML = `<span style="color:${color}; font-weight: 500;">${msg}</span>`;
         log.prepend(entry);
+        
+        if (log.children.length > 8) {
+            log.removeChild(log.lastChild);
+        }
     }
 }
 
@@ -7186,12 +7262,30 @@ function executePlayerAttack(target) {
 
         // 4. Apply Result
         if (result.winner === 'attacker') {
+            // Critical Hit Check
+            const isCrit = (result.attacker.roll === result.attacker.config.sides);
+            
+            if (isCrit) {
+                spawnFloatingText("CRITICAL!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
+                triggerShake(20, 30); // Intense shake
+                // Spawn extra particles
+                spawnAboveModalTexture('spark_01.png', window.innerWidth/2, window.innerHeight/2, 30, { 
+                    tint: '#ffd700', blend: 'lighter', sizeRange: [20, 60], spread: 80, decay: 0.03 
+                });
+            }
+
             // Player Hits
             spawnFloatingText("HIT!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for hit
             target.stats.hp -= result.damage;
             spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
             logCombat(`Player hits! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
             logCombat(`> Dealt ${result.damage} dmg`, '#fff');
+
+            // Update enemy HP bar
+            if (target.healthBar) {
+                const hpPercent = Math.max(0, target.stats.hp / target.stats.maxHp);
+                target.healthBar.scale.x = hpPercent;
+            }
 
             if (target.actions && target.actions.hit) target.actions.hit.reset().play();
 
@@ -7353,6 +7447,12 @@ function executeEnemyAttack(enemy) {
                 spawnFloatingText("COUNTER!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for counter
                 enemy.stats.hp -= result.damage;
                 spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
+                
+                if (enemy.healthBar) {
+                    const hpPercent = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
+                    enemy.healthBar.scale.x = hpPercent;
+                }
+
                 logCombat(`Player counters! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
                 if (enemy.actions.hit) enemy.actions.hit.reset().play();
             } else {
