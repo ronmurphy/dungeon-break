@@ -82,6 +82,10 @@ window.exitBattleIsland = function() {
         // FIX: Ensure combat modal and menu are closed so they don't block movement raycasts
         document.getElementById('combatModal').style.display = 'none';
         
+        // Restore Player Combat Area (Dock) - DISABLED (Replaced by new UI)
+        // const combatDocks = document.querySelectorAll('.player-combat-area');
+        // combatDocks.forEach(el => el.style.display = 'flex');
+
         // Restore Fog AFTER camera flies back (800ms tween in CombatManager)
         setTimeout(() => { if (scene.fog) scene.fog.density = savedFogDensity; }, 850);
         spawnFloatingText("ESCAPED!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00', 40);
@@ -3045,8 +3049,8 @@ function showClassSelection() {
 function finalizeStartDive() {
     isAttractMode = false;
     // Show Dock when game starts
-    const combatArea = document.querySelector('.player-combat-area');
-    if (combatArea) combatArea.style.display = 'flex';
+    // const combatArea = document.querySelector('.player-combat-area');
+    // if (combatArea) combatArea.style.display = 'flex';
 
     const contBtn = document.getElementById('continueGameBtn');
     if (contBtn) contBtn.style.display = 'none';
@@ -3564,11 +3568,11 @@ function startSoulBrokerEncounter() {
 }
 
 function showCombat() {
-    const overlay = document.getElementById('combatModal');
+    //const overlay = document.getElementById('combatModal');
     const enemyArea = document.getElementById('enemyArea');
-    overlay.style.display = 'flex';
-    overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
-    overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
+  //  overlay.style.display = 'flex';
+  //  overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
+  //  overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
 
     audio.setMusicMuffled(true); // Muffle music during combat
     enemyArea.innerHTML = '';
@@ -3579,8 +3583,8 @@ function showCombat() {
     }
 
     // Hide Player Combat Area (Hero Plate / Loot Locker container)
-    const combatDock = document.querySelector('.player-combat-area');
-    if (combatDock) combatDock.style.display = 'none';
+    const combatDocks = document.querySelectorAll('.player-combat-area');
+    combatDocks.forEach(el => el.style.setProperty('display', 'none', 'important'));
 
     // If room is cleared, we show the Exit button, otherwise the Avoid button
     const msgEl = document.getElementById('combatMessage');
@@ -4323,9 +4327,9 @@ function closeCombat() {
     if (mp) mp.style.display = 'none';
     updateBossBar(0, 60, false, true); // Hide boss bar
     
-    // Restore Player Combat Area
-    const combatDock = document.querySelector('.player-combat-area');
-    if (combatDock) combatDock.style.display = 'flex';
+    // Restore Player Combat Area - DISABLED
+    // const combatDocks = document.querySelectorAll('.player-combat-area');
+    // combatDocks.forEach(el => el.style.display = 'flex');
     hideCombatMenu(); // Ensure 3x3 menu is closed
     document.getElementById('combatModal').style.pointerEvents = 'auto'; // Reset
 
@@ -4576,7 +4580,8 @@ function updateMerchantPortraitPosition() {
     if (!mp || mp.style.display === 'none') return;
 
     const combatArea = document.querySelector('.player-combat-area');
-    if (combatArea) {
+    // Only use combatArea for positioning if it is visible
+    if (combatArea && combatArea.offsetParent !== null) {
         const rect = combatArea.getBoundingClientRect();
 
         // Calculate distance from bottom of screen to top of combat area
@@ -4592,6 +4597,13 @@ function updateMerchantPortraitPosition() {
         mp.style.height = `${Math.min(availableHeight, 600)}px`; // Max 600px or available space
 
         // Position Left
+        const sidebar = document.querySelector('.sidebar');
+        const leftOffset = (sidebar && sidebar.getBoundingClientRect) ? (Math.round(sidebar.getBoundingClientRect().width) + 32) : 32;
+        mp.style.left = `${leftOffset}px`;
+    } else {
+        // Fallback if Dock is hidden
+        mp.style.bottom = '0px';
+        mp.style.height = '600px';
         const sidebar = document.querySelector('.sidebar');
         const leftOffset = (sidebar && sidebar.getBoundingClientRect) ? (Math.round(sidebar.getBoundingClientRect().width) + 32) : 32;
         mp.style.left = `${leftOffset}px`;
@@ -4761,11 +4773,15 @@ function setupLayout() {
     controlBox.style.bottom = '234px'; // 120px dock + 10px margin + 104px
 
     // 2. Transform Player Combat Area into Always-Visible Dock
-    const combatArea = document.querySelector('.player-combat-area');
-    if (combatArea) {
-        document.body.appendChild(combatArea); // Move out of modal to body
-        combatArea.classList.add('dock-mode');
-    }
+    // const combatArea = document.querySelector('.player-combat-area');
+    // if (combatArea) {
+    //     document.body.appendChild(combatArea); // Move out of modal to body
+    //     combatArea.classList.add('dock-mode');
+    // }
+
+    // Force hide legacy combat area
+    const legacyCombatArea = document.querySelector('.player-combat-area');
+    if (legacyCombatArea) legacyCombatArea.style.display = 'none';
 
     // Bind Weapon Icon to Open Inventory
     const weaponIcon = document.getElementById('weaponArtModal');
@@ -5312,8 +5328,8 @@ function loadGame() {
     isAttractMode = false;
     // const logo = document.getElementById('gameLogo'); // Redundant
     if (logo) logo.style.opacity = '0';
-    const combatArea = document.querySelector('.player-combat-area');
-    if (combatArea) combatArea.style.display = 'flex';
+    // const combatArea = document.querySelector('.player-combat-area');
+    // if (combatArea) combatArea.style.display = 'flex';
 
     const contBtn = document.getElementById('continueGameBtn');
     if (contBtn) contBtn.style.display = 'none';

@@ -600,7 +600,7 @@ h1 {
     align-self: stretch;
     background: rgba(0, 0, 0, 0.45);
     border-top: 4px solid var(--gold);
-    display: flex;
+    display: none !important; /* Hidden as replaced by new UI */
     padding: 0;
     /* Remove padding to handle segments internally */
     min-height: 120px;
