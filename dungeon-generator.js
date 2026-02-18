@@ -239,10 +239,10 @@ function countNeighbors(grid, x, z, b) {
     return count;
 }
 
-export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture) {
+export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null) {
     const theme = getThemeForFloor(floor);
     // Larger Map: 2.5x base size + scaling
-    const bounds = 30 + (floor * 5);
+    const bounds = boundsOverride !== null ? boundsOverride : (30 + (floor * 5));
 
     const size = bounds * 2 + 1;
     let grid = {};
@@ -283,6 +283,15 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
             const nearPath = paths.some(p => distToSegment(x, z, p.x1, p.z1, p.x2, p.z2) < 2.5);
 
             if (nearRoom || nearPath) alive = true;
+            
+            // Special initialization for empty rooms (Battle Arena Mode)
+            if (rooms.length === 0 && boundsOverride !== null) {
+                alive = false; // Clear random noise
+                // Initialize a dense center blob
+                const distFromCenter = Math.sqrt(x*x + z*z);
+                if (distFromCenter < bounds * 0.4) alive = true;
+            }
+
             grid[x][z] = alive;
         }
     }
@@ -554,8 +563,22 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         scene.add(rockMesh);
         decorationMeshes.push(rockMesh);
     }
-
-    console.log(`✅ Floor: ${tileCount} solid tiles in 1 draw call (was ${tileCount} draw calls)`);
-
+    
     return floorMesh;
+}
+
+export function generateBattleArena(scene, floor, loadTexture, getClonedTexture) {
+    // Generate a small CA island (bounds=12, no rooms)
+    // We pass empty arrays/maps for rooms, corridors, decorations, trees
+    return generateFloorCA(
+        scene, 
+        floor, 
+        [], // No rooms 
+        new Map(), 
+        [], // decorationMeshes (Must be Array)
+        [], 
+        loadTexture, 
+        getClonedTexture, 
+        18 // Small bounds override (Increased size)
+    );
 }

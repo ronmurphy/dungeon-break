@@ -780,6 +780,12 @@ export function handleDrop(e, targetType, targetIdx) {
 window.handleDrop = handleDrop;
 
 window.toggleInventory = function () {
+    // If in battle island, exit immediately instead of toggling UI
+    if (window.inBattleIsland && window.exitBattleIsland) {
+        window.exitBattleIsland();
+        return;
+    }
+
     const modal = document.getElementById('inventoryModal');
     if (modal.style.display === 'flex') {
         modal.style.display = 'none';

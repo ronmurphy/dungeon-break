@@ -16,6 +16,7 @@ import { MagicCircleFX } from './magic-circle.js';
 import { CombatTerrain, updateCombatVisibility } from './combat-mechanics.js';
 import { CombatResolver } from './dnd-mechanics.js';
 import { CardDesigner } from './card-designer.js';
+import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
@@ -47,7 +48,37 @@ let treePositions = []; // Store tree locations for FX
 let animatedMaterials = []; // Track shaders that need time updates
 let hiddenDecorationIndices = new Map(); // Track hidden instances for combat
 let hiddenStaticMeshes = []; // Track hidden static objects for combat bulldozer
-let savedPlayerPos = new THREE.Vector3(); // Store player pos before teleporting to Battle Island
+let inBattleIsland = false;
+window.inBattleIsland = false; // Expose globally
+let savedPlayerPos = new THREE.Vector3();
+let savedFogDensity = 0.045;
+
+// Expose exit function globally
+window.exitBattleIsland = function() {
+    if (CombatManager.isActive) {
+        CombatManager.endCombat(activeWanderer);
+        
+        // Reset Global Flags
+        window.inBattleIsland = false;
+        inBattleIsland = false;
+
+        // Remove the enemy from the world so we don't instantly re-trigger combat
+        if (activeWanderer) {
+             const idx = wanderers.indexOf(activeWanderer);
+             if (idx > -1) wanderers.splice(idx, 1);
+             // CombatManager hides the mesh, but we should remove it entirely
+             if (activeWanderer.mesh && activeWanderer.mesh.parent) {
+                 activeWanderer.mesh.parent.remove(activeWanderer.mesh);
+             }
+             activeWanderer = null;
+        }
+        
+        exitCombatView(); // Restore controls and fog
+        spawnFloatingText("ESCAPED!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00', 40);
+    }
+};
+
+ // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
 let playerTargetPos = null; // Target position for free movement
 
@@ -137,6 +168,7 @@ let clickStart = { x: 0, y: 0 }; // Track mouse down position for drag detection
 // --- ENHANCED COMBAT GLOBALS ---
 let combatGroup = new THREE.Group();
 let isCombatView = false;
+let activeWanderer = null; // Track current enemy
 let savedCamState = { pos: new THREE.Vector3(), target: new THREE.Vector3(), zoom: 1 };
 let combatEntities = []; // Track standees/chests for updates
 const textureLoader = new THREE.TextureLoader();
@@ -1116,7 +1148,7 @@ function init3D() {
     scene.add(playerMarker);
 
     // Initialize Battle Island
-    BattleIsland.init(scene);
+    // BattleIsland.init(scene, getClonedTexture);
 
     animate3D();
     window.removeEventListener('click', on3DClick); // Prevent duplicates
@@ -2083,6 +2115,33 @@ function animate3D() {
 
     // Animate Player Marker
     const playerObj = use3dModel ? playerMesh : playerSprite;
+    
+    // --- COMBAT TRIGGER ---
+    if (playerObj && !isCombatView && !isAttractMode) {
+        for(let i=0; i<wanderers.length; i++) {
+            const w = wanderers[i];
+            if (!w || !w.mesh) continue;
+            
+            const dist = playerObj.position.distanceTo(w.mesh.position);
+            // If very close, trigger combat teleport
+            if (dist < 2.5) {
+                console.log("🚨 [scoundrel-3d.js] Collision with wanderer detected!");
+                console.log("   -> Wanderer ID:", w.id);
+                console.log("   -> Player Pos:", playerObj.position);
+                console.log("   -> Enemy Pos:", w.mesh.position);
+                console.log("   -> Calling startCombat()...");
+
+                // Stop any tween movement
+                if (playerMoveTween) {
+                    playerMoveTween.stop();
+                    playerMoveTween = null;
+                }
+                startCombat(w);
+                break; // Only trigger one combat at a time
+            }
+        }
+    }
+
     if (playerMarker && playerObj && !isAttractMode) {
         const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
 
@@ -2258,21 +2317,8 @@ function animate3D() {
 
                             // Combat Trigger (Touch)
                             if (distance < 1.2) {
-                                isEngagingCombat = true;
-                                stopMovement();
-
-                                const hud = document.getElementById('gameplayInventoryBar');
-                                if (hud) {
-                                    const rect = hud.getBoundingClientRect();
-                                    spawnFloatingText("AMBUSHED!", rect.left + rect.width / 2, rect.top - 30, '#ff0000');
-                                }
-                                logMsg("Caught by a wanderer! Entering house...");
-
-                                // --- TRIGGER HOUSE BATTLE ---
-                                enterHouseBattle(wanderer);
-
-                                setTimeout(() => { isEngagingCombat = false; }, 5000); // Reset after 5s for now (prevent re-trigger)
-                                // break; // Removed break to allow other logic if needed, but usually we stop here
+                                // Trigger Combat
+                                startCombat(wanderer); 
                             }
                         }
                     }
@@ -2284,7 +2330,9 @@ function animate3D() {
     // Throttled render so we don't render >30fps
     if (now - lastRenderTime >= RENDER_INTERVAL) {
         // Determine active camera based on mode
-        let activeCam = isCombatView ? combatCamera : camera;
+        // FIX: Always use the main camera (Ortho). CombatManager moves THIS camera to the Battle Island.
+        // The separate 'combatCamera' (Perspective) was staying at 0,0,0, causing the view bug.
+        let activeCam = camera; 
 
         const lockpickActive = document.getElementById('lockpickUI') && document.getElementById('lockpickUI').style.display !== 'none';
 
@@ -2319,41 +2367,9 @@ function animate3D() {
     }
 }
 
-function enterHouseBattle(enemy) {
-    if (isInHouse) return;
-    isInHouse = true;
-
-    const playerObj = use3dModel ? playerMesh : playerSprite;
-    if (!playerObj) return;
-
-    // 1. Save player's current position to return to later
-    playerReturnPos = playerObj.position.clone();
-
-    // 2. Get the Battle Island anchor and generate the house
-    const anchor = BattleIsland.getAnchor();
-    currentHouseGroup = generateHouse(scene, anchor, camera);
-
-    // 3. Teleport Player and Enemy
-    // Player spawns at the "door"
-    playerObj.position.set(anchor.x, playerObj.position.y, anchor.z + 5);
-    // Enemy spawns at the other end
-
-
-    // 4. Move Camera
-    controls.target.copy(anchor);
-    camera.position.set(anchor.x, anchor.y + 15, anchor.z + 15);
-    controls.update();
-
-    // 5. Toggle Lights
-    if (torchLight) torchLight.visible = false;
-    if (currentHouseGroup.userData.light) {
-        currentHouseGroup.userData.light.visible = true;
-    }
-
-    // For now, we'll use a debug command to exit.
-    window.exitHouse = exitHouseBattle;
-    logMsg("Entered house. Type exitHouse() in console to leave.");
-}
+/* 
+function enterHouseBattle(enemy) { ... DEPRECATED: Replaced by startCombat() ... }
+*/
 
 function findEdgePosition() {
     // Look for any tile that's on the EDGE of generated terrain (is outside of our safe zone).
@@ -3531,18 +3547,17 @@ function showCombat() {
     const overlay = document.getElementById('combatModal');
     const enemyArea = document.getElementById('enemyArea');
     overlay.style.display = 'flex';
+    overlay.style.background = 'rgba(0,0,0,0)'; // Transparent so we can see 3D
+    overlay.style.pointerEvents = 'none'; // Let clicks pass through to 3D scene
+
     audio.setMusicMuffled(true); // Muffle music during combat
     enemyArea.innerHTML = '';
-    // audio.play('card_shuffle', { volume: 0.5, rate: 0.95 + Math.random() * 0.1 });
 
-    // --- 3D COMBAT SETUP ---
+    // --- 3D COMBAT SETUP (Legacy Standee Logic Removed) ---
     if (use3dModel) {
         const alreadyInCombat = isCombatView;
         enterCombatView();
-        overlay.style.background = 'rgba(0,0,0,0)'; // Transparent modal
-
-        // FIX: Allow clicks to pass through modal to the 3D canvas for OrbitControls
-        overlay.style.pointerEvents = 'none';
+        
         // Re-enable clicks on specific UI elements
         const interactables = ['exitCombatBtn', 'modalAvoidBtn', 'descendBtn', 'bonfireNotNowBtn'];
         interactables.forEach(id => {
@@ -3551,305 +3566,32 @@ function showCombat() {
         });
 
         // Clear previous 3D entities
-        while (combatGroup.children.length > 0) {
-            combatGroup.remove(combatGroup.children[0]);
-        }
-        combatEntities = [];
-
-        // Hide Current Room Mesh to prevent camera blocking
-        // if (game.activeRoom && roomMeshes.has(game.activeRoom.id)) {
-        //     roomMeshes.get(game.activeRoom.id).visible = false;
+        // while (combatGroup.children.length > 0) {
+        //     combatGroup.remove(combatGroup.children[0]);
         // }
-
-        // Determine Anchor Position (Room Center)
-        // Use activeRoom coordinates to ensure stability even if player is moving
-        // BATTLE ISLAND UPDATE: Use the Arena Anchor
-        const arenaPos = BattleIsland.getAnchor();
-        const anchorX = arenaPos.x;
-        const anchorZ = arenaPos.z;
-        const anchorY = 0.1;
-
-        // Snap Player to Position (ensure they are at the stand marker)
-        if (playerMesh) {
-            // We don't stop tweens here to avoid breaking other FX, but we force position
-            playerMesh.position.set(anchorX, anchorY, anchorZ);
-            playerMesh.lookAt(anchorX, anchorY, anchorZ + 4);
-        }
-
-        // Determine Orientation (Face a corridor if possible)
-        // BATTLE ISLAND: Always face North (Z+) or South (Z-) depending on preference. Let's use Z+ (0,0,1)
-        let forward = new THREE.Vector3(0, 0, 1);
-        const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), forward).normalize();
-
-        // Snap Player Rotation
-        if (playerMesh) {
-            const lookTarget = new THREE.Vector3(anchorX, anchorY, anchorZ).add(forward);
-            playerMesh.lookAt(lookTarget);
-        }
-
-        // Only swoop camera if entering combat for the first time
-        if (!alreadyInCombat) {
-            // Setup Perspective Camera (Start high and behind relative to forward)
-            const startPos = new THREE.Vector3(anchorX, anchorY + 8, anchorZ).addScaledVector(forward, -8);
-            combatCamera.position.copy(startPos);
-            combatCamera.lookAt(anchorX, anchorY, anchorZ);
-
-            // Tween Camera to Shoulder position
-            // Pos = Anchor - Forward * 3.5 + Up * 1.6
-            const endPos = new THREE.Vector3(anchorX, anchorY + 1.6, anchorZ).addScaledVector(forward, -3.5);
-            new TWEEN.Tween(combatCamera.position)
-                .to({ x: endPos.x, y: endPos.y, z: endPos.z }, 1200)
-                .easing(TWEEN.Easing.Quadratic.Out)
-                .start();
-
-            // Switch Controls to Perspective Camera temporarily
-            controls.object = combatCamera;
-            // Look Target: Player Center (Anchor) + Up * 1.2
-            // This allows orbiting around the player character
-            const lookAtPos = new THREE.Vector3(anchorX, anchorY + 1.2, anchorZ);
-            controls.target.copy(lookAtPos);
-            controls.minDistance = 2.0;
-            controls.maxDistance = 8.0;
-            controls.autoRotate = combatCameraActive; // "Intro Logo" Spin Effect (Respect Preference)
-            controls.autoRotateSpeed = 1.0;
-
-            controls.enableRotate = combatCameraActive; // Respect user preference
-            controls.enablePan = false;   // Keep focus on the arena
-            controls.maxPolarAngle = Math.PI / 2 - 0.1; // Prevent camera from going underground
-            // Enable Middle Mouse Rotation for Combat
-            controls.mouseButtons = {
-                LEFT: THREE.MOUSE.ROTATE,
-                MIDDLE: THREE.MOUSE.ROTATE,
-                RIGHT: THREE.MOUSE.ROTATE // Allow Right Click to orbit as well
-            };
-        }
-
-        // Spawn 3D Entities
-        game.combatCards.forEach((c, i) => {
-            let entity;
-            if (c.type === 'monster') {
-                entity = new Standee();
-            } else {
-                entity = new OpenChest();
-            }
-
-            let assetData = getAssetData(c.type, c.val, c.suit, c.type === 'gift' ? c.actualGift : null);
-
-            // Override for Animated Monsters
-            if (c.type === 'monster' && c.val >= 1 && !c.customAsset) {
-                let suitName = 'club';
-                if (c.suit === SUITS.SPADES) suitName = 'spade';
-                else if (c.suit === SUITS.SKULLS) suitName = 'skull';
-                else if (c.suit === SUITS.MENACES) suitName = 'menace';
-
-                const clampedVal = Math.min(c.val, 14);
-                const rankName = { 1: '1', 2: '1', 3: '1', 4: '2', 5: '2', 6: '3', 7: '3', 8: '4', 9: '4', 10: '5', 11: 'jack', 12: 'queen', 13: 'king', 14: 'ace' }[clampedVal];
-
-                assetData = {
-                    file: `animations/${suitName}_${rankName}.png`,
-                    uv: { u: 0, v: 0 },
-                    isStrip: true,
-                    sheetCount: 25,
-                    isAnimated: true
-                };
-            } else if (c.customAsset) {
-                assetData = {
-                    file: c.customAsset,
-                    uv: { u: 0, v: 0 },
-                    isStrip: true,
-                    sheetCount: 25,
-                    isAnimated: c.isAnimated || false
-                };
-            }
-
-            if (c.type === 'monster') {
-                entity.assemble(c, assetData);
-            } else {
-                entity.setArt(assetData);
-            }
-
-            // Add simple text label under sprite
-            const valStr = (c.type === 'monster' || c.type === 'weapon' || c.type === 'potion') ? `${c.val}` : '';
-
-            let labelColor = '#ffffff';
-            if (c.type === 'monster') {
-                if (c.bossSlot || c.val > 14) labelColor = '#ffd700'; // Gold (Guardians/Boss)
-                else if (c.val >= 11) labelColor = '#aa00ff'; // Purple (11-14)
-                else if (c.val >= 9) labelColor = '#008800'; // Dark Green (9-10)
-                else if (c.val >= 6) labelColor = '#ffaa00'; // Orange (6-8)
-            } else if (c.type === 'weapon') {
-                labelColor = '#ff4444'; // Red
-            } else if (c.type === 'potion' || c.type === 'item' || c.type === 'gift') {
-                labelColor = '#44ff44'; // Nice Green
-            }
-            const suitLabel = c.suit ? `${c.suit}: ` : 'Val: ';
-
-            // Only add floating label for non-monsters (monsters have text on card)
-            if (c.type !== 'monster') {
-                entity.setLabel(c.name, valStr ? `${suitLabel}${valStr}` : '', labelColor);
-            }
-
-            // Scale Boss Standees (3D)
-            if (c.bossSlot === 'boss-guardian') {
-                if (c.isBroker) {
-                    entity.scale.set(2.0, 2.0, 2.0);
-                } else {
-                    entity.scale.set(1.5, 1.5, 1.5);
-                }
-            }
-
-            let xOff = 0;
-            let zOff = 0;
-
-            if (game.isBossFight && c.bossSlot) {
-                // Diamond Layout for Boss
-                // Broker (Guardian Slot) -> Back Center
-                // Weapon (Left) -> Left
-                // Potion (Right) -> Right
-                // Armor (Front) -> Front Center
-
-                if (c.bossSlot === 'boss-guardian') {
-                    xOff = 0; zOff = 4.0; // Back
-                } else if (c.bossSlot === 'boss-weapon') {
-                    xOff = -2.0; zOff = 2.5; // Left
-                } else if (c.bossSlot === 'boss-potion') {
-                    xOff = 2.0; zOff = 2.5; // Right
-                } else if (c.bossSlot === 'boss-armor') {
-                    xOff = 0; zOff = 1.0; // Front
-                }
-            } else {
-                // Standard Staggered "V" Layout
-                // 0: Left Outer (Row 2) -> right*-1.5 + fwd*1.5
-                // 1: Left Inner (Row 1) -> right*-0.5 + fwd*2.5
-                // 2: Right Inner (Row 1) -> right*0.5 + fwd*2.5
-                // 3: Right Outer (Row 2) -> right*1.5 + fwd*1.5
-                xOff = (i - 1.5) * 1.5; // Default spread
-                zOff = 2.0;
-                if (i === 0 || i === 3) { zOff = 1.5; xOff = (i === 0 ? -1.5 : 1.5); }
-                if (i === 1 || i === 2) { zOff = 2.5; xOff = (i === 1 ? -0.5 : 0.5); }
-            }
-
-            entity.position.copy(new THREE.Vector3(anchorX, 0, anchorZ).addScaledVector(right, xOff).addScaledVector(forward, zOff));
-            entity.lookAt(anchorX, 0, anchorZ); // Face player
-
-            // UserData for Raycasting
-            entity.userData = { cardIdx: i, isCombatEntity: true };
-
-            combatGroup.add(entity);
-            combatEntities.push(entity);
-        });
+        // combatEntities = [];
     } else {
         overlay.style.background = 'rgba(0,0,0,0.85)';
     }
 
-    const isGiftRoom = game.combatCards.length > 0 && game.combatCards[0].type === 'gift';
-
-    if (game.isBossFight) {
-        enemyArea.classList.remove('layout-merchant');
-        enemyArea.classList.add('boss-grid');
-    } else {
-        enemyArea.classList.remove('boss-grid');
-
-        // Randomize Card Layout for Standard Encounters (2D Mode mostly)
-        // Reset classes
-        enemyArea.classList.remove('layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal');
-
-        if (isGiftRoom) {
-            // Apply forced merchant layout
-            if (!enemyArea.classList.contains('layout-merchant')) {
-                enemyArea.classList.add('layout-merchant');
-            }
-        } else {
-            // Ensure merchant layout is GONE for normal fights
-            enemyArea.classList.remove('layout-merchant');
-
-            if (!use3dModel) {
-                // Random pick
-                const layouts = ['layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal'];
-                const pick = layouts[Math.floor(Math.random() * layouts.length)];
-                enemyArea.classList.add(pick);
-            } else {
-                // Default to linear if 3D (overlay should generally stay out of way, or standard)
-                enemyArea.classList.add('layout-linear');
-            }
-        }
-    }
-
-    game.combatCards.forEach((c, idx) => {
-        const card = document.createElement('div');
-        card.className = `card ${c.type} ${use3dModel ? '' : 'dealing'} ${c.bossSlot || ''}`;
-        card.style.animationDelay = `${idx * 0.1}s`;
-
-        let asset = getAssetData(c.type, c.val, c.suit, c.type === 'gift' ? c.actualGift : null);
-        let bgUrl = `assets/images/${asset.file}`;
-        const sheetCount = asset.sheetCount || 9;
-        let bgSize = asset.isStrip ? `${sheetCount * 100}% 100%` : 'cover';
-        let bgPos = `${(asset.uv.u * sheetCount) / (sheetCount - 1) * 100}% 0%`;
-        let animClass = "";
-
-        // 3D Mode: Hide the 2D card visuals but keep element for layout/clicking
-        if (use3dModel) {
-            card.style.opacity = '0';
-            card.style.pointerEvents = 'none'; // Allow clicking through to 3D scene
-        }
-
-        // Custom Asset Overrides (for Boss Parts)
-        if (c.customAsset) {
-            bgUrl = `assets/images/${c.customAsset}`;
-            bgSize = c.customBgSize || '900% 100%';
-            // Fix: 100 / 8 = 12.5% per step for 9-slice strip
-            bgPos = `${(c.customUV || 0) * 12.5}% 0%`;
-        }
-
-        if (c.isAnimated) {
-            animClass = "animated-card-art";
-        }
-
-        // Scale Boss Cards
-        if (c.bossSlot === 'boss-guardian') {
-            if (c.isBroker) {
-                card.style.transform = "scale(2.0)";
-                card.style.zIndex = "100"; // Ensure on top
-            } else {
-                card.style.transform = "scale(1.5)";
-                card.style.zIndex = "50";
-            }
-        }
-
-        // Boss Animations: 11-14 Clubs/Spades
-        // if (c.type === 'monster' && c.val >= 11) {
-        // all monster cards now have sprite sheet animations. 
-        if (c.type === 'monster' && c.val >= 1 && !c.customAsset) {
-            let suitName = 'club';
-            if (c.suit === SUITS.SPADES) suitName = 'spade';
-            else if (c.suit === SUITS.SKULLS) suitName = 'skull';
-            else if (c.suit === SUITS.MENACES) suitName = 'menace';
-
-            // const rankName = { 11: 'jack', 12: 'queen', 13: 'king', 14: 'ace' }[c.val];
-            const clampedVal = Math.min(c.val, 14);
-            const rankName = { 1: '1', 2: '1', 3: '1', 4: '2', 5: '2', 6: '3', 7: '3', 8: '4', 9: '4', 10: '5', 11: 'jack', 12: 'queen', 13: 'king', 14: 'ace' }[clampedVal];
-            bgUrl = `assets/images/animations/${suitName}_${rankName}.png`;
-            bgSize = "2500% 100%"; // 25 framing spritesheet
-            bgPos = "0% 0%";
-            animClass = "animated-card-art";
-
-            // Special override for the Guardian Boss Card
-            if (c.bossSlot === 'boss-guardian') {
-                // Use a specific boss sprite if available, or fallback to King/Ace
-                // Assuming animations are in the same folder
-                bgUrl = `assets/images/animations/${c.customAnim || 'spade_king'}.png`;
-            }
-        }
-
-        card.innerHTML = `
-                    <div class="card-art-container ${animClass}" style="background-image: url('${bgUrl}'); background-size: ${bgSize}; background-position: ${bgPos}"></div>
-                    <div class="suit" style="background: rgba(0,0,0,0.5); border-radius: 50%; width: 40px; text-align: center;">${c.suit}</div>
-                    <div class="val" style="color: ${c.isCursed ? '#adff2f' : '#fff'}; text-shadow: 2px 2px 0 #000;">${getDisplayVal(c.val)}</div>
-                    <div class="name">${c.name}</div>
-                `;
-        card.onclick = (e) => pickCard(idx, e);
-        enemyArea.appendChild(card);
-    });
+    // --- NEW COMMAND MENU UI ---
+    // This replaces the card grid with a tactical menu
+    const menu = document.createElement('div');
+    menu.className = 'command-menu';
+    menu.style.cssText = `
+        position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 15px; pointer-events: auto;
+    `;
+    
+    const btnStyle = "padding: 15px 30px; font-size: 1.2rem; font-family: 'Cinzel'; background: rgba(0,0,0,0.8); border: 2px solid var(--gold); color: var(--gold); cursor: pointer; transition: all 0.2s;";
+    
+    menu.innerHTML = `
+        <button style="${btnStyle}" onclick="console.log('Attack Clicked')">ATTACK</button>
+        <button style="${btnStyle}" onclick="console.log('Item Clicked')">ITEM</button>
+        <button style="${btnStyle}" onclick="window.exitBattleIsland()">FLEE</button>
+    `;
+    
+    enemyArea.appendChild(menu);
 
     // If room is cleared, we show the Exit button, otherwise the Avoid button
     const msgEl = document.getElementById('combatMessage');
@@ -5133,10 +4875,6 @@ window.showOptionsModal = function () {
             <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
                 <input type="checkbox" id="muteSFX" ${gameSettings.sfxMuted ? 'checked' : ''} onchange="updateSetting('sfx', this.checked)">
                 <label for="muteSFX">Mute Sound Effects</label>
-            </div>
-
-            <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
-                <button class="v2-btn" id="viewToggleBtn" onclick="toggleView()" style="width:100%; font-size:0.8rem; background:${combatCameraActive ? '#d4af37' : ''};">Combat Camera: ${combatCameraActive ? 'On' : 'Off'}</button>
             </div>
 
             <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
@@ -6609,6 +6347,55 @@ function restoreDecorations() {
     hiddenDecorationIndices.clear();
 }
 
+function startCombat(wanderer) {
+    console.log("🔥 [scoundrel-3d.js] startCombat() function entered.");
+    console.log("   -> Triggered by wanderer:", wanderer);
+
+    if (isCombatView) {
+        console.warn("⚠️ Already in combat view! Aborting.");
+        return;
+    }
+    activeWanderer = wanderer;
+
+    // Set global flags
+    inBattleIsland = true;
+    window.inBattleIsland = true;
+
+    // Clear fog for combat clarity
+    if (scene.fog) {
+        savedFogDensity = scene.fog.density;
+        scene.fog.density = 0.012; // Reduced fog for Battle Island (Dark but visible)
+    }
+
+    // Enable Orbit Controls for Combat
+    if (controls) {
+        controls.enableRotate = true;
+        controls.enabled = true; // Ensure controls are active
+    }
+
+    // Stop movement immediately
+    if (playerMoveTween) {
+        playerMoveTween.stop();
+        playerMoveTween = null;
+    }
+
+    // --- NEW COMBAT MANAGER (FFT STYLE) ---
+    const currentTheme = getThemeForFloor(game.floor);
+    console.log("   -> Initializing CombatManager with floor theme:", currentTheme);
+
+    // Ensure CombatManager has refs
+    CombatManager.init(scene, camera, controls, use3dModel ? playerMesh : playerSprite);
+    
+    console.log("   -> Calling CombatManager.startCombat()...");
+    CombatManager.startCombat(wanderer, currentTheme);
+
+    // Show the UI Overlay (Command Menu)
+    showCombat();
+    
+    isCombatView = true;
+    console.log("✅ Combat view active.");
+}
+
 function enterCombatView() {
     if (isCombatView || !use3dModel) return;
     isCombatView = true;
@@ -6631,14 +6418,10 @@ function enterCombatView() {
     // Add Combat Group to Scene
     scene.add(combatGroup);
 
-    // --- BATTLE ISLAND TELEPORT ---
-    const arenaPos = BattleIsland.getAnchor();
-
-    // Teleport Player to Arena
-    if (playerMesh) {
-        playerMesh.position.copy(arenaPos);
-        playerMesh.rotation.set(0, 0, 0); // Reset rotation to face North
-    }
+    // NOTE: Player teleportation is now handled by CombatManager.startCombat()
+    // We keep this function mainly for state flags and saving camera state.
+    // The actual movement logic has been moved to CombatManager to keep it centralized.
+    
 
     // Note: Camera movement happens in showCombat, which will now target the arenaPos
 
@@ -6650,6 +6433,11 @@ function exitCombatView() {
     if (!isCombatView) return;
     isCombatView = false;
     scene.remove(combatGroup);
+
+    // Restore Fog
+    if (scene.fog) {
+        scene.fog.density = savedFogDensity;
+    }
 
     // Restore Room Mesh Visibility (Safety check)
     if (game.activeRoom && roomMeshes.has(game.activeRoom.id)) {
