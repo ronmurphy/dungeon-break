@@ -21,7 +21,7 @@ import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, recalcStats, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, spawnHudFloatingText } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, spawnHudFloatingText, showManorPrompt } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -47,6 +47,7 @@ let hemisphereLight; // Soft global fill light to improve readability under fog
 let roomMeshes = new Map();
 let animationFrameId = null; // To prevent multiple render loops
 let terrainMeshes = new Map();
+let debugHelpers = []; // Track debug visuals for toggling
 let waypointMeshes = new Map();
 let corridorMeshes = new Map();
 let doorMeshes = new Map();
@@ -1122,7 +1123,7 @@ function init3D() {
         scene.background = new THREE.Color(0x0a0a0a);
         scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
 
-        renderer = new THREE.WebGLRenderer({
+        renderer = new THREE.WebGLRenderer({ 
             antialias: true,
             powerPreference: "high-performance" // Hint to browser to use dGPU (NVIDIA/AMD) over iGPU
         });
@@ -1438,8 +1439,8 @@ function initWanderers() {
     wanderers = [];
 
     // Revert to standard enemy count for normal floors
-    let count = 3 + Math.floor(game.floor);
-
+    let count = 3 + Math.floor(game.floor); 
+    
     // Apply Benchmark Math ONLY for True Dungeon
     if (game.inTrueDungeon) {
         const fps = gameSettings.benchmarkFPS || 30;
@@ -1591,7 +1592,7 @@ function pickWandererTarget(wanderer) {
                     // 1. Snap to floor (Always snap to handle slopes, even in True Dungeon if terrain varies)
                     // Use the Battle Island mesh if in combat, otherwise global floor
                     const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
-
+                    
                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                     let currentY = wanderer.mesh.position.y;
@@ -1778,7 +1779,7 @@ function on3DClick(event, isRightClick = false) {
             // Check for Room Mesh Interaction
             if (roomObj && roomObj.userData && roomObj.userData.roomId !== undefined) {
                 const roomIdx = roomObj.userData.roomId;
-
+                
                 console.log(`[Click] Hit Object in Room ${roomIdx}. Current Room: ${game.currentRoomIdx}`);
 
                 // Movement
@@ -1977,6 +1978,7 @@ function update3DScene() {
             */
             if (!roomMeshes.has(r.id)) {
                 if (r.isWaypoint) return; // Skip waypoints
+                if (r.isVanished) return; // Skip sunken manors
                 const rw = r.w; const rh = r.h;
                 const rDepth = 3.0 + Math.random() * 3.0;
                 r.rDepth = rDepth;
@@ -1987,7 +1989,7 @@ function update3DScene() {
                     const duckGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5); // Fallback
                     const duckMat = new THREE.MeshStandardMaterial({ color: 0xffff00 });
                     const mesh = new THREE.Mesh(duckGeo, duckMat);
-
+                    
                     loadGLB('assets/images/glb/duck.glb', (model) => {
                         mesh.add(model);
                         mesh.material.visible = false;
@@ -2410,7 +2412,7 @@ function animate3D() {
             camera.position.z = Math.cos(time) * dist;
             camera.position.y = 12;
             camera.lookAt(0, 0, 0);
-            controls.target.set(0, 0, 0);
+            controls.target.set(0,0,0);
         }
 
         if (now - benchmarkState.startTime >= benchmarkState.duration) {
@@ -2461,10 +2463,16 @@ function animate3D() {
     if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
         for (const r of game.rooms) {
             // Only check markers that are not the current room
-            if (r.id !== game.currentRoomIdx && (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret)) {
+            if (r.id !== game.currentRoomIdx && (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret || r.isSpecial)) {
                 const dist = Math.hypot(r.gx - playerObj.position.x, r.gy - playerObj.position.z);
-                // Use tight distance threshold for markers so you have to walk INTO them
-                if (dist < 0.6) {
+                
+                // Dynamic threshold:
+                // Standard markers (0.6) vs Large Structures (Manor)
+                // Use room dimensions (w/h) to calculate a bounding radius + buffer
+                let threshold = 0.6;
+                if (r.isSpecial) threshold = ((Math.max(r.w, r.h) / 2) + 1.5) * 1.5;
+
+                if (dist < threshold) {
                     console.log(`[Proximity] Triggering Marker Room ${r.id}`);
                     enterRoom(r.id);
                     break; // Only trigger one at a time
@@ -2482,12 +2490,12 @@ function animate3D() {
                     r.isCollected = true;
                     game.ducksFound++;
                     audio.play('quack', { volume: 0.8 });
-                    spawnFloatingText(`QUACK! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
-
+                    spawnFloatingText(`QUACK! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
+                    
                     const mesh = roomMeshes.get(r.id);
                     if (mesh) scene.remove(mesh);
 
-                    window.updateUI(); // Update counter
+                    updateUI(); // Update counter
 
                     if (game.ducksFound >= game.ducksToFind) {
                         setTimeout(exitTrueDungeon, 1000);
@@ -2502,9 +2510,9 @@ function animate3D() {
         const playerObj = use3dModel ? playerMesh : playerSprite;
         if (playerObj) {
             // Find which room we are physically in
-            const physicalRoom = game.rooms.find(r =>
-                Math.abs(r.gx - playerObj.position.x) < r.w / 2 - 0.1 &&
-                Math.abs(r.gy - playerObj.position.z) < r.h / 2 - 0.1
+            const physicalRoom = game.rooms.find(r => 
+                Math.abs(r.gx - playerObj.position.x) < r.w/2 - 0.1 && 
+                Math.abs(r.gy - playerObj.position.z) < r.h/2 - 0.1
             );
 
             if (physicalRoom && physicalRoom.id !== game.currentRoomIdx) {
@@ -2554,7 +2562,7 @@ function animate3D() {
         const pulse = 0.3 + Math.sin(Date.now() * 0.005) * 0.1;
         movementRangeIndicator.material.opacity = pulse;
     }
-
+    
     // Update Range Rings
     if (meleeRangeIndicator && meleeRangeIndicator.visible && playerObj) {
         meleeRangeIndicator.position.set(playerObj.position.x, playerObj.position.y + 0.12, playerObj.position.z);
@@ -2630,7 +2638,8 @@ function animate3D() {
     }
 
     // Proximity Combat Trigger
-    if (!isEngagingCombat && !isCombatView && wanderers.length > 0) {
+    const isInteracting = document.getElementById('combatModal').style.display !== 'none';
+    if (!isEngagingCombat && !isCombatView && !isInteracting && wanderers.length > 0) {
         const playerObj = use3dModel ? playerMesh : playerSprite;
         if (playerObj) {
             for (const wanderer of wanderers) {
@@ -2737,7 +2746,7 @@ function animate3D() {
                                 // If dot is negative, player is generally behind.
                                 // We use the same angle as the vision cone to define the "back arc".
                                 const isFlank = dot < -visionConeAngleCos;
-
+                                
                                 startCombat(wanderer, isFlank);
                             }
                         }
@@ -2922,7 +2931,7 @@ function movePlayerTo(targetVec, isRunning = false) {
     // Consume Torch Fuel based on distance (Free Movement)
     // Rate: 0.05 per unit (approx 0.5 per room-to-room travel)
     game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.05));
-    window.updateUI();
+    updateUI();
 
     // Calculate movement direction for the look-ahead raycast
     const moveDir = new THREE.Vector3().subVectors(targetVec, startPos).normalize();
@@ -2934,6 +2943,7 @@ function movePlayerTo(targetVec, isRunning = false) {
     roomMeshes.forEach((mesh, id) => {
         const r = game.rooms.find(room => room.id === id);
         // Exclude markers/open areas from being solid walls so we can walk into them
+        // Manor (isSpecial) is now SOLID, so we remove it from this list
         const isMarker = r && (r.isLocked || r.isTrap || r.isAlchemy || r.isSecret || r.isShrine);
         if (id !== 0 && id !== game.currentRoomIdx && !isMarker) {
             solidObjects.push(mesh);
@@ -3004,7 +3014,7 @@ function movePlayerTo(targetVec, isRunning = false) {
                     collisionRaycaster.camera = camera; // Fix for sprite raycasting error
                     collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
                     const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
-
+                    
                     if (wallHits.length > 0) {
                         stopMovement();
                     }
@@ -3062,7 +3072,7 @@ function movePlayerSprite(oldId, newId) {
     // Consume Torch Fuel
     game.torchCharge = Math.max(0, game.torchCharge - 0.2); // Reduced consumption for tile movement
     if (game.torchCharge < 5) logMsg(`Torch is fading... (${game.torchCharge} left)`);
-    window.updateUI();
+    updateUI();
 
     // Rotate to face target
     if (use3dModel && playerMesh) {
@@ -3275,12 +3285,12 @@ function takeDamage(amount) {
     }
 
     game.hp -= remaining;
-
+    
     if (remaining > 0) {
         spawnHudFloatingText(`-${remaining}`, '#ff0000');
     }
-
-    window.updateUI(); // Ensure HUD updates immediately
+    
+    updateUI(); // Ensure HUD updates immediately
 
     // Trigger 3D Hit Animation
     if (use3dModel && actions.hit && actions.idle && amount > 0) {
@@ -3627,16 +3637,9 @@ function finalizeStartDive() {
     game.visitedWaypoints = [];
     game.enemiesDefeated = 0;
 
-    // Clear existing stats before applying new ones
-    game.stats = null;
-
     // Apply Hidden Class Bonuses
-    // Ensure stats exist
-    if (cData && cData.stats) {
-        game.stats = { ...cData.stats };
-    } else {
-        game.stats = { str: 1, dex: 1, int: 1, lck: 1 };
-    }
+    // Ensure stats exist (if skipped via debug)
+    if (!game.stats) game.stats = { str: 1, dex: 1, int: 1, lck: 1 };
 
     const cid = game.classId;
     if (cid === 'knight' || cid === 'vanguard' || cid === 'templar') {
@@ -3668,12 +3671,8 @@ function finalizeStartDive() {
             if (!addToHotbar(item)) addToBackpack(item);
         }
     });
-
-    // Finalize HP and AP using new formulas
-    recalcStats();
-    game.hp = game.maxHp; // Start at full HP (20 + STR)
-    game.ap = game.maxAp; // Start at full AP (sum of armor)
-    window.game = game; // Expose for debugging
+    recalcAP();
+    game.ap = game.maxAp; // Fill AP
 
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
@@ -3684,7 +3683,7 @@ function finalizeStartDive() {
     updateAtmosphere(game.floor);
 
     initWanderers();
-    window.updateUI();
+    updateUI();
     logMsg("The descent begins. Room 0 explored.");
 
     // Reset Camera for Gameplay
@@ -3804,7 +3803,7 @@ function startIntermission() {
                 spawnFloatingText("Purchased!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
                 card.style.opacity = 0.5;
                 card.style.pointerEvents = 'none';
-                window.updateUI();
+                updateUI();
             } else {
                 spawnFloatingText("Not enough coins!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
             }
@@ -3864,7 +3863,7 @@ function descendToNextFloor() {
     updateAtmosphere(game.floor);
     // initWanderers();
 
-    window.updateUI();
+    updateUI();
     logMsg(`Descending deeper... Floor ${game.floor}`);
     enterRoom(0);
     updateMusicForFloor();
@@ -3890,7 +3889,7 @@ function enterRoom(id) {
         } else {
             spawnAboveModalTexture('circle_03.png', window.innerWidth / 2, window.innerHeight / 2, 1, { tint: '#880000', blend: 'multiply', size: 300, decay: 0.02 });
         }
-        window.updateUI();
+        updateUI();
     }
 
     // Hardcore Auto-Save on Room Entry
@@ -3907,7 +3906,7 @@ function enterRoom(id) {
                 if (game.visitedWaypoints.length % 6 === 0) {
                     game.hp = Math.min(game.maxHp, game.hp + 1);
                     logMsg("Pilgrimage: Faith restores 1 HP.");
-                    window.updateUI();
+                    updateUI();
                 }
             }
         }
@@ -3951,77 +3950,7 @@ function enterRoom(id) {
 
     if (room.isSpecial && room.state !== 'cleared') {
         game.activeRoom = room;
-
-        // Persistence Check
-        if (!room.generatedContent) {
-            const gifts = [];
-            // Add 3 random options (Weapon, Potion, Armor)
-            for (let i = 0; i < 3; i++) {
-                const roll = Math.random();
-                if (roll < 0.4) {
-                    // Weapon (Diamond 11-14)
-                    const val = 11 + Math.floor(Math.random() * 4);
-                    let name = `Divine Weapon (${val})`;
-                    let isSpell = false;
-
-                    if (game.classId === 'occultist') {
-                        name = getSpellName(val);
-                        isSpell = true;
-                    }
-
-                    const isMimic = Math.random() < 0.05; // 5% Mimic Chance
-
-                    gifts.push({
-                        suit: SUITS.DIAMONDS, val: val, type: 'gift', name: name,
-                        actualGift: { suit: SUITS.DIAMONDS, val: val, type: 'weapon', name: name, isSpell: isSpell, isMimic: isMimic }
-                    });
-                } else if (roll < 0.7) {
-                    // Potion (Heart 11-14)
-                    const val = 11 + Math.floor(Math.random() * 4);
-                    gifts.push({
-                        suit: SUITS.HEARTS, val: val, type: 'gift', name: `Elixir of Life (${val})`,
-                        actualGift: { suit: SUITS.HEARTS, val: val, type: 'potion', name: `Elixir of Life (${val})` }
-                    });
-                } else {
-                    // Armor
-                    const armor = ARMOR_DATA[Math.floor(Math.random() * ARMOR_DATA.length)];
-                    const isMimic = Math.random() < 0.05;
-                    gifts.push({ suit: '🛡️', val: armor.ap, type: 'gift', name: armor.name, actualGift: { ...armor, type: 'armor', isMimic: isMimic } });
-                }
-            }
-
-            // Add Repair option if we have a weapon
-            if (game.equipment.weapon || game.maxAp > 0) {
-                const boost = Math.floor(Math.random() * 6) + 1;
-                gifts.push({
-                    suit: '🛠️', val: boost, type: 'gift',
-                    name: `Blacksmith's Service`,
-                    actualGift: { type: 'repair', val: boost, name: game.equipment.weapon ? `Repaired ${game.equipment.weapon.name}` : `Gear Repaired` }
-                });
-            }
-            room.generatedContent = gifts;
-        }
-
-        game.combatCards = room.generatedContent; // Load persistent gifts
-        game.chosenCount = 0; game.potionsUsedThisTurn = false;
-
-        // --- Merchant (Gift) Room Setup ---
-        logMsg(`Merchant's Gift: Choose one item freely.`);
-
-        // Force Merchant Layout (2x2 Grid)
-        const enemyArea = document.getElementById('enemyArea');
-        enemyArea.classList.remove('boss-grid', 'layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal');
-        enemyArea.classList.add('layout-merchant');
-
-        showCombat();
-        // Update header after showCombat() might have reset it
-        document.getElementById('combatMessage').innerText = "The Merchant's Gift";
-        // Ensure Merchant Portrait is visible
-        const mp = ensureMerchantPortrait();
-        mp.innerHTML = `<img src="assets/images/visualnovel/merchant_front.png">`;
-        requestAnimationFrame(updateMerchantPortraitPosition);
-
-        mp.style.display = 'flex';
+        showManorPrompt();
         return;
     }
     if (room.isBonfire && room.state !== 'cleared') {
@@ -4049,6 +3978,268 @@ function enterRoom(id) {
     game.activeRoom = room; game.combatCards = [...room.cards];
     game.chosenCount = 0; game.potionsUsedThisTurn = false;
     if (id !== 0) showCombat();
+}
+
+function sinkManor(room) {
+    const mesh = roomMeshes.get(room.id);
+    if (!mesh) return;
+
+    logMsg("The Manor groans and sinks into the earth...");
+    
+    // Sound (Low pitch rumble)
+    if (audio.initialized) audio.play('bonfire_loop', { volume: 0.8, rate: 0.5 });
+
+    // Dust Particles
+    const count = 30;
+    for(let i=0; i<count; i++) {
+        setTimeout(() => {
+            const angle = Math.random() * Math.PI * 2;
+            const r = 3 + Math.random() * 3;
+            const x = room.gx + Math.cos(angle) * r;
+            const z = room.gy + Math.sin(angle) * r;
+            if (use3dModel) {
+                spawn3DImpact(new THREE.Vector3(x, 0, z), 0x887766, 'smoke_05.png');
+            }
+        }, i * 100);
+    }
+
+    // Sinking Animation
+    new TWEEN.Tween(mesh.position)
+        .to({ y: -15 }, 3000)
+        .easing(TWEEN.Easing.Cubic.In)
+        .onUpdate(() => {
+            triggerShake(2, 5); // Constant rumble shake
+        })
+        .onComplete(() => {
+            room.isVanished = true;
+            mesh.visible = false;
+            scene.remove(mesh);
+            roomMeshes.delete(room.id);
+            saveGame(); // Persist the vanishing
+        })
+        .start();
+}
+
+window.handleManorChoice = function(choice) {
+    if (choice === 'leave') {
+        closeCombat();
+        // If the player cleared the room (bought something or took gift), sink it
+        if (game.activeRoom.state === 'cleared') {
+             sinkManor(game.activeRoom);
+        } else {
+            // Player left without interacting. Push them out and reset collision.
+            const playerObj = use3dModel ? playerMesh : playerSprite;
+            const r = game.activeRoom;
+            if (playerObj && r) {
+                // Calculate push direction (from center to player)
+                const dx = playerObj.position.x - r.gx;
+                const dz = playerObj.position.z - r.gy;
+                const len = Math.sqrt(dx*dx + dz*dz) || 1;
+                const nx = dx / len;
+                const nz = dz / len;
+
+                // Threshold from animate3D proximity check
+                const threshold = ((Math.max(r.w, r.h) / 2) + 1.5) * 1.5;
+                const targetDist = threshold + 0.8; // Push just outside
+
+                const tx = r.gx + nx * targetDist;
+                const tz = r.gy + nz * targetDist;
+
+                new TWEEN.Tween(playerObj.position)
+                    .to({ x: tx, z: tz }, 400)
+                    .easing(TWEEN.Easing.Quadratic.Out)
+                    .start();
+
+                // Reset current room to nearest neighbor to restore collision on the Manor
+                if (r.connections && r.connections.length > 0) {
+                    let closestId = r.connections[0];
+                    let minD = Infinity;
+                    r.connections.forEach(cid => {
+                        const rm = game.rooms.find(x => x.id === cid);
+                        if (rm) {
+                            const d = Math.hypot(rm.gx - tx, rm.gy - tz);
+                            if (d < minD) { minD = d; closestId = cid; }
+                        }
+                    });
+                    game.currentRoomIdx = closestId;
+                }
+            }
+        }
+        return;
+    }
+    if (choice === 'gift') {
+        // Give 1 random common item (Cost < 40)
+        const pool = [...ITEM_DATA.filter(i => i.cost < 40), ...ARMOR_DATA.filter(a => a.cost < 40)];
+        const item = pool[Math.floor(Math.random() * pool.length)];
+        const gift = { ...item, type: item.ap ? 'armor' : 'item' };
+        
+        if (addToBackpack(gift)) {
+            logMsg(`Manor Gift: Received ${gift.name}.`);
+            spawnFloatingText("GIFT RECEIVED", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+        } else {
+            logMsg("Backpack full! Gift lost.");
+            spawnFloatingText("FULL!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+        }
+        
+        game.activeRoom.state = 'cleared';
+        window.updateUI();
+        closeCombat();
+        sinkManor(game.activeRoom);
+        return;
+    }
+    if (choice === 'shop') {
+        showBrokerShop();
+    }
+};
+
+let shopMode = 'buy'; // 'buy' or 'sell'
+let shopInventory = []; // Generated items for this session
+
+window.showBrokerShop = function() {
+    const overlay = document.getElementById('combatModal');
+    const enemyArea = document.getElementById('enemyArea');
+    const trapUI = document.getElementById('trapUI');
+    
+    if (trapUI) trapUI.style.display = 'none';
+    overlay.style.display = 'flex';
+    document.getElementById('combatContainer').style.display = 'flex';
+    document.getElementById('bonfireUI').style.display = 'none';
+
+    // Generate Shop Inventory if empty (8 items, Uncommon+)
+    if (shopInventory.length === 0) {
+        const pool = [...ARMOR_DATA.map(a => ({...a, type:'armor'})), ...ITEM_DATA.map(i => ({...i, type:'item'})), ...CURSED_ITEMS];
+        // Filter for better items (Cost > 30)
+        const betterPool = pool.filter(i => i.cost >= 30);
+        shuffle(betterPool);
+        shopInventory = betterPool.slice(0, 8);
+    }
+
+    shopMode = 'buy';
+    renderShopUI();
+};
+
+window.toggleShopMode = function() {
+    shopMode = (shopMode === 'buy') ? 'sell' : 'buy';
+    renderShopUI();
+};
+
+function renderShopUI() {
+    const enemyArea = document.getElementById('enemyArea');
+    enemyArea.innerHTML = '';
+    enemyArea.className = 'enemy-area'; // Reset layout classes
+    
+    // Header & Controls
+    const header = document.createElement('div');
+    header.style.cssText = "width:100%; text-align:center; margin-bottom:10px; display:flex; flex-direction:column; align-items:center; gap:5px;";
+    header.innerHTML = `
+        <div style="font-family:'Cinzel'; font-size:2rem; color:#d4af37;">THE SOUL BROKER</div>
+        <div style="color:#fff; font-size:1.2rem;">Soul Coins: <span style="color:#ffd700; font-weight:bold;">${game.soulCoins}</span></div>
+        <div style="display:flex; gap:10px; margin-top:5px;">
+            <button class="v2-btn" onclick="window.toggleShopMode()" style="padding:5px 15px; font-size:0.9rem;">${shopMode === 'buy' ? 'Switch to SELL' : 'Switch to BUY'}</button>
+            <button class="v2-btn" onclick="window.handleManorChoice('leave')" style="padding:5px 15px; font-size:0.9rem; background:#444;">Leave Manor</button>
+        </div>
+    `;
+    enemyArea.appendChild(header);
+
+    // Grid Container
+    const grid = document.createElement('div');
+    grid.style.cssText = "display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; width:100%; max-width:800px; justify-items:center;";
+    enemyArea.appendChild(grid);
+
+    if (shopMode === 'buy') {
+        shopInventory.forEach(item => {
+            const card = createShopCard(item, false);
+            grid.appendChild(card);
+        });
+    } else {
+        // Sell Mode: Show Weapon, Hotbar, Backpack
+        if (game.equipment.weapon) {
+            const card = createShopCard(game.equipment.weapon, true, 'equipment', 'weapon');
+            grid.appendChild(card);
+        }
+        game.hotbar.forEach((item, idx) => {
+            if (item) {
+                const card = createShopCard(item, true, 'hotbar', idx);
+                grid.appendChild(card);
+            }
+        });
+        game.backpack.forEach((item, idx) => {
+            if (item) {
+                const card = createShopCard(item, true, 'backpack', idx);
+                grid.appendChild(card);
+            }
+        });
+        
+        const hasItems = game.equipment.weapon || game.hotbar.some(i=>i) || game.backpack.some(i=>i);
+        if (!hasItems) {
+            grid.innerHTML = `<div style="grid-column:1/-1; color:#aaa; font-style:italic; margin-top:20px;">You have nothing to sell.</div>`;
+        }
+    }
+
+    // Merchant Portrait
+    const mp = ensureMerchantPortrait();
+    mp.innerHTML = `<img src="assets/images/visualnovel/soulbroker.png">`;
+    mp.style.display = 'flex';
+    requestAnimationFrame(updateMerchantPortraitPosition);
+}
+
+function createShopCard(item, isSell, source, idx) {
+    const card = document.createElement('div');
+    card.className = 'card shop-item';
+    // Smaller card for 8-grid
+    card.style.width = '140px';
+    card.style.height = '200px';
+    
+    const discount = (game.classId === 'bard') ? 0.8 : 1.0;
+    // Default cost to 0 if undefined (e.g. starter weapons). Enforce min sell price of 10.
+    const baseCost = item.cost || 0;
+    const price = isSell ? Math.max(10, Math.floor(baseCost * 0.5)) : Math.floor(baseCost * discount);
+    
+    const asset = getAssetData(item.type, item.id || item.val, null);
+    const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
+    const bgSize = `${asset.sheetCount * 100}% 100%`;
+    const bgPos = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
+
+    card.innerHTML = `
+        <div class="card-art-container" style="background-image: url('assets/images/${asset.file}'); background-size: ${bgSize}; background-position: ${bgPos}; ${tint}"></div>
+        <div class="name" style="bottom: 30px; font-size: 12px; ${item.isCursed ? 'color:#adff2f;' : ''}">${item.name}</div>
+        <div class="val" style="font-size: 14px; color: ${isSell ? '#00ff00' : '#ffd700'}; bottom:5px; position:absolute; width:100%; text-align:center;">${price}</div>
+    `;
+
+    card.onclick = () => {
+        if (isSell) {
+            // Sell Logic
+            if (source === 'equipment') game.equipment.weapon = null;
+            else if (source === 'hotbar') game.hotbar[idx] = null;
+            else if (source === 'backpack') game.backpack[idx] = null;
+
+            game.soulCoins += price;
+            spawnFloatingText(`+${price}`, window.innerWidth/2, window.innerHeight/2, '#ffd700');
+            audio.play('card_flip', { volume: 0.5 });
+            renderShopUI();
+            window.updateUI();
+        } else {
+            // Buy Logic
+            if (game.soulCoins >= price) {
+                if (getFreeBackpackSlot() === -1) {
+                    spawnFloatingText("Backpack Full!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+                    return;
+                }
+                game.soulCoins -= price;
+                addToBackpack(item);
+                spawnFloatingText("BOUGHT!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+                audio.play('card_flip', { volume: 0.5 });
+                
+                // Mark room cleared on purchase
+                game.activeRoom.state = 'cleared';
+                renderShopUI();
+                window.updateUI();
+            } else {
+                spawnFloatingText("Not enough coins!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+            }
+        }
+    };
+    return card;
 }
 
 function startBossFight() {
@@ -4258,7 +4449,7 @@ function showCombat() {
         controls.update();
     }
 
-    window.updateUI();
+    updateUI();
 }
 
 function getBestCombatOrientation(anchorX, anchorZ) {
@@ -4494,9 +4685,9 @@ function spawn3DProjectile(startPos, targetPos, val) {
     let texName = 'flame_01.png';
     let color = 0xffaa00;
 
-    if (val === 'rock') {
-        texName = 'circle_03.png';
-        color = 0x888888;
+    if (val === 'rock') { 
+        texName = 'circle_03.png'; 
+        color = 0x888888; 
     }
     else if (val === 3) { texName = 'spark_06.png'; color = 0x00ffff; } // Ice
     else if (val === 4) { texName = 'smoke_05.png'; color = 0x00ff00; } // Poison
@@ -4640,7 +4831,7 @@ function pickCard(idx, event) {
                 game.hp += heal;
                 logMsg(`Inventory full! Drank ${card.name} (+${heal} HP).`);
             }
-            window.updateUI(); // Immediate UI refresh
+            updateUI(); // Immediate UI refresh
             break;
         case 'gift':
             const gift = card.actualGift;
@@ -4655,7 +4846,7 @@ function pickCard(idx, event) {
                 // Mimic dies after biting, dropping nothing (or maybe standard coins?)
                 game.activeRoom.state = 'cleared';
                 game.combatCards = [];
-                window.updateUI();
+                updateUI();
                 finishRoom();
                 return;
             }
@@ -4711,7 +4902,7 @@ function pickCard(idx, event) {
 
             game.activeRoom.state = 'cleared';
             game.combatCards = []; // Clear other gift options
-            window.updateUI();
+            updateUI();
             finishRoom(); // Closes modal with victory message
             return;
         case 'bonfire':
@@ -4724,7 +4915,7 @@ function pickCard(idx, event) {
 
             game.bonfireUsed = true;
             game.activeRoom.restRemaining--;
-            window.updateUI();
+            updateUI();
             audio.stopLoop(`bonfire_${game.activeRoom.id}`); // Stop sound if cleared
 
             // Special exit for bonfire: don't call finishRoom unless out of rests
@@ -4743,7 +4934,7 @@ function pickCard(idx, event) {
     game.combatCards.splice(idx, 1);
 
     showCombat(); // Just refresh the view
-    window.updateUI();
+    updateUI();
 }
 
 function finishRoom() {
@@ -4817,7 +5008,7 @@ function finishRoom() {
             return;
         }
 
-        window.updateUI(); // Update coins etc
+        updateUI(); // Update coins etc
 
         setTimeout(startIntermission, 2000);
         return;
@@ -4918,7 +5109,7 @@ function finishRoom() {
         }
     }
     updateRoomVisuals();
-    window.updateUI();
+    updateUI();
 }
 
 function avoidRoom() {
@@ -4952,7 +5143,7 @@ function closeCombat() {
     if (use3dModel) {
         exitCombatView();
     }
-    window.updateUI(); // Ensure HUD reappears
+    updateUI(); // Ensure HUD reappears
 }
 window.closeCombat = closeCombat; // Expose for onClick events
 
@@ -4995,11 +5186,11 @@ window.handleBonfire = function (cost) {
         room.state = 'cleared';
         logMsg("The fire fades.");
         audio.stopLoop(`bonfire_${room.id}`);
-        window.updateUI(); // Update HP display before closing
+        updateUI(); // Update HP display before closing
         closeCombat();
     } else {
         updateBonfireUI();
-        window.updateUI();
+        updateUI();
     }
 };
 
@@ -5093,7 +5284,7 @@ window.handleTrap = function (action) {
         logMsg("You unlocked the mechanism.");
     }
     game.activeRoom.state = 'cleared';
-    window.updateUI();
+    updateUI();
     closeCombat();
 };
 
@@ -5128,7 +5319,7 @@ window.useItem = function (idx) {
         spawnFloatingText(`+${heal} HP`, window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
         logMsg(`Used ${item.name}.`);
         game.hotbar[idx] = null;
-        window.updateUI();
+        updateUI();
         return;
     }
 
@@ -5148,7 +5339,7 @@ window.useItem = function (idx) {
                 logMsg(`Bomb hit ${target.name} for ${dmg} dmg.`);
                 if (!saveItem) game.hotbar[idx] = null;
                 else logMsg("Conservation: Bomb saved!");
-                window.updateUI();
+                updateUI();
                 showCombat(); // Refresh cards
             }
         }
@@ -5158,7 +5349,7 @@ window.useItem = function (idx) {
             avoidRoom();
             if (!saveItem) game.hotbar[idx] = null;
             else logMsg("Conservation: Key saved!");
-            window.updateUI();
+            updateUI();
         }
     } else if (item.id === 4) { // Hourglass
         // Reshuffle room logic would go here, complex to implement cleanly without deck manipulation
@@ -5170,7 +5361,7 @@ window.useItem = function (idx) {
         });
         if (!saveItem) game.hotbar[idx] = null;
         else logMsg("Conservation: Music Box saved!");
-        window.updateUI();
+        updateUI();
         showCombat();
     }
 };
@@ -5588,8 +5779,8 @@ window.applyAndSaveProfile = function (profileName) {
     saveSettings();
 };
 
-window.resetSettings = function () {
-    if (!confirm("Reset all graphics and audio settings to default?")) return;
+window.resetSettings = function() {
+    if(!confirm("Reset all graphics and audio settings to default?")) return;
     localStorage.removeItem('scoundrelSettings');
     location.reload();
 };
@@ -5832,24 +6023,24 @@ function showBenchmarkModal(fps) {
 let currentHelpSlide = 0;
 const helpSlides = [
     {
-        title: "Navigation & Exploration",
+        title: "Navigation",
         img: "assets/images/help/help_map.png",
-        text: "Click on adjacent nodes or Room Cards to move. Waypoints (spheres) are safe spots, but Room Cards trigger encounters with monsters, items, or mysterious events!"
+        text: "Click on adjacent rooms or waypoints to move. You must clear a room (defeat monsters or use items) to pass through it safely. Waypoints (small spheres) are safe spots between rooms."
     },
     {
-        title: "Clash-Based Combat",
+        title: "The Room Encounter",
         img: "assets/images/help/help_combat.png",
-        text: "Combat is resolved with <b>Clashes</b>. You and the enemy roll dice based on your <b>Power</b> (Stat + Weapon). The highest roll wins! If the winner's total beats the loser's <b>AC</b> (Armor Class), they deal damage. Successful hits always deal at least 1 damage."
+        text: "When you enter a room, you are dealt 4 cards. You must choose 3 to clear the room. The last card is carried over to the next room. Choose wisely to manage your health and resources."
     },
     {
-        title: "Vitals: HP and AP",
-        img: "assets/images/help/help_vitals.png",
-        text: "<b>Health (HP)</b> is governed by your Strength. <b>Armor (AP)</b> builds a protective pool that absorbs damage before your health is hit. Every piece of equipped armor also grants a permanent <b>Protection Floor</b> that blocks damage every hit!"
+        title: "Combat & Weapons",
+        img: "assets/images/help/help_weapon.png",
+        text: "Monsters deal damage equal to their value (J=11, Q=12, K=13, A=14). If you have a Weapon, you take damage = (Monster - Weapon). If Weapon >= Monster, you take 0 damage. However, killing a monster weaker than your last kill limits your weapon's max damage for the next fight."
     },
     {
-        title: "Inventory & Skills",
+        title: "Items & Inventory",
         img: "assets/images/help/help_items.png",
-        text: "Use your Hotbar for quick access to potions and class-specific <b>Skills</b>. Open the Inventory to equip gear, manage your backpack, or sell junk items for Soul Coins and Torch Fuel."
+        text: "Potions heal HP. Items in your backpack can be used at any time. Drag items to the 'Sell' slot to gain Soul Coins and Torch Fuel. Keep your torch lit to see further!"
     }
 ];
 
@@ -6089,7 +6280,7 @@ function loadGame() {
     // Start Audio
     updateMusicForFloor();
 
-    window.updateUI();
+    updateUI();
     logMsg("Game Loaded.");
 
     // If loaded into a room that isn't cleared, trigger it
@@ -6497,7 +6688,7 @@ window.blastLock = function () {
         logMsg("Smashed the lock mechanism! (5 Damage taken)");
     }
     takeDamage(5);
-    window.updateUI();
+    updateUI();
 
     if (game.hp > 0) {
         document.getElementById('lockpickUI').style.display = 'none';
@@ -6566,12 +6757,12 @@ function hideLoading() {
     if (loader) loader.style.display = 'none';
 }
 
-window.enterTrueDungeon = function () {
+window.enterTrueDungeon = function() {
     closeCombat();
-
+    
     // Roll for Duck Dungeon (10% Chance)
     const isDuck = Math.random() < 0.1;
-
+    
     if (isDuck) {
         showLoading("What the Duck?!", "assets/images/quack.png");
     } else {
@@ -6601,7 +6792,7 @@ window.enterTrueDungeon = function () {
         game.inTrueDungeon = true;
         game.inDuckDungeon = isDuck;
         game.floor = isDuck ? 100 : 99; // 100 = Duck, 99 = Cursed
-
+        
         // Apply Benchmark Math ONLY for True Dungeon
         const fps = gameSettings.benchmarkFPS || 30;
         let roomCount = Math.max(8, Math.floor(fps / 3)); // Reduced room count (FPS / 3)
@@ -6630,7 +6821,7 @@ window.enterTrueDungeon = function () {
                 game.ducksToFind++;
             }
         }
-
+        
         // 3. Re-init Scene
         clear3DScene();
         init3D();
@@ -6642,17 +6833,17 @@ window.enterTrueDungeon = function () {
         updateAtmosphere(game.floor); // Will use floor 99 or 100 theme
         initWanderers();
 
-        window.updateUI();
+        updateUI();
         logMsg(isDuck ? "Collect all the ducks!" : "You have entered the Cursed Realm.");
-
+        
         hideLoading();
         enterRoom(0);
     }, 100);
 };
 
-window.exitTrueDungeon = function () {
+window.exitTrueDungeon = function() {
     logMsg("Escaping the Cursed Realm...");
-
+    
     // 1. Restore State
     game.inTrueDungeon = false;
     game.inDuckDungeon = false;
@@ -6683,12 +6874,12 @@ window.exitTrueDungeon = function () {
         room.isLocked = false;
         room.state = 'cleared';
         // Maybe give a reward here?
-        spawnFloatingText("CURSE BROKEN", window.innerWidth / 2, window.innerHeight / 2, '#d4af37');
+        spawnFloatingText("CURSE BROKEN", window.innerWidth/2, window.innerHeight/2, '#d4af37');
         logMsg("The Cursed Chest opens. (Reward pending)");
     }
 
     savedMapState = null;
-    window.updateUI();
+    updateUI();
 };
 
 // --- POTION MINIGAME ---
@@ -6869,7 +7060,7 @@ window.checkPotion = function () {
                 logMsg(`Brewed ${potionItem.name}. Inventory full, drank immediately.`);
             }
 
-            if (potionState.room) { potionState.room.state = 'cleared'; window.updateUI(); }
+            if (potionState.room) { potionState.room.state = 'cleared'; updateUI(); }
         }, 1000);
     } else {
         feedback.innerText = "The mixture is unstable... (Too far)";
@@ -6995,7 +7186,7 @@ window.handleShrine = function (action) {
     }
 
     game.activeRoom.state = 'cleared';
-    window.updateUI();
+    updateUI();
     closeCombat();
 };
 
@@ -7560,7 +7751,7 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
-
+    
     const drawNum = (n) => {
         ctx.clearRect(0, 0, 64, 64);
         ctx.fillStyle = 'white';
@@ -7594,7 +7785,7 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
         const tex2 = new THREE.CanvasTexture(canvas2);
         const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex2, transparent: true }));
         labelSprite.scale.set(2, 0.5, 1);
-
+        
         labelSprite.position.copy(spawnPos).add(new THREE.Vector3(0, 0.8, 0));
         scene.add(labelSprite);
         dice.userData.nameLabel = labelSprite;
@@ -7613,9 +7804,9 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
             // Show Number Result
             drawNum(finalValue);
             tex.needsUpdate = true;
-
+            
             // Pop effect
-            new TWEEN.Tween(dice.scale).to({ x: 1.3, y: 1.3, z: 1.3 }, 150).yoyo(true).repeat(1).start();
+            new TWEEN.Tween(dice.scale).to({x: 1.3, y: 1.3, z: 1.3}, 150).yoyo(true).repeat(1).start();
 
             // Cleanup
             setTimeout(() => {
@@ -7679,7 +7870,7 @@ function spawnLootDrop(pos) {
         .start();
 
     spawnFloatingText("LOOT DROPPED!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
-
+    
     // Log with icon
     const iconHtml = `<div style="display:inline-block; width:24px; height:24px; vertical-align:middle; margin-right:8px; background:url('assets/images/${asset.file}'); background-size:${asset.sheetCount * 100}% 100%; background-position:${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%;"></div>`;
     logCombat(`${iconHtml} Dropped ${sprite.userData.item.name} & ${soulCoins} Coins!`, '#ffd700');
@@ -7702,7 +7893,7 @@ function claimLoot(sprite) {
         logMsg("Backpack full! Loot discarded.");
         spawnFloatingText("FULL!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
     }
-    window.updateUI(); // Update coin display
+    updateUI(); // Update coin display
     setTimeout(() => window.exitBattleIsland(), 500);
 }
 
@@ -7713,7 +7904,7 @@ function logCombat(msg, color = '#ccc') {
         entry.style.cssText = "margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid rgba(212, 175, 55, 0.15); text-shadow: 0 1px 2px #000; line-height: 1.3;";
         entry.innerHTML = `<span style="color:${color}; font-weight: 500;">${msg}</span>`;
         log.prepend(entry);
-
+        
         if (log.children.length > 8) {
             log.removeChild(log.lastChild);
         }
@@ -7723,7 +7914,7 @@ function logCombat(msg, color = '#ccc') {
 function updateMovementIndicator() {
     if (!movementRangeIndicator) return;
     const isPlayerTurn = isCombatView && combatState.turn === 'player';
-
+    
     if (isPlayerTurn && combatState.currentMove > 0.5) {
         movementRangeIndicator.visible = true;
         movementRangeIndicator.scale.setScalar(combatState.currentMove);
@@ -7811,12 +8002,12 @@ window.commandSkill = function () {
     const skill = cData.skills[0];
     combatState.activeSkill = skill;
     combatState.isTargeting = true;
-
+    
     spawnFloatingText(`${skill.name.toUpperCase()}`, window.innerWidth / 2, window.innerHeight / 2 - 150, '#00ffff');
     logMsg(`Skill selected: ${skill.name}. Select target.`);
 };
 
-window.commandGuts = function () {
+window.commandGuts = function() {
     if (combatState.turn !== 'player') return;
     if (combatState.gutsStacks >= 2) {
         logMsg("Guts power is already at maximum!");
@@ -7829,7 +8020,7 @@ window.commandGuts = function () {
     }
 
     combatState.turn = 'busy';
-
+    
     // Show charging text
     const chargeText = combatState.gutsStacks === 0 ? "Player is charging Guts!" : "Player increases Guts charge!";
     spawnFloatingText(chargeText, window.innerWidth / 2, window.innerHeight / 2 + 50, '#ffaa00');
@@ -7837,7 +8028,7 @@ window.commandGuts = function () {
     const playerStr = (game.stats.str || 1);
     const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 1;
     const randomBonus = DiceRoller.roll(playerStr);
-
+    
     // Add to existing charge if stacking
     combatState.gutsCharge += playerStr + weaponVal + randomBonus;
     combatState.gutsStacks++;
@@ -7851,7 +8042,7 @@ window.commandGuts = function () {
     setTimeout(startEnemyTurn, 500);
 };
 
-window.commandShove = function () {
+window.commandShove = function() {
     if (combatState.turn !== 'player') return;
     if (!combatState.canAttack) {
         logMsg("Cannot Shove after Dashing.");
@@ -7863,7 +8054,7 @@ window.commandShove = function () {
     logMsg("Select target to Shove.");
 };
 
-window.commandFeint = function () {
+window.commandFeint = function() {
     if (combatState.turn !== 'player') return;
     if (!combatState.canAttack) {
         logMsg("Cannot Feint after Dashing.");
@@ -7875,17 +8066,17 @@ window.commandFeint = function () {
     logMsg("Select target to Feint.");
 };
 
-window.commandDash = function () {
+window.commandDash = function() {
     if (combatState.turn !== 'player') return;
     if (combatState.isDashing) {
         logMsg("Already dashed this turn.");
         return;
     }
-
+    
     combatState.isDashing = true;
     combatState.canAttack = false;
     combatState.currentMove += combatState.maxMove;
-
+    
     spawnFloatingText("DASH!", window.innerWidth / 2, window.innerHeight / 2, '#00ffff');
     logMsg("Dashed! Movement increased. Attack disabled.");
     updateMovementIndicator();
@@ -7894,7 +8085,7 @@ window.commandDash = function () {
 
 function executePlayerSkill(target) {
     if (!combatState.activeSkill) return;
-
+    
     const skill = combatState.activeSkill;
     combatState.isTargeting = false;
     combatState.turn = 'busy';
@@ -7902,7 +8093,7 @@ function executePlayerSkill(target) {
     combatState.activeSkill = null;
 
     logMsg(`Used ${skill.name}!`);
-
+    
     // Animation
     if (use3dModel && actions.attack) {
         actions.attack.reset().play();
@@ -7918,14 +8109,14 @@ function executePlayerSkill(target) {
             // +3 Power
             const str = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1) + 3;
             const res = CombatResolver.resolveClash(str, 4, 10, target.stats.ac || 10);
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Power Strike", () => { });
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Power Strike", () => {});
             if (res.attacker.total > res.defender.total) {
                 damage = res.damage;
                 msg = `Power Strike hits for ${damage}!`;
             } else {
                 msg = "Power Strike missed!";
             }
-        }
+        } 
         else if (skill.id === 'cheap_shot') { // Rogue
             const hpPct = target.stats.hp / target.stats.maxHp;
             if (hpPct < 0.5) {
@@ -7941,13 +8132,13 @@ function executePlayerSkill(target) {
             damage = Math.floor(Math.random() * 8) + 1; // 1d8
             msg = `Eldritch Blast deals ${damage} magic dmg!`;
             color = '#aa00ff';
-            spawnAboveModalTexture('twirl_01.png', window.innerWidth / 2, window.innerHeight / 2, 10, { tint: '#aa00ff', blend: 'lighter' });
+            spawnAboveModalTexture('twirl_01.png', window.innerWidth/2, window.innerHeight/2, 10, { tint:'#aa00ff', blend:'lighter' });
         }
         else if (skill.id === 'smite') { // Priest
             damage = 2;
             game.hp = Math.min(game.maxHp, game.hp + 2);
             msg = `Smite! 2 Dmg, +2 HP.`;
-            spawnFloatingText("+2 HP", window.innerWidth / 2, window.innerHeight / 2 + 50, '#00ff00');
+            spawnFloatingText("+2 HP", window.innerWidth/2, window.innerHeight/2 + 50, '#00ff00');
         }
         else if (skill.id === 'holy_bash') { // Paladin
             damage = (game.equipment.weapon ? game.equipment.weapon.val : 1);
@@ -7959,23 +8150,23 @@ function executePlayerSkill(target) {
             const playerStr = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1);
             const enemyStr = (target.stats.str || 1) + 4;
             const res = CombatResolver.resolveClash(playerStr, enemyStr, 0, 0); // No AC
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Shove", () => { });
-
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Shove", () => {});
+            
             if (res.attacker.total > res.defender.total) {
                 msg = "Shove successful!";
-                spawnFloatingText("SHOVED!", window.innerWidth / 2, window.innerHeight / 2, '#ffffff');
+                spawnFloatingText("SHOVED!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
                 // Push Logic
                 const pushDir = new THREE.Vector3().subVectors(target.mesh.position, (use3dModel ? playerMesh : playerSprite).position).normalize();
                 pushDir.y = 0;
                 const newPos = target.mesh.position.clone().add(pushDir.multiplyScalar(1.5)); // Push 1.5m
-
+                
                 new TWEEN.Tween(target.mesh.position)
                     .to({ x: newPos.x, z: newPos.z }, 300)
                     .easing(TWEEN.Easing.Cubic.Out)
                     .start();
             } else {
                 msg = "Shove failed.";
-                spawnFloatingText("RESISTED", window.innerWidth / 2, window.innerHeight / 2, '#aaa');
+                spawnFloatingText("RESISTED", window.innerWidth/2, window.innerHeight/2, '#aaa');
             }
         }
         else if (skill.id === 'feint') {
@@ -7983,8 +8174,8 @@ function executePlayerSkill(target) {
             const playerDex = (game.stats.dex || 1) + 2;
             const enemyWis = (target.stats.str || 1) + 2;
             const res = CombatResolver.resolveClash(playerDex, enemyWis, 0, 0);
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Feint", () => { });
-
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Feint", () => {});
+            
             if (res.attacker.total > res.defender.total) {
                 msg = "Feint successful! Next attack crits.";
                 combatState.isPlayerFlank = true; // Reuse flank logic for 1.5x dmg
@@ -8004,9 +8195,9 @@ function executePlayerSkill(target) {
             if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
             if (target.actions && target.actions.hit) target.actions.hit.reset().play();
         }
-
+        
         logCombat(msg, color);
-        window.updateUI();
+        updateUI();
         checkCombatEnd(target);
     }, 600);
 }
@@ -8021,15 +8212,15 @@ function executePlayerAttack(target) {
         const damage = combatState.gutsCharge;
         logCombat(`Unleashing GUTS STRIKE for ${damage} damage!`, '#ffaa00');
         spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ffaa00');
-
+        
         target.stats.hp -= damage;
-
+        
         // Reset Guts state
         combatState.gutsCharge = 0;
         combatState.gutsStacks = 0;
 
         // Update UI and check for end of combat
-        window.updateUI();
+        updateUI();
         if (target.healthBar) {
             target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
         }
@@ -8047,53 +8238,53 @@ function executePlayerAttack(target) {
     // 1.5 Range Check & Throw Rock Logic
     const playerObj = use3dModel ? playerMesh : playerSprite;
     const dist = playerObj.position.distanceTo(target.mesh.position);
-
+    
     const isSpell = game.equipment.weapon && game.equipment.weapon.isSpell;
     const maxRange = isSpell ? 5.0 : 1.5; // 1.5 melee (1.0 ring + buffer)
-
+    
     if (dist > maxRange) {
         if (isSpell) {
             logMsg("Target out of range!");
-            spawnFloatingText("TOO FAR", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+            spawnFloatingText("TOO FAR", window.innerWidth/2, window.innerHeight/2, '#ff0000');
             combatState.isTargeting = false;
             combatState.turn = 'player'; // Refund turn
             return;
         } else {
             // Throw Rock Logic
             logMsg("Too far for melee! Throwing rock...");
-            spawnFloatingText("THROW ROCK", window.innerWidth / 2, window.innerHeight / 2 - 100, '#aaaaaa');
-
+            spawnFloatingText("THROW ROCK", window.innerWidth/2, window.innerHeight/2 - 100, '#aaaaaa');
+            
             // Spawn Rock Projectile
             spawn3DProjectile(playerObj.position, target.mesh.position, 'rock');
-
+            
             setTimeout(() => {
                 // Rock Mechanics: DEX + 1 vs Enemy Power
                 const playerDex = game.stats.dex || 1;
                 const rockPower = playerDex + 1;
                 const enemyStr = target.stats.str || 1;
                 const enemyPower = enemyStr + 4; // Standard enemy power
-
+                
                 const res = CombatResolver.resolveClash(rockPower, enemyPower, 0, target.stats.ac || 10);
-
-                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xaaaaaa, { x: -1.5, y: -0.5 }, "Rock", () => { });
+                
+                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xaaaaaa, { x: -1.5, y: -0.5 }, "Rock", () => {});
                 spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name, () => {
-
+                    
                     if (res.attacker.total > res.defender.total) {
                         // Hit - Fixed 1d4 damage
                         const dmg = DiceRoller.roll(4);
                         target.stats.hp -= dmg;
-                        spawnFloatingText(`-${dmg}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
+                        spawnFloatingText(`-${dmg}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
                         logCombat(`Rock hits! ${dmg} dmg.`, '#fff');
-
+                        
                         if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
                         if (target.actions && target.actions.hit) target.actions.hit.reset().play();
                     } else {
                         // Miss
-                        spawnFloatingText("MISSED", window.innerWidth / 2, window.innerHeight / 2, '#aaa');
+                        spawnFloatingText("MISSED", window.innerWidth/2, window.innerHeight/2, '#aaa');
                         logCombat("Rock missed.", '#aaa');
                     }
-
-                    window.updateUI();
+                    
+                    updateUI();
                     checkCombatEnd(target);
                 });
             }, 600);
@@ -8136,7 +8327,7 @@ function executePlayerAttack(target) {
         if (result.winner === 'attacker') {
             // Critical Hit Check
             const isCrit = (result.attacker.roll === result.attacker.config.sides);
-
+            
             // --- NEW FLANKING BONUS ---
             if (combatState.isPlayerFlank) {
                 const originalDamage = result.damage;
@@ -8147,9 +8338,9 @@ function executePlayerAttack(target) {
                     logCombat(`Flank attack! (+${bonus} Dmg)`, '#ffd700');
                     spawnFloatingText("BACKSTAB!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
                 }
-
+                
                 // Bonus only applies to the first attack of the combat encounter.
-                combatState.isPlayerFlank = false;
+                combatState.isPlayerFlank = false; 
             }
             // --- END FLANKING BONUS ---
 
@@ -8157,8 +8348,8 @@ function executePlayerAttack(target) {
                 spawnFloatingText("CRITICAL!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
                 triggerShake(20, 30); // Intense shake
                 // Spawn extra particles
-                spawnAboveModalTexture('spark_01.png', window.innerWidth / 2, window.innerHeight / 2, 30, {
-                    tint: '#ffd700', blend: 'lighter', sizeRange: [20, 60], spread: 80, decay: 0.03
+                spawnAboveModalTexture('spark_01.png', window.innerWidth/2, window.innerHeight/2, 30, { 
+                    tint: '#ffd700', blend: 'lighter', sizeRange: [20, 60], spread: 80, decay: 0.03 
                 });
             }
 
@@ -8193,7 +8384,7 @@ function executePlayerAttack(target) {
             logCombat(`Clash! Both rolled ${result.attacker.total}`, '#aaa');
         }
 
-        window.updateUI();
+        updateUI();
 
         checkCombatEnd(target);
     });
@@ -8202,11 +8393,11 @@ function executePlayerAttack(target) {
 function checkCombatEnd(target) {
     if (target.stats.hp <= 0) {
         logCombat("Enemy defeated!", '#ffd700');
-
+        
         // Add Trophy (Power = Str + 4)
         const power = (target.stats.str || 1) + 4;
         game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: target.name });
-
+        
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
         setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
     } else if (game.hp <= 0) {
@@ -8263,9 +8454,9 @@ function startEnemyTurn() {
     const canUseGuts = (enemy.stats.gutsStacks || 0) < 2;
     // 30% chance to use Guts if far away and healthy
     if (canUseGuts && dist > attackRange * 2 && hpPct > 0.5 && Math.random() < 0.3) {
-        spawnFloatingText(`${enemy.name} is charging Guts!`, window.innerWidth / 2, window.innerHeight / 2 + 50, '#ffaa00');
+        spawnFloatingText(`${enemy.name} is charging Guts!`, window.innerWidth/2, window.innerHeight/2 + 50, '#ffaa00');
         logCombat(`${enemy.name} is gathering power!`, '#ffaa00');
-        spawnFloatingText("GUTS!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+        spawnFloatingText("GUTS!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
 
         if (!enemy.stats.gutsCharge) enemy.stats.gutsCharge = 0;
         if (!enemy.stats.gutsStacks) enemy.stats.gutsStacks = 0;
@@ -8283,39 +8474,39 @@ function startEnemyTurn() {
     // Flee if HP < 15% and NOT in True Dungeon (no escape there)
     if (hpPct <= 0.15 && !game.inTrueDungeon) {
         logMsg(`${enemy.name} is trying to escape!`);
-        spawnFloatingText("FLEEING!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
-
+        spawnFloatingText("FLEEING!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
+        
         // Calculate flee target (away from center)
         const center = new THREE.Vector3(2000, 2000, 2000);
         const dirFromCenter = new THREE.Vector3().subVectors(enemy.mesh.position, center).normalize();
         dirFromCenter.y = 0;
-
+        
         // Target edge (radius ~25)
         const fleeTarget = center.clone().add(dirFromCenter.multiplyScalar(25));
-
+        
         // Dash speed for enemy (Double standard 6.0)
-        const dashSpeed = 12.0;
-
+        const dashSpeed = 12.0; 
+        
         enemy.mesh.lookAt(fleeTarget);
         if (enemy.actions.walk) enemy.actions.walk.play();
         if (enemy.actions.idle) enemy.actions.idle.stop();
-
+        
         const distToEdge = enemy.mesh.position.distanceTo(fleeTarget);
         const moveDist = Math.min(distToEdge, dashSpeed);
-
+        
         const targetPos = enemy.mesh.position.clone().add(dirFromCenter.multiplyScalar(moveDist));
 
         new TWEEN.Tween(enemy.mesh.position)
             .to({ x: targetPos.x, z: targetPos.z }, 1000)
             .easing(TWEEN.Easing.Quadratic.Out)
             .onUpdate(() => {
-                // Snap Y logic handled by existing raycaster if needed, or assume flat for flee
+                 // Snap Y logic handled by existing raycaster if needed, or assume flat for flee
             })
             .onComplete(() => {
                 const dist = enemy.mesh.position.distanceTo(center);
                 if (dist > 20) {
                     logMsg(`${enemy.name} escaped!`);
-                    spawnFloatingText("ESCAPED", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+                    spawnFloatingText("ESCAPED", window.innerWidth/2, window.innerHeight/2, '#ff0000');
                     window.exitBattleIsland(); // End combat without loot
                 } else {
                     endEnemyTurn();
@@ -8382,16 +8573,15 @@ function executeEnemyAttack(enemy) {
         // --- ENEMY GUTS ATTACK ---
         if (enemy.stats.gutsCharge > 0) {
             const damage = enemy.stats.gutsCharge;
-            const enemyName = enemy.name || "The Enemy";
-            logCombat(`${enemyName} unleashes its power for ${damage} damage!`, '#ff4400');
+            logCombat(`${enemy.name} unleashes its power for ${damage} damage!`, '#ff4400');
             spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff4400');
-
+            
             takeDamage(damage);
-
+            
             enemy.stats.gutsCharge = 0;
             enemy.stats.gutsStacks = 0;
 
-            window.updateUI();
+            updateUI();
             if (game.hp <= 0) {
                 gameOver();
             } else {
@@ -8431,7 +8621,7 @@ function executeEnemyAttack(enemy) {
                 spawnFloatingText("COUNTER!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for counter
                 enemy.stats.hp -= result.damage;
                 spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
-
+                
                 if (enemy.healthBar) {
                     const hpPercent = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
                     enemy.healthBar.scale.x = hpPercent;
@@ -8444,7 +8634,7 @@ function executeEnemyAttack(enemy) {
                 logCombat("Clash! No damage.", '#aaa');
             }
 
-            window.updateUI();
+            updateUI();
 
             if (game.hp <= 0) {
                 gameOver();
@@ -8560,7 +8750,7 @@ function handleEditClick(event) {
 
     for (let i = 0; i < intersects.length; i++) {
         let obj = intersects[i].object;
-
+        
         // Traverse up to find the GLB root (the object that has the configKey)
         let glbRoot = null;
         let curr = obj;
@@ -8702,13 +8892,13 @@ window.saveRoomConfig = function () {
     link.click();
 };
 
-window.spawnGallery = function () {
+window.spawnGallery = function() {
     console.log("Starting Gallery Mode for Configuration...");
     // Force edit mode off first to clean up UI
     if (isEditMode) editmap(false);
-
+    
     clear3DScene();
-
+    
     // Create a flat floor for the gallery
     const gallerySize = 100;
     const floorGeo = new THREE.PlaneGeometry(gallerySize * 2, gallerySize * 2);
@@ -8717,7 +8907,7 @@ window.spawnGallery = function () {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
-    globalFloorMesh = floor;
+    globalFloorMesh = floor; 
 
     // Add lights
     const amb = new THREE.AmbientLight(0xffffff, 0.8);
@@ -8738,16 +8928,16 @@ window.spawnGallery = function () {
     models.forEach((file) => {
         const path = `assets/images/glb/${file}`;
         const configKey = file;
-
+        
         // Create a placeholder parent
-        const parent = new THREE.Mesh(new THREE.BoxGeometry(1, 0.1, 1), new THREE.MeshBasicMaterial({ color: 0x444444, wireframe: true }));
+        const parent = new THREE.Mesh(new THREE.BoxGeometry(1,0.1,1), new THREE.MeshBasicMaterial({color: 0x444444, wireframe:true}));
         parent.position.set(x, 0, z);
         parent.userData = { roomId: 9000 + count }; // Fake ID to allow selection logic if needed
         scene.add(parent);
 
         loadGLB(path, (model) => {
             parent.add(model);
-
+            
             // Add label
             const canvas = document.createElement('canvas');
             canvas.width = 512; canvas.height = 64;
@@ -8757,7 +8947,7 @@ window.spawnGallery = function () {
             ctx.textAlign = 'center';
             ctx.fillText(file, 256, 40);
             const tex = new THREE.CanvasTexture(canvas);
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent:true}));
             sprite.position.set(0, 8, 0);
             sprite.scale.set(10, 1.25, 1);
             parent.add(sprite);
@@ -8776,7 +8966,7 @@ window.spawnGallery = function () {
     camera.position.set(0, 60, 60);
     controls.target.set(0, 0, 0);
     controls.update();
-
+    
     // Enable edit mode automatically
     setTimeout(() => editmap(true), 500);
 };
@@ -8807,3 +8997,64 @@ loadRoomConfig().then(() => {
     setupLayout();
     initAttractMode();
 });
+
+// --- DEBUG TOGGLE ---
+window.showVisuals = function(show) {
+    // Clear existing
+    debugHelpers.forEach(h => scene.remove(h));
+    debugHelpers = [];
+    
+    if (show) window.debugTriggerZones();
+};
+
+// --- DEBUG TOOLS ---
+window.debugTriggerZones = function() {
+    console.log("%c--- DEBUG TRIGGER ZONES ---", "color: #00ffff; font-weight: bold;");
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    
+    game.rooms.forEach(r => {
+        // Check markers
+        if (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret || r.isSpecial) {
+            const mesh = roomMeshes.get(r.id);
+            
+            // Logic Threshold
+            let threshold = 0.6;
+            if (r.isSpecial) threshold = ((Math.max(r.w, r.h) / 2) + 1.5) * 1.5;
+            
+            // Visuals
+            // 1. Logic Radius (Yellow Ring)
+            const ringGeo = new THREE.RingGeometry(threshold - 0.05, threshold, 32);
+            const ringMat = new THREE.MeshBasicMaterial({ color: 0xffff00, side: THREE.DoubleSide, depthTest: false });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = -Math.PI / 2;
+            ring.position.set(r.gx, 0.5, r.gy);
+            ring.renderOrder = 999;
+            scene.add(ring);
+            debugHelpers.push(ring);
+
+            // 2. Model Bounding Box (Red Box)
+            if (mesh) {
+                const box = new THREE.Box3().setFromObject(mesh);
+                const helper = new THREE.Box3Helper(box, 0xff0000);
+                scene.add(helper);
+                debugHelpers.push(helper);
+                
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                console.log(`Room ${r.id} [${r.isSpecial?'Special':''}]`);
+                console.log(`  > Logic Threshold: ${threshold.toFixed(2)}`);
+                console.log(`  > Model Size: ${size.x.toFixed(2)} x ${size.z.toFixed(2)}`);
+                if (playerObj) {
+                    const dist = playerObj.position.distanceTo(new THREE.Vector3(r.gx, 0, r.gy));
+                    console.log(`  > Dist to Player: ${dist.toFixed(2)}`);
+                }
+                
+                // 3. Extended Box (+0.4) (Cyan)
+                const expBox = box.clone().expandByScalar(0.4);
+                const expHelper = new THREE.Box3Helper(expBox, 0x00ffff);
+                scene.add(expHelper);
+                debugHelpers.push(expHelper);
+            }
+        }
+    });
+};

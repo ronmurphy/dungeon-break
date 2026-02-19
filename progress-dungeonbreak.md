@@ -46,7 +46,7 @@ Restored the classic "Dungeon Break" aesthetics and modernized the base stats to
     -   **Clarity:** Added "BLOCKED!" indicators and updated combat logs to distinguish between evasion and armor absorption.
 -   **Documentation:** Fully updated the "How to Play" guide to explain Clashes, AC, and the new Armor system.
 
-## 🎯 Phase 4: Depths of the Gilded Depths (Current Focus)- (no it's in progress: Brad (user))
+## 🎯 Phase 4: Depths of the Gilded Depths (Current Focus)
 
 Now that the foundation is rock-solid, we focus on depth and progression.
 

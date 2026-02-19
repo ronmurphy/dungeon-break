@@ -36,6 +36,34 @@ export function logMsg(m) {
     }
 }
 
+export function showManorPrompt() {
+    const overlay = document.getElementById('combatModal');
+    overlay.style.display = 'flex';
+    document.getElementById('combatContainer').style.display = 'none';
+    document.getElementById('bonfireUI').style.display = 'none';
+
+    let trapUI = document.getElementById('trapUI');
+    if (!trapUI) {
+        trapUI = document.createElement('div');
+        trapUI.id = 'trapUI';
+        document.body.appendChild(trapUI);
+    }
+    trapUI.style.display = 'flex';
+
+    trapUI.innerHTML = `
+        <h2 style="font-family:'Cinzel'; font-size:3rem; color:#d4af37; text-shadow:0 0 20px #000; margin-bottom:20px;">WHISPERING MANOR</h2>
+        <div style="font-style:italic; margin-bottom:40px; color:#aaa; text-align:center; max-width:400px;">
+            The door creaks open. A spectral figure awaits inside.<br>
+            <span style="color:#fff;">"A gift for the needy, or wares for the wealthy?"</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:15px; width:320px;">
+            <button class="v2-btn trap-option-btn" onclick="window.handleManorChoice('gift')"><span>Accept Charity</span> <span style="color:#aaa">Common Item</span></button>
+            <button class="v2-btn trap-option-btn" onclick="window.handleManorChoice('shop')"><span>Browse Wares</span> <span style="color:#d4af37">Shop</span></button>
+            <button class="v2-btn" onclick="window.handleManorChoice('leave')" style="background:#444; margin-top:20px;">Leave</button>
+        </div>
+    `;
+}
+
 export function updateUI() {
     // Update Sidebar
     const hpSide = document.getElementById('hpValueSidebar');
