@@ -4025,6 +4025,47 @@ function sinkManor(room) {
         .start();
 }
 
+function sinkAlchemy(room) {
+    const mesh = roomMeshes.get(room.id);
+    if (!mesh) return;
+
+    logMsg("The Alchemy Station bubbles over and sinks into the earth...");
+    
+    // Sound
+    if (audio.initialized) audio.play('potion_pour', { volume: 1.0, rate: 0.5 });
+
+    // Dust/Bubble Particles
+    const count = 30;
+    for(let i=0; i<count; i++) {
+        setTimeout(() => {
+            const angle = Math.random() * Math.PI * 2;
+            const r = 2 + Math.random() * 2;
+            const x = room.gx + Math.cos(angle) * r;
+            const z = room.gy + Math.sin(angle) * r;
+            if (use3dModel) {
+                 // Green toxic smoke
+                spawn3DImpact(new THREE.Vector3(x, 0, z), 0x00ff88, 'smoke_05.png');
+            }
+        }, i * 100);
+    }
+
+    // Sinking Animation
+    new TWEEN.Tween(mesh.position)
+        .to({ y: -15 }, 3000)
+        .easing(TWEEN.Easing.Cubic.In)
+        .onUpdate(() => {
+            triggerShake(1, 4); // Gentle rumble
+        })
+        .onComplete(() => {
+            room.isVanished = true;
+            mesh.visible = false;
+            scene.remove(mesh);
+            roomMeshes.delete(room.id);
+            saveGame(); // Persist the vanishing
+        })
+        .start();
+}
+
 window.handleManorChoice = function(choice) {
     if (choice === 'leave') {
         closeCombat();
@@ -7050,11 +7091,16 @@ window.checkPotion = function () {
     if (dist < 40) {
         feedback.innerText = "Perfect Match!";
         feedback.style.color = "#00ff00";
+        
+        // Capture required state before closing (because closePotionGame nulls potionState)
+        const room = potionState.room;
+        const targetName = potionState.target.name;
+        
         setTimeout(() => {
             closePotionGame();
 
             // Reward Logic
-            const potionItem = { type: 'potion', val: 20, name: potionState.target.name, suit: '♥', desc: "A perfectly brewed masterwork potion." };
+            const potionItem = { type: 'potion', val: 20, name: targetName, suit: '♥', desc: "A perfectly brewed masterwork potion." };
 
             if (addToBackpack(potionItem)) {
                 spawnFloatingText("Potion Brewed!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
@@ -7065,7 +7111,18 @@ window.checkPotion = function () {
                 logMsg(`Brewed ${potionItem.name}. Inventory full, drank immediately.`);
             }
 
-            if (potionState.room) { potionState.room.state = 'cleared'; updateUI(); }
+            if (room) {
+                 if (typeof room.brewCount === 'undefined') room.brewCount = 0;
+                 room.brewCount++;
+                 
+                 if (room.brewCount >= 2) {
+                     room.state = 'cleared';
+                     sinkAlchemy(room);
+                 } else {
+                     saveGame(); // Ensure brew count persists
+                 }
+                 updateUI();
+            }
         }, 1000);
     } else {
         feedback.innerText = "The mixture is unstable... (Too far)";
@@ -7077,6 +7134,7 @@ window.closePotionGame = function () {
     const modal = document.getElementById('potionUI');
     if (modal) modal.style.display = 'none';
     potionState = null;
+    closeCombat(); // Hide the underlying modal overlay
 };
 
 function renderPotionCanvas() {
