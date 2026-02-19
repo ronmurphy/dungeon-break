@@ -23,7 +23,7 @@ export function spawnHudFloatingText(text, color) {
     // Spawn near the end of the bar
     const x = rect.left + rect.width;
     const y = rect.top;
-    
+
     spawnFloatingText(text, x, y - 20, color);
 }
 
@@ -247,6 +247,11 @@ export function updateUI() {
     if (hudHpBar) {
         const hpPct = Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100));
         hudHpBar.style.width = `${hpPct}%`;
+        // DEBUG: Log HP bar update
+        if (window._lastLoggedHpPct !== hpPct) {
+            console.log(`[HUD DEBUG] HP Bar: ${game.hp}/${game.maxHp} = ${hpPct}%, width=${hudHpBar.style.width}, computed=${getComputedStyle(hudHpBar).width}, container=${getComputedStyle(hudHpBar.parentNode).width}`);
+            window._lastLoggedHpPct = hpPct;
+        }
     }
     const hudApBar = document.getElementById('hudApBar');
     if (hudApBar) {
@@ -262,12 +267,15 @@ function updateMapHUD() {
     const mapHud = document.getElementById('gameplayInventoryBar');
     if (!mapHud) return;
 
-    // --- NEW UI POSITIONING (Step 1 & 3) ---
-    // This applies to both default and gothic HUDs, as it's a layout change.
-    // The gothic check below only adds a class, it doesn't set position.
-    mapHud.style.left = '20px';
-    mapHud.style.bottom = '20px';
-    mapHud.style.transform = 'none'; // Override centered `translateX(-50%)`
+    const isGothic = mapHud.classList.contains('gothic-hud-active');
+
+    // --- UI POSITIONING ---
+    // Gothic mode uses CSS for positioning (center-bottom), default uses JS.
+    if (!isGothic) {
+        mapHud.style.left = '20px';
+        mapHud.style.bottom = '20px';
+        mapHud.style.transform = 'none';
+    }
 
     const gpOpt = document.getElementById('gameplayOptionsBtn');
     if (gpOpt) {
@@ -286,6 +294,18 @@ function updateMapHUD() {
             console.log("Gothic HUD Found! Applying style.");
             window.hasCheckedGothicHUD = true;
             mapHud.classList.add('gothic-hud-active');
+            // Clear stale non-gothic inline styles so CSS !important rules can take over
+            mapHud.style.background = '';
+            mapHud.style.borderTop = '';
+            mapHud.style.boxShadow = '';
+            mapHud.style.borderRadius = '';
+            mapHud.style.height = '';
+            mapHud.style.left = '';
+            mapHud.style.bottom = '';
+            mapHud.style.transform = '';
+            mapHud.style.overflow = '';
+            // Force re-render with gothic-aware logic
+            updateUI();
         };
         img.onerror = () => {
             console.log("Gothic HUD not found. Using default style.");
@@ -293,13 +313,14 @@ function updateMapHUD() {
         };
     }
 
-    // --- NEW HUD STYLING (Default) ---
-    // Overwrite default styles for a cleaner, darker look
-    mapHud.style.background = "linear-gradient(to top, #000000, #1a1a1a)";
-    mapHud.style.borderTop = "2px solid #444";
-    mapHud.style.boxShadow = "0 -5px 20px rgba(0,0,0,0.8)";
-    mapHud.style.borderRadius = "0"; // Sharp corners
-    mapHud.style.height = "90px"; // Slightly taller
+    // --- HUD STYLING (Default only — gothic uses CSS) ---
+    if (!isGothic) {
+        mapHud.style.background = "linear-gradient(to top, #000000, #1a1a1a)";
+        mapHud.style.borderTop = "2px solid #444";
+        mapHud.style.boxShadow = "0 -5px 20px rgba(0,0,0,0.8)";
+        mapHud.style.borderRadius = "0";
+        mapHud.style.height = "90px";
+    }
 
     // Visibility Logic
     const combatModal = document.getElementById('combatModal');
@@ -314,10 +335,11 @@ function updateMapHUD() {
     if (isInv || isStart || isAttract) { // Keep HUD visible during combat
         mapHud.style.display = 'none';
     } else {
-        mapHud.style.display = 'flex';
+        // Gothic uses display:block (CSS), default uses flex
+        mapHud.style.display = isGothic ? 'block' : 'flex';
 
-        // Ensure HUD has overflow hidden for bars
-        if (mapHud.style.overflow !== 'hidden') mapHud.style.overflow = 'hidden';
+        // Overflow hidden only for default mode — gothic needs visible overflow for the 256px skin
+        if (!isGothic && mapHud.style.overflow !== 'hidden') mapHud.style.overflow = 'hidden';
 
         // GOTHIC HUD LAYOUT ADJUSTMENT
         // If in gothic mode, wrap bars in a container? Or adjust width calculation?
@@ -380,7 +402,7 @@ function updateMapHUD() {
             lowHealthOverlay.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:5000; box-shadow:inset 0 0 150px rgba(255,0,0,0.6); opacity:0; transition: opacity 0.5s;";
             document.body.appendChild(lowHealthOverlay);
         }
-        
+
         if (game.hp > 0 && game.hp / game.maxHp <= 0.3) {
             lowHealthOverlay.style.opacity = '1';
             lowHealthOverlay.style.animation = 'pulseRed 2s infinite';
@@ -987,10 +1009,10 @@ window.openMainMenu = () => updateCombatMenu('main');
 function updateCombatMenu(pageName) {
     const menu = document.getElementById('combatMenuGrid');
     if (!menu) return;
-    
+
     const items = COMBAT_PAGES[pageName];
     const buttons = Array.from(menu.children);
-    
+
     // Animate Out (Flip halfway)
     buttons.forEach(btn => {
         btn.style.transform = 'rotateY(90deg)';
@@ -1003,7 +1025,7 @@ function updateCombatMenu(pageName) {
             const act = items[i];
             btn.onclick = null;
             btn.innerHTML = '';
-            
+
             if (act) {
                 btn.style.visibility = 'visible';
                 btn.onclick = () => { new Function(act.fn)(); };
@@ -1064,7 +1086,7 @@ function createCombatMenu() {
     }
 
     document.body.appendChild(menu);
-    
+
     // Initialize with Main Menu
     updateCombatMenu('main');
 }
