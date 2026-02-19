@@ -163,6 +163,7 @@ export const game = {
     enemiesDefeated: 0,
     brokerPhase: 0
 };
+window.game = game;
 
 export function getDisplayVal(v) {
     const map = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };

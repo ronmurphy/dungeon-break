@@ -243,25 +243,13 @@ export function updateUI() {
     updateMapHUD();
 
     // --- NEW HUD BAR LOGIC ---
-    const hudHpBar = document.getElementById('hudHpBar');
-    if (hudHpBar) {
-        const hpPct = Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100));
-        hudHpBar.style.width = `${hpPct}%`;
-        // DEBUG: Log HP bar update
-        if (window._lastLoggedHpPct !== hpPct) {
-            console.log(`[HUD DEBUG] HP Bar: ${game.hp}/${game.maxHp} = ${hpPct}%, width=${hudHpBar.style.width}, computed=${getComputedStyle(hudHpBar).width}, container=${getComputedStyle(hudHpBar.parentNode).width}`);
-            window._lastLoggedHpPct = hpPct;
-        }
-    }
-    const hudApBar = document.getElementById('hudApBar');
-    if (hudApBar) {
-        const apPct = game.maxAp > 0 ? Math.max(0, Math.min(100, (game.ap / game.maxAp) * 100)) : 0;
-        hudApBar.style.width = `${apPct}%`;
-    }
+
+    // Render Full Inventory if open
 
     // Render Full Inventory if open
     renderInventoryUI();
 }
+window.updateUI = updateUI;
 
 function updateMapHUD() {
     const mapHud = document.getElementById('gameplayInventoryBar');
@@ -372,7 +360,8 @@ function updateMapHUD() {
         } else if (hpBar.parentNode !== hpContainer) {
             hpContainer.appendChild(hpBar); // Ensure correct parenting
         }
-        hpBar.style.width = `${Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100))}%`;
+        const hpPct = Math.max(0, Math.min(100, (game.hp / Math.max(1, game.maxHp)) * 100));
+        hpBar.style.width = `${hpPct}%`;
 
         // AP Bar Structure (Container + Fill)
         let apContainer = document.getElementById('hudApContainer');
@@ -392,7 +381,8 @@ function updateMapHUD() {
         } else if (apBar.parentNode !== apContainer) {
             apContainer.appendChild(apBar); // Ensure correct parenting
         }
-        apBar.style.width = `${game.maxAp > 0 ? Math.max(0, Math.min(100, (game.ap / game.maxAp) * 100)) : 0}%`;
+        const apPct = Math.max(0, Math.min(100, (game.ap / Math.max(1, game.maxAp)) * 100));
+        apBar.style.width = `${apPct}%`;
 
         // Low Health Warning Overlay
         let lowHealthOverlay = document.getElementById('lowHealthOverlay');
@@ -403,7 +393,7 @@ function updateMapHUD() {
             document.body.appendChild(lowHealthOverlay);
         }
 
-        if (game.hp > 0 && game.hp / game.maxHp <= 0.3) {
+        if (game.hp > 0 && game.hp / Math.max(1, game.maxHp) <= 0.3) {
             lowHealthOverlay.style.opacity = '1';
             lowHealthOverlay.style.animation = 'pulseRed 2s infinite';
             if (!document.getElementById('pulseAnimStyle')) {
@@ -845,13 +835,29 @@ export function addToHotbar(item) {
     return false;
 }
 
-export function recalcAP() {
-    let total = 0;
-    Object.values(game.equipment).forEach(i => {
-        if (i && i.type === 'armor') total += i.ap;
+export function recalcStats() {
+    if (!game.stats) game.stats = { str: 0, dex: 0, int: 0, lck: 0 };
+
+    // HP = 20 (base) + Strength
+    const baseHp = 20;
+    game.maxHp = baseHp + (game.stats.str || 0);
+
+    // Max AP = Total AP from all equipped armor slots
+    let totalArmorAP = 0;
+    Object.values(game.equipment).forEach(item => {
+        if (item && item.type === 'armor' && item.ap) {
+            totalArmorAP += item.ap;
+        }
     });
-    game.maxAp = total;
+    game.maxAp = totalArmorAP;
+
+    // Clamp current values to new maximums
+    if (game.hp > game.maxHp) game.hp = game.maxHp;
     if (game.ap > game.maxAp) game.ap = game.maxAp;
+}
+
+export function recalcAP() {
+    recalcStats();
 }
 
 // --- GLOBAL HANDLERS (Exposed to Window) ---

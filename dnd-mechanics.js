@@ -61,10 +61,10 @@ export class CombatResolver {
 
         if (attTotal > defTotal) {
             result.winner = 'attacker';
-            result.damage = Math.max(0, attTotal - defAC);
+            result.damage = Math.max(1, attTotal - defAC);
         } else if (defTotal > attTotal) {
             result.winner = 'defender';
-            result.damage = Math.max(0, defTotal - attAC);
+            result.damage = Math.max(1, defTotal - attAC);
         }
 
         return result;
@@ -85,7 +85,7 @@ export class CombatResolver {
     static resolveAttack(strScore, weaponVal, currentWear, enemyArmor) {
         // 1. Calculate Modifier
         const mod = DND_CONFIG.getModifier(strScore);
-        
+
         // 2. Determine Die Size
         // Power = Weapon Base + Str Mod
         const power = weaponVal + mod;
@@ -104,11 +104,11 @@ export class CombatResolver {
         let newWear = currentWear;
         let broken = false;
         let msg = "";
-        
+
         if (finalDamage === 0) {
             newWear++;
             msg = "Blocked! Weapon dulls.";
-            
+
             // Break condition: If wear consumes the weapon's base value
             if (weaponVal - newWear <= 0) {
                 broken = true;
