@@ -42,6 +42,7 @@ export const CombatManager = {
     combatCamOffset: new THREE.Vector3(40, 40, 40), 
     combatTarget: new THREE.Vector3(2000, 2000, 2000), // Must match BattleIsland position
     combatZoom: 1.0, // Standard zoom
+    cleanupTimer: null, // Track removal timer to prevent race conditions
 
     savedState: {
         pos: new THREE.Vector3(),
@@ -66,6 +67,12 @@ export const CombatManager = {
         this.isActive = true;
         console.log("⚔️ [combat-manager.js] Starting Combat...");
         console.log("   -> Current Camera Pos:", this.camera.position);
+
+        // Cancel any pending cleanup from a previous combat session
+        if (this.cleanupTimer) {
+            clearTimeout(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
 
         // 1. Save Camera State
         this.savedState.pos.copy(this.camera.position);
@@ -203,10 +210,11 @@ export const CombatManager = {
 
         // 4. Remove Arena
         if (this.battleGroup) {
-            setTimeout(() => {
+            this.cleanupTimer = setTimeout(() => {
                 console.log("   -> Removing Battle Island from scene.");
                 this.scene.remove(this.battleGroup);
                 this.battleGroup = null;
+                this.cleanupTimer = null;
             }, 1000);
         }
     }

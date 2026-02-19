@@ -7552,9 +7552,12 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
     const drawNum = (n) => {
         ctx.clearRect(0, 0, 64, 64);
         ctx.fillStyle = 'white';
-        ctx.font = 'bold 40px Arial';
+        ctx.font = 'bold 40px Cinzel, sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 4;
+        ctx.strokeText(n, 32, 32);
         ctx.fillText(n, 32, 32);
     };
     drawNum(sides); // Start showing max value
@@ -7570,7 +7573,7 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
         canvas2.width = 256; canvas2.height = 64;
         const ctx2 = canvas2.getContext('2d');
         ctx2.fillStyle = 'white';
-        ctx2.font = 'bold 32px Arial';
+        ctx2.font = 'bold 32px Cinzel';
         ctx2.textAlign = 'center';
         ctx2.textBaseline = 'middle';
         ctx2.shadowColor = 'black';
