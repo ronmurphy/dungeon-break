@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import Stats from 'three/addons/libs/stats.module.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -34,6 +35,7 @@ const INTRO_STORY_DEFAULTS = [
 
 // --- 3D RENDERING (Three.js Tableau) ---
 let scene, camera, renderer, composer, renderPass, controls, raycaster, mouse;
+let stats; // Performance monitor (Ctrl+F2)
 let perspectiveCamera; // New camera for Immersive mode
 let hTilt, vTilt, bloomPass, outlineEffect;
 let playerMarker; // Crystal marker
@@ -1107,6 +1109,35 @@ const ColorBandShader = {
     `
 };
 
+function initStats() {
+    if (stats) return; // Prevent multiple stats instances
+    console.log("Initializing Stats.js...");
+    try {
+        stats = new Stats();
+        // Make it visible by default for debugging, user can toggle off
+        stats.dom.style.cssText = 'position:fixed;top:0;left:0;cursor:pointer;opacity:0.9;z-index:99999;'; 
+        document.body.appendChild(stats.dom);
+
+        // Debug logging for hotkey
+        console.log("Stats.js hotkey bound to F2");
+
+        window.addEventListener('keydown', (event) => {
+            // F2 to toggle (removed Ctrl requirement to avoid conflicts)
+            if (event.code === 'F2') {
+                const display = stats.dom.style.display;
+                stats.dom.style.display = (display === 'none') ? 'block' : 'none';
+                console.log("Toggled Stats.js:", stats.dom.style.display);
+            }
+        });
+        console.log("Stats.js initialized. Press F2 to toggle.");
+    } catch (e) {
+        console.error("Stats.js failed to load:", e);
+    }
+}
+
+// Call immediately to ensure it loads
+initStats();
+
 function init3D() {
     // Cancel any existing animation loop to prevent multiple loops from running
     if (animationFrameId) {
@@ -1133,6 +1164,9 @@ function init3D() {
         renderer.shadowMap.enabled = true;
         container.appendChild(renderer.domElement);
     }
+    
+    // Ensure stats is initialized regardless of renderer state
+    initStats();
 
     // Outline Effect (Cel Shading Replacement)
     outlineEffect = new OutlineEffect(renderer, {
@@ -1170,7 +1204,7 @@ function init3D() {
     camera = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 1000);
     camera.position.set(20, 20, 20);
     camera.lookAt(0, 0, 0);
-    perspectiveCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000); // Devin's Camera
+    // perspectiveCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000); // Devin's Camera - DISABLED
 
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enablePan = true;
@@ -1422,13 +1456,9 @@ function loadPlayerModel() {
 function updateLODs() {
     if (!gameSettings.lod) return;
     console.log(`Applying LOD distances: near=${gameSettings.lod.near}, far=${gameSettings.lod.far}`);
-    wanderers.forEach(w => {
-        if (w.mesh && w.mesh.isLOD) { // Check mesh exists and is LOD
-            const levels = w.mesh.levels;
-            if (levels[0]) levels[0].distance = gameSettings.lod.near;
-            if (levels[1]) levels[1].distance = gameSettings.lod.far;
-        }
-    });
+    // Since we moved to a custom Group-based LOD in animate3D, we don't update individual meshes here.
+    // Instead we rely on the animate3D loop to check distances.
+    // If we wanted to make distance configurable, we would update a global config variable.
 }
 
 function initWanderers() {
@@ -1453,17 +1483,22 @@ function initWanderers() {
 
         loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
             // --- NEW LOD LOGIC ---
-            const lod = new THREE.LOD();
+            // Manual Optimization Group: Not using THREE.LOD anymore to allow Player-Based Distance Check
+            const lod = new THREE.Group();
+            lod.name = "Wanderer_LOD_Group";
+            
+            // Level 0: Full model (High Poly) - Index 0
+            lod.add(model); 
 
-            // Level 0: Full model
-            lod.addLevel(model, gameSettings.lod.near || 40);
-
-            // Level 1: Placeholder box
-            const boxGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6); // Approx size
-            const boxMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+            // Level 1: Placeholder box (Low Poly) - Index 1
+            const boxGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6); 
+            const boxMat = new THREE.MeshBasicMaterial({ color: 0x555555, wireframe: true, transparent: true, opacity: 0.3 });
             const box = new THREE.Mesh(boxGeo, boxMat);
             box.name = "LOD_Placeholder_Box";
-            lod.addLevel(box, gameSettings.lod.far || 80);
+            box.visible = false; // Start hidden
+            lod.add(box); 
+
+            // The mixer needs to animate the original model, which is now a child of the LOD
 
             // The mixer needs to animate the original model, which is now a child of the LOD
             // Find valid spawn point
@@ -2400,6 +2435,7 @@ function updateMusicForFloor() {
 }
 
 function animate3D() {
+    if (stats) stats.update();
     animationFrameId = requestAnimationFrame(animate3D);
 
     if (benchmarkState.active) {
@@ -2803,13 +2839,36 @@ function animate3D() {
 
     if (window.TWEEN) TWEEN.update();
 
+    // Determine active camera for updates outside the render block
+    // Combat Camera disabled
+    const updateCam = camera;
+
     // Update Animation Mixer
     if (use3dModel && mixer) {
         const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches
         mixer.update(delta * globalAnimSpeed);
         wanderers.forEach(w => {
             if (w.mixer) w.mixer.update(delta * globalAnimSpeed);
-            if (w.mesh && w.mesh.isLOD) w.mesh.update(camera);
+            
+            // Replaced default LOD check with name-check because we now use a Group 
+            if (w.mesh && w.mesh.name === "Wanderer_LOD_Group") {
+                const playerObj = use3dModel ? playerMesh : playerSprite;
+                if (playerObj) {
+                    const distSq = w.mesh.position.distanceToSquared(playerObj.position);
+                    const cutoffSq = 25 * 25; // 25 units squared
+                    
+                    const showHighPoly = distSq < cutoffSq;
+                    
+                    // Toggle Visibility: Index 0 (High), Index 1 (Low)
+                    // Only update if changed to minimize DOM/Render thrashing
+                    if (w.mesh.children.length === 2) {
+                        if (w.mesh.children[0].visible !== showHighPoly) {
+                             w.mesh.children[0].visible = showHighPoly;
+                             w.mesh.children[1].visible = !showHighPoly;
+                        }
+                    }
+                }
+            }
         });
     } else if (!use3dModel) {
         animatePlayerSprite();
@@ -7552,14 +7611,12 @@ function startCombat(wanderer, isFlankAttack = false) {
 
     combatState.isPlayerFlank = isFlankAttack;
     // --- FIX LOD FOR COMBAT ---
-    // The combat camera is ~70 units away, which might trigger the low-poly box 
-    // if the LOD setting is "Medium" (50) or "Low". We force the box distance to Infinity here.
-    if (activeWanderer.mesh && activeWanderer.mesh.isLOD) {
-        const levels = activeWanderer.mesh.levels;
-        if (levels.length > 1) {
-            levels[1].distance = Infinity; // Never switch to box during combat
-        }
-    }
+    // The previous implementation used THREE.LOD, which had a .levels array.
+    // We have replaced this with a custom THREE.Group system that manages visibility in animate3D.
+    // So we no longer need to manipulate .levels here.
+    // Logic to force high-poly visibility during combat is handled by ensuring the enemy
+    // remains properly active in the scene regardless of camera distance, or simply by the fact
+    // that combat usually happens close-up.
 
     // Initialize Enemy Stats (Simple D&D-lite stats)
     if (!activeWanderer.stats) {
