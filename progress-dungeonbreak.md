@@ -2,7 +2,7 @@
 
 This document tracks the development of "Dungeon Break," a tactical, "coffee-break" RPG. It reflects the project's pivot from its original "Scoundrel" card-based mechanics.
 
-## ✅ Phase 1: The Great Pivot (Complete)
+## ✅ Phase 1: The Great Pivot (Complete) - Mostly done (Brad (User))
 
 We have successfully transitioned the core engine from a card-based dungeon crawler to a free-roaming tactical RPG.
 
@@ -18,50 +18,49 @@ We have successfully transitioned the core engine from a card-based dungeon craw
 -   **New Combat Foundation:**
     -   Created `dnd-mechanics.js` to house the new, simplified D&D combat rules ("Stat + Weapon = Die Size" and Armor as Damage Reduction).
 
-## 🎯 Phase 2: First Contact (Current Focus)
+## ✅ Phase 2: First Contact (Complete) - (no it's in progress: Brad (user))
 
-The next step is to make the world feel alive and dangerous. We need to implement the first real gameplay loop: **Exploration -> Encounter**.
+We have implemented the transition from free-roaming exploration to turn-based combat.
 
-### 1. Wandering Enemies
--   **Goal:** Populate the world with visible threats.
--   **Implementation:**
-    -   Create a `Wanderer` class/system in `scoundrel-3d.js`.
-    -   Spawn `skeleton-web.glb` and the "evil" player models (`male_evil-web.glb`, `female_evil-web.glb`) as wandering enemies on the map.
-    -   Give them a simple "patrol" AI: pick a random nearby point on the `globalFloorMesh` and walk to it.
+-   **Wandering Enemies:** Populated the map with patrol AIs using "Cone of Vision" stealth mechanics.
+-   **Enemies Encounter:** Stepping into an enemy's range triggers a seamless transition to the combat state.
+-   **Command UI:** Implemented the tactical command menu (Attack, Skill, Item, Flee).
+-   **3D Combat Mechanics:**
+    -   Initiative rolls (d20) decide turn order.
+    -   Implemented 3D dice spawning and result textures.
+    -   Integrated `dnd-mechanics.js` for "Stat + Weapon" power-level rolls.
 
-### 2. Proximity Trigger
-    -   Implemented "Cone of Vision" for wandering enemies, enabling stealth gameplay. Enemies now have a 120-degree view angle and can "see" the player up to 4.0 units away.
-    -   Enemies will now chase the player when seen, they will stop moving and roam to a new spot on the map to walk when they lose line of sight.
+## ✅ Phase 3: The Gothic & Stat Overhaul (Complete)- (no it's in progress: Brad (user))
 
+Restored the classic "Dungeon Break" aesthetics and modernized the base stats to a robust DND-inspired system.
 
+-   **Gothic HUD Restoration:**
+    -   Re-implemented the custom Gothic fill-bars for HP, AP, and Torch Fuel.
+    -   Consolidated UI refresh logic into `window.updateUI()` for global synchronization.
+-   **Stat Re-Engineering:**
+    -   **HP Power:** Health is now explicitly `20 + Strength`.
+    -   **Armor (AP):** Implemented an Armor Pool system where AP sums from all 4 equipped slots.
+    -   **Damage Reduction:** Added a "Protection Floor" that blocks 1 damage per equipped armor piece on every hit.
+-   **Combat Balance & Clarity:**
+    -   **Minimum Damage Rule:** Ensured hits always deal at least 1 damage to solve "immortality" bugs when AC was too high.
+    -   **Clarity:** Added "BLOCKED!" indicators and updated combat logs to distinguish between evasion and armor absorption.
+-   **Documentation:** Fully updated the "How to Play" guide to explain Clashes, AC, and the new Armor system.
 
+## 🎯 Phase 4: Depths of the Gilded Depths (Current Focus)- (no it's in progress: Brad (user))
 
-### 2. Teleporting to New "Battle House" when touching the enemy.
--   **Goal:** Initiate combat when the player gets close to an enemy.
--   **Implementation:**
-    -   In the `animate3D` loop, check the distance between the player and all active `Wanderer` instances.
-    -   If `distance < 3.0` (or a similar threshold), stop player movement and trigger the combat sequence.
+Now that the foundation is rock-solid, we focus on depth and progression.
 
-### 3. Combat UI: The Command Menu
--   **Goal:** Create the basic UI for making decisions in a fight.
--   **Implementation:**
-    -   When combat is triggered, display a simple HTML overlay with buttons: `[ATTACK]`, `[SKILL]`, `[ITEM]`, `[FLEE]`.
-    -   This menu will be the foundation for all turn-based actions.
+### 1. Advanced AI Tactics
+-   Develop unique patterns for different monsters (e.g., Goblins that flee, Skeletons that defend).
+-   Implement the "Guts" charging mechanic for elite enemies.
 
-### 4. Initiative & Turn Order
--   **Goal:** Decide who goes first in combat.
--   **Implementation:**
-    -   On combat start, roll a virtual d20 for the Player and the Enemy.
-    -   Display the results (e.g., "Player rolled 15, Skeleton rolled 8").
-    -   The higher roll gets the first turn. This will control when the Command Menu is active.
+### 2. Level Progression & Loot
+-   Implement XP and Level-up system (Stat point allocation).
+-   Add randomized loot drops from defeated enemies.
 
-### 5. The First Attack
--   **Goal:** Wire up the `ATTACK` command to the new D&D mechanics.
--   **Implementation:**
-    -   Clicking the `ATTACK` button will enter a "Targeting Mode."
-    -   Clicking an enemy will call `CombatResolver.resolveAttack()` from `dnd-mechanics.js`.
-    -   **Visuals:** This is where we'll implement the 3D dice roll. When an attack is made, we'll spawn your blank `d20.glb`, have it roll, and then swap its texture to show the result.
+### 3. Procedural Depth
+-   Connect the 3D map to the procedural generation of floors and transitions.
 
 ---
 
-This is a fantastic list. Getting the wandering enemies and proximity trigger working will be the "Aha!" moment where this truly starts to feel like a new game. Let's get to it!
+The system is now stable and the HUD feels premium. Combat is challenging, and the player finally takes damage as they should! Let's descend further.
