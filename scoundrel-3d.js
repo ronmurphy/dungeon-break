@@ -3878,7 +3878,12 @@ function descendToNextFloor() {
 }
 
 function enterRoom(id) {
-    const oldId = game.currentRoomIdx; game.currentRoomIdx = id;
+    const oldId = game.currentRoomIdx; 
+    
+    // Store previous room for retreat mechanics (Manor/Alchemy leave)
+    if (id !== oldId) game.previousRoomIdx = oldId;
+    
+    game.currentRoomIdx = id;
     const room = game.rooms.find(r => r.id === id);
     movePlayerSprite(oldId, id);
 
@@ -4066,53 +4071,57 @@ function sinkAlchemy(room) {
         .start();
 }
 
+window.retreatFromInteraction = function(room) {
+    if (!room) return;
+    
+    // 1. Try to retreat to the room we entered from
+    let targetId = game.previousRoomIdx;
+
+    // 2. Fallback: Find closest connected neighbor if previous is invalid
+    if (typeof targetId === 'undefined' || targetId === room.id) {
+        if (room.connections && room.connections.length > 0) {
+            targetId = room.connections[0]; // Default to first neighbor
+            // Logic to find closest can be added here but first usually works for linear paths
+        } else {
+             // 3. Last Resort: Push back physically
+            const playerObj = use3dModel ? playerMesh : playerSprite;
+            if (playerObj) {
+                const dx = playerObj.position.x - room.gx;
+                const dz = playerObj.position.z - room.gy;
+                const len = Math.sqrt(dx*dx + dz*dz) || 1;
+                const pushDist = ((Math.max(room.w, room.h) / 2) + 2.0);
+                
+                new TWEEN.Tween(playerObj.position)
+                    .to({ x: room.gx + (dx/len)*pushDist, z: room.gy + (dz/len)*pushDist }, 400)
+                    .start();
+                return;
+            }
+        }
+    }
+
+    // Execute Move
+    if (typeof targetId !== 'undefined' && targetId !== room.id) {
+        // Update game state to "be" in the previous room
+        // This re-enables the trigger when we walk back into the special room
+        const oldId = game.currentRoomIdx;
+        game.currentRoomIdx = targetId;
+        movePlayerSprite(oldId, targetId);
+    }
+    
+    closeCombat();
+};
+
 window.handleManorChoice = function(choice) {
     if (choice === 'leave') {
-        closeCombat();
-        // If the player cleared the room (bought something or took gift), sink it
         if (game.activeRoom.state === 'cleared') {
+             closeCombat();
              sinkManor(game.activeRoom);
         } else {
-            // Player left without interacting. Push them out and reset collision.
-            const playerObj = use3dModel ? playerMesh : playerSprite;
-            const r = game.activeRoom;
-            if (playerObj && r) {
-                // Calculate push direction (from center to player)
-                const dx = playerObj.position.x - r.gx;
-                const dz = playerObj.position.z - r.gy;
-                const len = Math.sqrt(dx*dx + dz*dz) || 1;
-                const nx = dx / len;
-                const nz = dz / len;
-
-                // Threshold from animate3D proximity check
-                const threshold = ((Math.max(r.w, r.h) / 2) + 1.5) * 1.5;
-                const targetDist = threshold + 0.8; // Push just outside
-
-                const tx = r.gx + nx * targetDist;
-                const tz = r.gy + nz * targetDist;
-
-                new TWEEN.Tween(playerObj.position)
-                    .to({ x: tx, z: tz }, 400)
-                    .easing(TWEEN.Easing.Quadratic.Out)
-                    .start();
-
-                // Reset current room to nearest neighbor to restore collision on the Manor
-                if (r.connections && r.connections.length > 0) {
-                    let closestId = r.connections[0];
-                    let minD = Infinity;
-                    r.connections.forEach(cid => {
-                        const rm = game.rooms.find(x => x.id === cid);
-                        if (rm) {
-                            const d = Math.hypot(rm.gx - tx, rm.gy - tz);
-                            if (d < minD) { minD = d; closestId = cid; }
-                        }
-                    });
-                    game.currentRoomIdx = closestId;
-                }
-            }
+            retreatFromInteraction(game.activeRoom);
         }
         return;
     }
+
     if (choice === 'gift') {
         // Give 1 random common item (Cost < 40)
         const pool = [...ITEM_DATA.filter(i => i.cost < 40), ...ARMOR_DATA.filter(a => a.cost < 40)];
@@ -7021,7 +7030,7 @@ window.startPotionGame = function (room) {
             
             <div style="display:flex; gap:10px; margin-top:10px;">
                 <button class="v2-btn" onclick="checkPotion()" style="flex:1; background:var(--gold); color:#000;">BREW</button>
-                <button class="v2-btn" onclick="closePotionGame()" style="flex:1; background:#444;">Leave</button>
+                <button class="v2-btn" onclick="let r = potionState.room; closePotionGame(); retreatFromInteraction(r);" style="flex:1; background:#444;">Leave</button>
             </div>
             
             <div id="potionFeedback" style="height:20px; font-size:0.9rem; color:#ffaa00;"></div>
@@ -7200,7 +7209,7 @@ function showAlchemyPrompt() {
         </div>
         <div style="display:flex; gap:20px;">
             <button class="v2-btn" onclick="document.getElementById('trapUI').style.display='none'; startPotionGame(game.activeRoom);" style="width:140px;">Brew</button>
-            <button class="v2-btn" onclick="closeCombat()" style="background:#444; width:140px;">Leave</button>
+            <button class="v2-btn" onclick="retreatFromInteraction(game.activeRoom)" style="background:#444; width:140px;">Leave</button>
         </div>
     `;
 }
