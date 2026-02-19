@@ -231,8 +231,10 @@ let combatState = {
     isPlayerFlank: false, // For surprise attacks
     ducksFound: 0,
     ducksToFind: 0,
-    canAttack: true,
-    isDashing: false
+    canAttack: true, // Can the player use attack/skill actions?
+    isDashing: false, // Has the player dashed this turn?
+    gutsCharge: 0, // Stored damage for Guts tactic
+    gutsStacks: 0 // Number of times Guts has been used
 };
 
 let savedMapState = null; // For True Dungeon recursion
@@ -7338,6 +7340,8 @@ function startCombat(wanderer, isFlankAttack = false) {
     combatState.activeSkill = null;
     combatState.canAttack = true;
     combatState.isDashing = false;
+    combatState.gutsCharge = 0;
+    combatState.gutsStacks = 0;
 
     updateMovementIndicator();
     showCombat();
@@ -7724,6 +7728,11 @@ window.commandSkill = function () {
         logMsg("You cannot use skills after Dashing.");
         return;
     }
+    if (combatState.gutsCharge > 0) {
+        spawnFloatingText("Guts Charged!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+        logMsg("A Guts strike is charged. Use Attack to unleash it.");
+        return;
+    }
     if (combatState.skillUsed) {
         spawnFloatingText("Skill exhausted!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
         logMsg("You have already used your skill this battle.");
@@ -7745,6 +7754,65 @@ window.commandSkill = function () {
     logMsg(`Skill selected: ${skill.name}. Select target.`);
 };
 
+window.commandGuts = function() {
+    if (combatState.turn !== 'player') return;
+    if (combatState.gutsStacks >= 2) {
+        logMsg("Guts power is already at maximum!");
+        return;
+    }
+    // Per user: Must be first and only action. Check if player has moved.
+    if (combatState.currentMove < combatState.maxMove) {
+        logMsg("Cannot use Guts after moving.");
+        return;
+    }
+
+    combatState.turn = 'busy';
+    
+    // Show charging text
+    const chargeText = combatState.gutsStacks === 0 ? "Player is charging Guts!" : "Player increases Guts charge!";
+    spawnFloatingText(chargeText, window.innerWidth / 2, window.innerHeight / 2 + 50, '#ffaa00');
+
+    const playerStr = (game.stats.str || 1);
+    const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 1;
+    const randomBonus = DiceRoller.roll(playerStr);
+    
+    // Add to existing charge if stacking
+    combatState.gutsCharge += playerStr + weaponVal + randomBonus;
+    combatState.gutsStacks++;
+
+    const msg = combatState.gutsStacks === 1 ? "GUTS!" : "GUTS MAX!";
+    spawnFloatingText(msg, window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+    logCombat(`Gathering power... Guts charge is now ${combatState.gutsCharge}.`, '#ffaa00');
+
+    // End turn
+    if (window.openMainMenu) window.openMainMenu();
+    setTimeout(startEnemyTurn, 500);
+};
+
+window.commandShove = function() {
+    if (combatState.turn !== 'player') return;
+    if (!combatState.canAttack) {
+        logMsg("Cannot Shove after Dashing.");
+        return;
+    }
+    combatState.activeSkill = { id: 'shove', name: 'Shove' };
+    combatState.isTargeting = true;
+    spawnFloatingText("SHOVE", window.innerWidth / 2, window.innerHeight / 2 - 150, '#d4af37');
+    logMsg("Select target to Shove.");
+};
+
+window.commandFeint = function() {
+    if (combatState.turn !== 'player') return;
+    if (!combatState.canAttack) {
+        logMsg("Cannot Feint after Dashing.");
+        return;
+    }
+    combatState.activeSkill = { id: 'feint', name: 'Feint' };
+    combatState.isTargeting = true;
+    spawnFloatingText("FEINT", window.innerWidth / 2, window.innerHeight / 2 - 150, '#d4af37');
+    logMsg("Select target to Feint.");
+};
+
 window.commandDash = function() {
     if (combatState.turn !== 'player') return;
     if (combatState.isDashing) {
@@ -7759,6 +7827,7 @@ window.commandDash = function() {
     spawnFloatingText("DASH!", window.innerWidth / 2, window.innerHeight / 2, '#00ffff');
     logMsg("Dashed! Movement increased. Attack disabled.");
     updateMovementIndicator();
+    if (window.openMainMenu) window.openMainMenu(); // Return to main menu
 };
 
 function executePlayerSkill(target) {
@@ -7823,6 +7892,44 @@ function executePlayerSkill(target) {
             game.ap = Math.min(game.maxAp, game.ap + 2);
             msg = `Holy Bash! ${damage} Dmg, +2 AP.`;
         }
+        else if (skill.id === 'shove') {
+            // STR vs STR
+            const playerStr = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1);
+            const enemyStr = (target.stats.str || 1) + 4;
+            const res = CombatResolver.resolveClash(playerStr, enemyStr, 0, 0); // No AC
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Shove", () => {});
+            
+            if (res.attacker.total > res.defender.total) {
+                msg = "Shove successful!";
+                spawnFloatingText("SHOVED!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
+                // Push Logic
+                const pushDir = new THREE.Vector3().subVectors(target.mesh.position, (use3dModel ? playerMesh : playerSprite).position).normalize();
+                pushDir.y = 0;
+                const newPos = target.mesh.position.clone().add(pushDir.multiplyScalar(1.5)); // Push 1.5m
+                
+                new TWEEN.Tween(target.mesh.position)
+                    .to({ x: newPos.x, z: newPos.z }, 300)
+                    .easing(TWEEN.Easing.Cubic.Out)
+                    .start();
+            } else {
+                msg = "Shove failed.";
+                spawnFloatingText("RESISTED", window.innerWidth/2, window.innerHeight/2, '#aaa');
+            }
+        }
+        else if (skill.id === 'feint') {
+            // DEX vs WIS (Use INT/STR as proxy for WIS)
+            const playerDex = (game.stats.dex || 1) + 2;
+            const enemyWis = (target.stats.str || 1) + 2;
+            const res = CombatResolver.resolveClash(playerDex, enemyWis, 0, 0);
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Feint", () => {});
+            
+            if (res.attacker.total > res.defender.total) {
+                msg = "Feint successful! Next attack crits.";
+                combatState.isPlayerFlank = true; // Reuse flank logic for 1.5x dmg
+            } else {
+                msg = "Feint failed.";
+            }
+        }
         else {
             // Default fallback
             damage = 2;
@@ -7847,6 +7954,28 @@ function executePlayerAttack(target) {
     combatState.turn = 'busy';
 
     // 1. Player Animation
+    // --- GUTS ATTACK LOGIC ---
+    if (combatState.gutsCharge > 0) {
+        const damage = combatState.gutsCharge;
+        logCombat(`Unleashing GUTS STRIKE for ${damage} damage!`, '#ffaa00');
+        spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ffaa00');
+        
+        target.stats.hp -= damage;
+        
+        // Reset Guts state
+        combatState.gutsCharge = 0;
+        combatState.gutsStacks = 0;
+
+        // Update UI and check for end of combat
+        updateUI();
+        if (target.healthBar) {
+            target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
+        }
+        if (target.actions && target.actions.hit) target.actions.hit.reset().play();
+        checkCombatEnd(target);
+        return; // Skip the rest of the function
+    }
+
     if (use3dModel && actions.attack) {
         actions.attack.reset().play();
         // Play sound
@@ -8009,8 +8138,29 @@ function startEnemyTurn() {
         enemyRangeIndicator.position.y += 0.1;
     }
 
-    // --- ENEMY FLEE LOGIC (Dash) ---
+    // --- ENEMY GUTS AI ---
+    // If low on HP, flee. If healthy and far, maybe charge up.
     const hpPct = enemy.stats.hp / enemy.stats.maxHp;
+    const canUseGuts = (enemy.stats.gutsStacks || 0) < 2;
+    // 30% chance to use Guts if far away and healthy
+    if (canUseGuts && dist > attackRange * 2 && hpPct > 0.5 && Math.random() < 0.3) {
+        spawnFloatingText(`${enemy.name} is charging Guts!`, window.innerWidth/2, window.innerHeight/2 + 50, '#ffaa00');
+        logCombat(`${enemy.name} is gathering power!`, '#ffaa00');
+        spawnFloatingText("GUTS!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
+
+        if (!enemy.stats.gutsCharge) enemy.stats.gutsCharge = 0;
+        if (!enemy.stats.gutsStacks) enemy.stats.gutsStacks = 0;
+
+        const enemyStr = (enemy.stats.str || 1);
+        const randomBonus = DiceRoller.roll(enemyStr);
+        enemy.stats.gutsCharge += enemyStr + 4 + randomBonus; // 4 is base weapon
+        enemy.stats.gutsStacks++;
+
+        endEnemyTurn();
+        return;
+    }
+
+    // --- ENEMY FLEE LOGIC (Dash) ---
     // Flee if HP < 15% and NOT in True Dungeon (no escape there)
     if (hpPct <= 0.15 && !game.inTrueDungeon) {
         logMsg(`${enemy.name} is trying to escape!`);
@@ -8111,6 +8261,26 @@ function executeEnemyAttack(enemy) {
 
     setTimeout(() => {
         // Player Stats
+        // --- ENEMY GUTS ATTACK ---
+        if (enemy.stats.gutsCharge > 0) {
+            const damage = enemy.stats.gutsCharge;
+            logCombat(`${enemy.name} unleashes its power for ${damage} damage!`, '#ff4400');
+            spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff4400');
+            
+            takeDamage(damage);
+            
+            enemy.stats.gutsCharge = 0;
+            enemy.stats.gutsStacks = 0;
+
+            updateUI();
+            if (game.hp <= 0) {
+                gameOver();
+            } else {
+                endEnemyTurn();
+            }
+            return;
+        }
+
         const playerStr = CLASS_DATA[game.classId].stats.str || 0;
         const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 2;
         let playerAC = CLASS_DATA[game.classId].stats.ac || 10;
@@ -8177,6 +8347,7 @@ function endEnemyTurn() {
         combatState.canAttack = true;
         combatState.isDashing = false;
         combatState.isDefending = false; // Reset defense
+        // Guts state persists until used
         updateMovementIndicator();
         logCombat("Player turn.");
     }, 1000);

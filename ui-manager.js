@@ -938,6 +938,70 @@ export function hideCombatMenu() {
     if (menu) menu.style.left = '-350px';
 }
 
+const COMBAT_PAGES = {
+    main: [
+        { name: 'Attack', icon: 'icon_attack.png', fn: "window.commandAttack()" },
+        { name: 'Skill', icon: 'icon_skill.png', fn: "window.commandSkill()" },
+        { name: 'Item', icon: 'icon_item.png', fn: "console.log('Item')" },
+        { name: 'Defend', icon: 'icon_defend.png', fn: "window.commandDefend()" },
+        { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
+        { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
+        { name: 'Wait', icon: 'icon_wait.png', fn: "window.commandWait()" },
+        { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
+        { name: 'Tactics', icon: 'icon_tactics.png', fn: "window.openTacticsMenu()" }
+    ],
+    tactics: [
+        { name: 'Dash', icon: 'icon_tactics.png', fn: "window.commandDash()" },
+        { name: 'Shove', icon: 'icon_attack.png', fn: "window.commandShove()" },
+        { name: 'Guts', icon: 'icon_skill.png', fn: "window.commandGuts()" },
+        null, null, null, null, null,
+        { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" }
+    ]
+};
+
+window.openTacticsMenu = () => updateCombatMenu('tactics');
+window.openMainMenu = () => updateCombatMenu('main');
+
+function updateCombatMenu(pageName) {
+    const menu = document.getElementById('combatMenuGrid');
+    if (!menu) return;
+    
+    const items = COMBAT_PAGES[pageName];
+    const buttons = Array.from(menu.children);
+    
+    // Animate Out (Flip halfway)
+    buttons.forEach(btn => {
+        btn.style.transform = 'rotateY(90deg)';
+        btn.style.opacity = '0.5';
+    });
+
+    setTimeout(() => {
+        // Swap Content
+        buttons.forEach((btn, i) => {
+            const act = items[i];
+            btn.onclick = null;
+            btn.innerHTML = '';
+            
+            if (act) {
+                btn.style.visibility = 'visible';
+                btn.onclick = () => { new Function(act.fn)(); };
+                btn.innerHTML = `
+                    <img src="assets/images/ui/combat/${act.icon}" style="width:48px; height:48px; margin-bottom:5px;" onerror="this.style.display='none'">
+                    <span style="font-family:'Cinzel'; font-size:12px; color:#ccc;">${act.name}</span>
+                `;
+            } else {
+                btn.style.visibility = 'hidden';
+            }
+        });
+
+        // Animate In (Flip back)
+        buttons.forEach(btn => {
+            btn.style.transform = 'rotateY(0deg)';
+            btn.style.opacity = '1';
+        });
+    }, 150);
+}
+
 function createCombatMenu() {
     const menu = document.createElement('div');
     menu.id = 'combatMenuGrid';
@@ -964,42 +1028,23 @@ function createCombatMenu() {
         transition: left 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     `;
 
-    const actions = [
-        { name: 'Attack', icon: 'icon_attack.png', fn: "window.commandAttack()" },
-        { name: 'Skill', icon: 'icon_skill.png', fn: "window.commandSkill()" },
-        { name: 'Item', icon: 'icon_item.png', fn: "console.log('Item')" },
-        { name: 'Defend', icon: 'icon_defend.png', fn: "window.commandDefend()" },
-        { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
-        { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
-        { name: 'Wait', icon: 'icon_wait.png', fn: "window.commandWait()" },
-        { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
-        { name: 'Dash', icon: 'icon_tactics.png', fn: "window.commandDash()" }
-    ];
-
-    actions.forEach(act => {
+    // Create 9 empty slots
+    for (let i = 0; i < 9; i++) {
         const btn = document.createElement('div');
         btn.style.cssText = `
             background: #222; border: 1px solid #444; cursor: pointer;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            transition: all 0.1s;
+            transition: transform 0.3s, background 0.1s;
         `;
         btn.onmouseenter = () => { btn.style.background = '#333'; btn.style.borderColor = '#d4af37'; };
         btn.onmouseleave = () => { btn.style.background = '#222'; btn.style.borderColor = '#444'; };
-        btn.onclick = () => {
-            // Execute function string
-            new Function(act.fn)();
-            // Optional: Close menu after action?
-            // menu.style.display = 'none'; 
-        };
-
-        btn.innerHTML = `
-            <img src="assets/images/ui/combat/${act.icon}" style="width:48px; height:48px; margin-bottom:5px;" onerror="this.style.display='none'">
-            <span style="font-family:'Cinzel'; font-size:12px; color:#ccc;">${act.name}</span>
-        `;
         menu.appendChild(btn);
-    });
+    }
 
     document.body.appendChild(menu);
+    
+    // Initialize with Main Menu
+    updateCombatMenu('main');
 }
 
 window.openInventory = () => {
