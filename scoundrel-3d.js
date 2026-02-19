@@ -39,6 +39,8 @@ let hTilt, vTilt, bloomPass, outlineEffect;
 let playerMarker; // Crystal marker
 let enemyRangeIndicator; // Red circle for enemy movement
 let movementRangeIndicator; // Green circle for combat movement
+let meleeRangeIndicator; // Red ring for melee range
+let rangedRangeIndicator; // Yellow ring for ranged limit
 let torchLight;
 let hemisphereLight; // Soft global fill light to improve readability under fog
 // let fogRings = []; // Fog ring sprites for atmospheric LOD // DEAD CODE
@@ -1241,6 +1243,22 @@ function init3D() {
     movementRangeIndicator.rotation.x = -Math.PI / 2;
     movementRangeIndicator.visible = false;
     scene.add(movementRangeIndicator);
+
+    // Melee Range Ring (1 unit)
+    const meleeGeo = new THREE.RingGeometry(0.9, 1.0, 64);
+    const meleeMat = new THREE.MeshBasicMaterial({ color: 0x880000, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false });
+    meleeRangeIndicator = new THREE.Mesh(meleeGeo, meleeMat);
+    meleeRangeIndicator.rotation.x = -Math.PI / 2;
+    meleeRangeIndicator.visible = false;
+    scene.add(meleeRangeIndicator);
+
+    // Ranged Range Ring (5 units)
+    const rangedGeo = new THREE.RingGeometry(4.9, 5.0, 64);
+    const rangedMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false });
+    rangedRangeIndicator = new THREE.Mesh(rangedGeo, rangedMat);
+    rangedRangeIndicator.rotation.x = -Math.PI / 2;
+    rangedRangeIndicator.visible = false;
+    scene.add(rangedRangeIndicator);
 
     // Enemy Range Indicator
     const eRangeGeo = new THREE.CircleGeometry(1, 64);
@@ -2534,6 +2552,14 @@ function animate3D() {
         // Pulse opacity slightly
         const pulse = 0.3 + Math.sin(Date.now() * 0.005) * 0.1;
         movementRangeIndicator.material.opacity = pulse;
+    }
+    
+    // Update Range Rings
+    if (meleeRangeIndicator && meleeRangeIndicator.visible && playerObj) {
+        meleeRangeIndicator.position.set(playerObj.position.x, playerObj.position.y + 0.12, playerObj.position.z);
+    }
+    if (rangedRangeIndicator && rangedRangeIndicator.visible && playerObj) {
+        rangedRangeIndicator.position.set(playerObj.position.x, playerObj.position.y + 0.12, playerObj.position.z);
     }
 
     if (isAttractMode) {
@@ -4456,7 +4482,11 @@ function spawn3DProjectile(startPos, targetPos, val) {
     let texName = 'flame_01.png';
     let color = 0xffaa00;
 
-    if (val === 3) { texName = 'spark_06.png'; color = 0x00ffff; } // Ice
+    if (val === 'rock') { 
+        texName = 'circle_03.png'; 
+        color = 0x888888; 
+    }
+    else if (val === 3) { texName = 'spark_06.png'; color = 0x00ffff; } // Ice
     else if (val === 4) { texName = 'smoke_05.png'; color = 0x00ff00; } // Poison
     else if (val === 5 || val === 6) { texName = 'trace_06.png'; color = 0xffff00; } // Lightning
     else if (val >= 8) { texName = 'twirl_02.png'; color = 0x00ff00; } // Void (Green)
@@ -4475,7 +4505,7 @@ function spawn3DProjectile(startPos, targetPos, val) {
         .onComplete(() => {
             scene.remove(sprite);
             // Impact FX
-            spawn3DImpact(impactPos, color);
+            spawn3DImpact(impactPos, color, val === 'rock' ? 'circle_03.png' : 'star_06.png');
             // Impact Sound
             if (audio && audio.initialized) audio.play('attack_blunt', { volume: 0.3, rate: 1.5 });
         })
@@ -7386,6 +7416,8 @@ function exitCombatView() {
     isCombatView = false;
     if (movementRangeIndicator) movementRangeIndicator.visible = false;
     if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
+    if (meleeRangeIndicator) meleeRangeIndicator.visible = false;
+    if (rangedRangeIndicator) rangedRangeIndicator.visible = false;
     scene.remove(combatGroup);
 
     // Note: Fog is restored in window.exitBattleIsland after delay
@@ -7516,11 +7548,17 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
     const canvas = document.createElement('canvas');
     canvas.width = 64; canvas.height = 64;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold 40px Arial';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(sides, 32, 32);
+    
+    const drawNum = (n) => {
+        ctx.clearRect(0, 0, 64, 64);
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 40px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(n, 32, 32);
+    };
+    drawNum(sides); // Start showing max value
+
     const tex = new THREE.CanvasTexture(canvas);
     const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
     label.scale.set(0.5, 0.5, 0.5);
@@ -7558,14 +7596,18 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
         .easing(TWEEN.Easing.Quadratic.Out)
         .onComplete(() => {
             // Show Number Result
-            // spawnFloatingText(finalValue.toString(), window.innerWidth/2, window.innerHeight/2 + 50, '#ffffff');
+            drawNum(finalValue);
+            tex.needsUpdate = true;
+            
+            // Pop effect
+            new TWEEN.Tween(dice.scale).to({x: 1.3, y: 1.3, z: 1.3}, 150).yoyo(true).repeat(1).start();
 
             // Cleanup
             setTimeout(() => {
                 scene.remove(dice);
                 if (dice.userData.nameLabel) scene.remove(dice.userData.nameLabel);
                 if (callback) callback();
-            }, 600);
+            }, 800);
         })
         .start();
 }
@@ -7665,12 +7707,17 @@ function logCombat(msg, color = '#ccc') {
 
 function updateMovementIndicator() {
     if (!movementRangeIndicator) return;
-    if (isCombatView && combatState.turn === 'player' && combatState.currentMove > 0.5) {
+    const isPlayerTurn = isCombatView && combatState.turn === 'player';
+    
+    if (isPlayerTurn && combatState.currentMove > 0.5) {
         movementRangeIndicator.visible = true;
         movementRangeIndicator.scale.setScalar(combatState.currentMove);
     } else {
         movementRangeIndicator.visible = false;
     }
+
+    if (meleeRangeIndicator) meleeRangeIndicator.visible = isPlayerTurn;
+    if (rangedRangeIndicator) rangedRangeIndicator.visible = isPlayerTurn;
 }
 
 window.use3dmodels = function (bool) {
@@ -7980,6 +8027,63 @@ function executePlayerAttack(target) {
         actions.attack.reset().play();
         // Play sound
         if (audio.initialized) audio.play('attack_slash', { volume: 0.5 });
+    }
+
+    // 1.5 Range Check & Throw Rock Logic
+    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const dist = playerObj.position.distanceTo(target.mesh.position);
+    
+    const isSpell = game.equipment.weapon && game.equipment.weapon.isSpell;
+    const maxRange = isSpell ? 5.0 : 1.5; // 1.5 melee (1.0 ring + buffer)
+    
+    if (dist > maxRange) {
+        if (isSpell) {
+            logMsg("Target out of range!");
+            spawnFloatingText("TOO FAR", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+            combatState.isTargeting = false;
+            combatState.turn = 'player'; // Refund turn
+            return;
+        } else {
+            // Throw Rock Logic
+            logMsg("Too far for melee! Throwing rock...");
+            spawnFloatingText("THROW ROCK", window.innerWidth/2, window.innerHeight/2 - 100, '#aaaaaa');
+            
+            // Spawn Rock Projectile
+            spawn3DProjectile(playerObj.position, target.mesh.position, 'rock');
+            
+            setTimeout(() => {
+                // Rock Mechanics: DEX + 1 vs Enemy Power
+                const playerDex = game.stats.dex || 1;
+                const rockPower = playerDex + 1;
+                const enemyStr = target.stats.str || 1;
+                const enemyPower = enemyStr + 4; // Standard enemy power
+                
+                const res = CombatResolver.resolveClash(rockPower, enemyPower, 0, target.stats.ac || 10);
+                
+                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xaaaaaa, { x: -1.5, y: -0.5 }, "Rock", () => {});
+                spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name, () => {
+                    
+                    if (res.attacker.total > res.defender.total) {
+                        // Hit - Fixed 1d4 damage
+                        const dmg = DiceRoller.roll(4);
+                        target.stats.hp -= dmg;
+                        spawnFloatingText(`-${dmg}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
+                        logCombat(`Rock hits! ${dmg} dmg.`, '#fff');
+                        
+                        if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
+                        if (target.actions && target.actions.hit) target.actions.hit.reset().play();
+                    } else {
+                        // Miss
+                        spawnFloatingText("MISSED", window.innerWidth/2, window.innerHeight/2, '#aaa');
+                        logCombat("Rock missed.", '#aaa');
+                    }
+                    
+                    updateUI();
+                    checkCombatEnd(target);
+                });
+            }, 600);
+            return;
+        }
     }
 
     // 2. Resolve Math
