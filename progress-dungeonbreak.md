@@ -65,3 +65,18 @@ The next step is to make the world feel alive and dangerous. We need to implemen
 ---
 
 This is a fantastic list. Getting the wandering enemies and proximity trigger working will be the "Aha!" moment where this truly starts to feel like a new game. Let's get to it!
+-.-
+<div class="vitality-row">
+                        <div style="text-align:right;">
+                            <div class="hp-big" id="hpValueModal">20</div>
+                            <div class="hp-label-small">Vitality</div>
+                        </div>
+                        <div style="flex-grow:1;">
+                            <div class="hp-bar-compact">
+                                <div class="hp-fill-compact" id="hpBarModal" style="width: 100%;"></div>
+                            <div id="apBarModal" style="position: absolute; top: 0px; left: 0px; height: 100%; background: rgb(136, 170, 255); opacity: 0.6; transition: width 0.3s; width: 100%;"></div></div>
+                            <div style="display:flex; justify-content:space-between; margin-top:2px;">
+                                <div class="hp-label-small"><span id="combatMessage" style="text-transform:none; color:#ddd; font-style:italic;">Make your move...</span></div>
+                            </div>
+                        </div>
+                    </div>
