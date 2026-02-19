@@ -15,6 +15,8 @@ for file in $argv
     # I've used -tw (WebP) here for easier Three.js setup, 
     # but feel free to swap back to -tc if you have KTX2 ready!
     gltfpack -i "$file" -o "$filename-web.glb" -cc -tw -si 0.9
+    # Print the animation names to the terminal for verification
+    gltfpack -i "$file" -o /dev/null -v | grep "animation"
 
     echo "Finished! Created $filename-web.glb"
 end

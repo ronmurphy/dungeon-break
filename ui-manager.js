@@ -331,22 +331,44 @@ function updateMapHUD() {
             mapHud.insertBefore(barContainer, mapHud.firstChild);
         }
 
-        // HP/AP Bars (Inside Container)
+        // HP Bar Structure (Container + Fill)
+        let hpContainer = document.getElementById('hudHpContainer');
+        if (!hpContainer) {
+            hpContainer = document.createElement('div');
+            hpContainer.id = 'hudHpContainer';
+            // Default: Fill parent (hudBarContainer)
+            hpContainer.style.cssText = "position:absolute; top:0; left:0; width:100%; height:100%; z-index:1; pointer-events:none; overflow:hidden;";
+            barContainer.appendChild(hpContainer);
+        }
+
         let hpBar = document.getElementById('hudHpBar');
         if (!hpBar) {
             hpBar = document.createElement('div');
             hpBar.id = 'hudHpBar';
-            hpBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:linear-gradient(to right, #8b0000, #e60000); z-index:1; transition: width 0.3s ease-out; opacity:0.6;";
-            barContainer.appendChild(hpBar);
+            hpBar.style.cssText = "display:block; position:relative; height:100%; background:linear-gradient(to right, #8b0000, #e60000); transition: width 0.3s ease-out; opacity:0.6;";
+            hpContainer.appendChild(hpBar);
+        } else if (hpBar.parentNode !== hpContainer) {
+            hpContainer.appendChild(hpBar); // Ensure correct parenting
         }
         hpBar.style.width = `${Math.max(0, Math.min(100, (game.hp / game.maxHp) * 100))}%`;
+
+        // AP Bar Structure (Container + Fill)
+        let apContainer = document.getElementById('hudApContainer');
+        if (!apContainer) {
+            apContainer = document.createElement('div');
+            apContainer.id = 'hudApContainer';
+            apContainer.style.cssText = "position:absolute; top:0; left:0; width:100%; height:100%; z-index:2; pointer-events:none; overflow:hidden;";
+            barContainer.appendChild(apContainer);
+        }
 
         let apBar = document.getElementById('hudApBar');
         if (!apBar) {
             apBar = document.createElement('div');
             apBar.id = 'hudApBar';
-            apBar.style.cssText = "position:absolute; top:0; left:0; height:100%; background:linear-gradient(to right, rgba(212, 175, 55, 0.5), rgba(255, 223, 0, 0.6)); z-index:2; transition: width 0.3s ease-out; pointer-events:none; border-right: 1px solid rgba(255,255,255,0.5);";
-            barContainer.appendChild(apBar);
+            apBar.style.cssText = "display:block; position:relative; height:100%; background:linear-gradient(to right, rgba(212, 175, 55, 0.5), rgba(255, 223, 0, 0.6)); transition: width 0.3s ease-out; border-right: 1px solid rgba(255,255,255,0.5);";
+            apContainer.appendChild(apBar);
+        } else if (apBar.parentNode !== apContainer) {
+            apContainer.appendChild(apBar); // Ensure correct parenting
         }
         apBar.style.width = `${game.maxAp > 0 ? Math.max(0, Math.min(100, (game.ap / game.maxAp) * 100)) : 0}%`;
 
@@ -375,7 +397,7 @@ function updateMapHUD() {
 
         // Ensure content is above bars
         Array.from(mapHud.children).forEach(c => {
-            if (c.id !== 'hudHpBar' && c.id !== 'hudApBar') {
+            if (c.id !== 'hudBarContainer') {
                 c.style.zIndex = '1';
                 if (getComputedStyle(c).position === 'static') c.style.position = 'relative';
             }

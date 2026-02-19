@@ -124,14 +124,21 @@ export const CombatManager = {
             .start();
 
         // 4. Move Player & Enemy to Arena
-        // Player Start: (-3, relative Y, 3) facing Center
-        // Note: The floor is at y=0 relative to group, so group.y is the base
+        const raycaster = new THREE.Raycaster();
+        const down = new THREE.Vector3(0, -1, 0);
+        
+        const getGroundY = (x, z) => {
+            raycaster.set(new THREE.Vector3(x, this.combatTarget.y + 50, z), down);
+            const hits = raycaster.intersectObject(this.battleGroup, true);
+            return hits.length > 0 ? hits[0].point.y : this.combatTarget.y;
+        };
+
         if (this.player) {
-            const pStart = new THREE.Vector3(
-                -3 + this.combatTarget.x, 
-                0.5 + this.combatTarget.y, 
-                3 + this.combatTarget.z
-            );
+            const px = -3 + this.combatTarget.x;
+            const pz = 3 + this.combatTarget.z;
+            const py = getGroundY(px, pz) + 0.1; // Slight offset
+
+            const pStart = new THREE.Vector3(px, py, pz);
             console.log("   -> Teleporting Player to:", pStart);
             this.player.position.copy(pStart);
             this.player.lookAt(this.combatTarget);
@@ -140,11 +147,11 @@ export const CombatManager = {
 
         // Enemy Start: (3, relative Y, -3) facing Center
         if (enemy && enemy.mesh) {
-            const eStart = new THREE.Vector3(
-                3.5 + this.combatTarget.x, 
-                0.5 + this.combatTarget.y, 
-                -3.5 + this.combatTarget.z
-            );
+            const ex = 3.5 + this.combatTarget.x;
+            const ez = -3.5 + this.combatTarget.z;
+            const ey = getGroundY(ex, ez);
+
+            const eStart = new THREE.Vector3(ex, ey, ez);
             console.log("   -> Teleporting Wanderer to:", eStart);
             enemy.mesh.position.copy(eStart);
             enemy.mesh.lookAt(this.combatTarget);

@@ -1721,8 +1721,8 @@ h1 {
     pointer-events: none !important; 
 }
 
-/* 4. HP Bar adjustments */
-#gameplayInventoryBar.gothic-hud-active #hudHpBar {
+/* 4. HP Bar adjustments (Container positions the bar area) */
+#gameplayInventoryBar.gothic-hud-active #hudHpContainer {
     /* Position relative to the Full HUD Container */
     position: absolute !important;
     top: 210px !important;
@@ -1732,7 +1732,14 @@ h1 {
     width: 550px !important; /* Approximate width of the red bottom bar area */
     bottom: 12px !important; /* Sit right near the bottom edge */
     height: 14px !important;
-    
+    background: rgba(0, 0, 0, 0.6) !important; /* Dark background for empty portion */
+    border-radius: 4px !important;
+    overflow: hidden !important;
+}
+
+/* The actual fill bar inside */
+#gameplayInventoryBar.gothic-hud-active #hudHpBar {
+    height: 100% !important;
     background: linear-gradient(to right, #aa0000, #ff3333) !important;
     opacity: 0.7 !important; /* Let the graphic show through a bit */
     border-radius: 4px !important;
@@ -1740,8 +1747,8 @@ h1 {
 }
 
 
-/* 5. AP Bar adjustments */
-#gameplayInventoryBar.gothic-hud-active #hudApBar {
+/* 5. AP Bar adjustments (Container) */
+#gameplayInventoryBar.gothic-hud-active #hudApContainer {
     position: absolute !important;
     top: 90px !important; /* Positioned ABOVE the hotbar slots */
     bottom: auto !important;
@@ -1750,7 +1757,13 @@ h1 {
     left: 176px !important;
     width: 460px !important;
     height: 8px !important;
-   
+    background: rgba(0, 0, 0, 0.6) !important; /* Dark background for empty portion */
+    border-radius: 2px !important;
+    overflow: hidden !important;
+}
+
+#gameplayInventoryBar.gothic-hud-active #hudApBar {
+    height: 100% !important;
     background: linear-gradient(to right, #cca300, #ffe600) !important; 
     opacity: 0.9 !important;
     border-radius: 2px !important;

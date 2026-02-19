@@ -1848,7 +1848,8 @@ function on3DClick(event, isRightClick = false) {
             }
 
             // Move player to point
-            movePlayerTo(point, isRightClick); // Pass run flag (Right Click = Run)
+            // Pass run flag (Right Click = Run OR Dashing in Combat)
+            movePlayerTo(point, isRightClick || (isCombatView && combatState.isDashing));
         }
     }
 }
@@ -8329,9 +8330,8 @@ function startEnemyTurn() {
             .easing(TWEEN.Easing.Quadratic.Out)
             .onUpdate(() => {
                 // Snap Y to terrain
-                if (CombatManager.battleGroup) {
-                    const rayOrigin = enemy.mesh.position.clone();
-                    rayOrigin.y = 20;
+                if (CombatManager.battleGroup && CombatManager.combatTarget) {
+                    const rayOrigin = new THREE.Vector3(enemy.mesh.position.x, CombatManager.combatTarget.y + 20, enemy.mesh.position.z);
                     terrainRaycaster.set(rayOrigin, new THREE.Vector3(0, -1, 0));
                     const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
                     if (hits.length > 0) {

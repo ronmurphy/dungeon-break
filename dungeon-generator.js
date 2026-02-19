@@ -322,10 +322,15 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
             // Special initialization for empty rooms (Battle Arena Mode)
             if (rooms.length === 0 && boundsOverride !== null) {
                 alive = false; // Clear random noise
-                // Initialize a noisy center blob to ensure random layouts
                 const distFromCenter = Math.sqrt(x*x + z*z);
-                // Use random noise inside a radius to let CA form organic shapes
-                if (distFromCenter < bounds * 0.5) alive = Math.random() < 0.55;
+                
+                // Ensure center spawn area is solid (Radius 6 covers player/enemy spawns)
+                if (distFromCenter < 6.0) {
+                    alive = true;
+                } else if (distFromCenter < bounds * 0.5) {
+                    // Use random noise inside a radius to let CA form organic shapes
+                    alive = Math.random() < 0.55;
+                }
             }
 
             grid[x][z] = alive;
