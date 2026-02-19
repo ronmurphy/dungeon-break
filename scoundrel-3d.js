@@ -21,7 +21,7 @@ import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, spawnHudFloatingText } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -115,7 +115,36 @@ const WANDERER_MODELS = [
     'ironjaw-web.glb',
     'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb'
 ];
+
+// List of models to display in Gallery Mode (editmap)
+// Add new building/prop filenames here to configure them.
+const GALLERY_MODELS = [
+    'Arcane_Altar-marker-web.glb',
+    'Azure_Flame_Obelisk-marker-web.glb',
+    'campfire_tower-web.glb',
+    'Cursed_Treasure_Chest-marker-web.glb',
+    'door-web.glb',
+    'Dreadspire_Citadel-web.glb',
+    'Eldritch_Hex_Cube-marker-web.glb',
+    'Emberwatch_Tower-web.glb',
+    'gothic_tower-web.glb',
+    'openchest-web.glb',
+    'room_dome-web.glb',
+    'room_rect-web.glb',
+    'room_round-web.glb',
+    'room_secret-web.glb',
+    'room_spire-web.glb',
+    'Spiralwood_Tower-web.glb',
+    'Stone_Wat-web.glb',
+    'Warden_Cube-marker-web.glb',
+    'waypoint-web.glb',
+    'Whispering_Manor-web.glb',
+    'Whispering_Obelisk-marker-web.glb',
+    'duck-web.glb'
+];
+
 const terrainRaycaster = new THREE.Raycaster();
+const collisionRaycaster = new THREE.Raycaster(); // New raycaster for walls/obstacles
 
 let globalFloorMesh = null; // Reference for terrain manipulation
 // Audio State
@@ -198,7 +227,12 @@ let combatState = {
     currentMove: 6.0,
     isDefending: false,
     skillUsed: false,
-    activeSkill: null
+    activeSkill: null,
+    isPlayerFlank: false, // For surprise attacks
+    ducksFound: 0,
+    ducksToFind: 0,
+    canAttack: true,
+    isDashing: false
 };
 
 let savedMapState = null; // For True Dungeon recursion
@@ -952,6 +986,13 @@ function updateWeather(ctx) {
             p.size = 1 + Math.random();
             p.color = currentWeather === 'spore' ? 'rgba(100, 255, 100, 0.3)' : 'rgba(200, 180, 150, 0.2)';
             p.life = 0; // Just for spawn logic reuse, dust persists differently
+        } else if (currentWeather === 'magic_yellow') {
+            p.x = Math.random() * w;
+            p.y = Math.random() * h;
+            p.vx = (Math.random() - 0.5) * 0.5;
+            p.vy = -0.5 - Math.random() * 0.5; // Float up
+            p.size = 2 + Math.random() * 2;
+            p.color = `rgba(255, 220, 0, ${0.4 + Math.random() * 0.4})`; // Yellow
         }
 
         weatherParticles.push(p);
@@ -1376,7 +1417,14 @@ function initWanderers() {
     });
     wanderers = [];
 
-    const count = 3 + Math.floor(game.floor); // Increased density: 3 + floor
+    // Revert to standard enemy count for normal floors
+    let count = 3 + Math.floor(game.floor); 
+    
+    // Apply Benchmark Math ONLY for True Dungeon
+    if (game.inTrueDungeon) {
+        const fps = gameSettings.benchmarkFPS || 30;
+        count = Math.floor(fps / 2); // FPS / 2 enemies
+    }
 
     for (let i = 0; i < count; i++) {
         const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
@@ -1520,11 +1568,13 @@ function pickWandererTarget(wanderer) {
                     const rayOriginHeight = 50;
                     const down = new THREE.Vector3(0, -1, 0);
 
-                    // 1. Snap to floor
+                    // 1. Snap to floor (Always snap to handle slopes, even in True Dungeon if terrain varies)
+                    // Use the Battle Island mesh if in combat, otherwise global floor
+                    const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+                    
                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
-                    const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                    const hits = terrainRaycaster.intersectObject(targetMesh, true);
                     let currentY = wanderer.mesh.position.y;
-
                     if (hits.length > 0) {
                         currentY = hits[0].point.y;
                         wanderer.mesh.position.y = currentY;
@@ -1535,7 +1585,7 @@ function pickWandererTarget(wanderer) {
                     const aheadPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
                     terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
-                    const aheadHits = terrainRaycaster.intersectObject(globalFloorMesh);
+                    const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
 
                     let stop = false;
                     if (aheadHits.length > 0) {
@@ -1671,6 +1721,8 @@ function on3DClick(event, isRightClick = false) {
     raycaster.setFromCamera(mouse, camera);
     const intersects = raycaster.intersectObjects(scene.children, true);
 
+    // console.log(`[on3DClick] Intersects: ${intersects.length}`, intersects.length > 0 ? intersects[0].object : 'None');
+
     // --- COMBAT TARGETING ---
     if (isCombatView && combatState.isTargeting && activeWanderer && activeWanderer.mesh) {
         // Check if we clicked the enemy
@@ -1697,9 +1749,17 @@ function on3DClick(event, isRightClick = false) {
             let obj = intersects[i].object;
             const current = game.rooms.find(r => r.id === game.currentRoomIdx);
 
+            // Traverse up to find roomId if clicking on a child model (like the chest)
+            let roomObj = obj;
+            while (roomObj && (!roomObj.userData || roomObj.userData.roomId === undefined) && roomObj.parent) {
+                roomObj = roomObj.parent;
+            }
+
             // Check for Room Mesh Interaction
-            if (obj.userData && obj.userData.roomId !== undefined) {
-                const roomIdx = obj.userData.roomId;
+            if (roomObj && roomObj.userData && roomObj.userData.roomId !== undefined) {
+                const roomIdx = roomObj.userData.roomId;
+                
+                console.log(`[Click] Hit Object in Room ${roomIdx}. Current Room: ${game.currentRoomIdx}`);
 
                 // Movement
                 if (current && current.connections.includes(roomIdx)) {
@@ -1707,8 +1767,8 @@ function on3DClick(event, isRightClick = false) {
                     break;
                 }
 
-                // Self-Interaction (Trap, Bonfire, Merchant) in Combat View
-                if (isCombatView && current && current.id === roomIdx && (current.isTrap || current.isBonfire || current.isSpecial) && current.state !== 'cleared') {
+                // Self-Interaction (Trap, Bonfire, Merchant, Locked) - Allow re-triggering if we are in the room
+                if (current && current.id === roomIdx && (current.isTrap || current.isBonfire || current.isSpecial || current.isLocked)) {
                     enterRoom(roomIdx);
                     break;
                 }
@@ -1900,6 +1960,26 @@ function update3DScene() {
                 const rDepth = 3.0 + Math.random() * 3.0;
                 r.rDepth = rDepth;
 
+                // --- DUCK DUNGEON OVERRIDE ---
+                if (game.inDuckDungeon && r.isDuckChest && !r.isCollected) {
+                    // Spawn Duck
+                    const duckGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5); // Fallback
+                    const duckMat = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+                    const mesh = new THREE.Mesh(duckGeo, duckMat);
+                    
+                    loadGLB('assets/images/glb/duck.glb', (model) => {
+                        mesh.add(model);
+                        mesh.material.visible = false;
+                        // Bobbing animation
+                        // We can add a simple tween here or handle in animate loop
+                    }, 1.5, 'duck.glb');
+
+                    mesh.position.set(r.gx, 0, r.gy);
+                    scene.add(mesh);
+                    roomMeshes.set(r.id, mesh);
+                    return; // Skip standard room generation
+                }
+
                 let geo, customModelPath = null, customScale = 1.0;
 
                 if (r.isFinal) {
@@ -2010,11 +2090,9 @@ function update3DScene() {
                             // Fix Origin: Align bottom of model to floor using Bounding Box
                             const box = new THREE.Box3().setFromObject(model);
 
-                            // Determine floor level relative to container mesh
-                            let floorOffset = -rDepth / 2;
-                            if (r.isFinal || r.shape === 'dome' || r.isSecret) {
-                                floorOffset = 0;
-                            }
+                            // Since we force the container mesh to y=0 for all custom models (see below),
+                            // the floor offset relative to the parent is just 0.
+                            const floorOffset = 0;
                             // Shift model so its bottom (box.min.y) sits at floorOffset
                             model.position.set(0, floorOffset - box.min.y - 0.05, 0);
                         }
@@ -2188,10 +2266,11 @@ function update3DScene() {
                 else applyTextureToMesh(mesh, 'block', 0);
                 scene.add(mesh);
                 roomMeshes.set(r.id, mesh);
-                addDoorsToRoom(r, mesh);
+                // addDoorsToRoom(r, mesh); // Hiding doors to reveal markers per user request
                 addLocalFog(mesh);
             }
             const mesh = roomMeshes.get(r.id);
+            r.mesh = mesh; // Ensure room object has reference to mesh for visuals
 
             // Visual Priority: Cleared (Holy Glow) > Special > Base
             let eCol = 0x000000;
@@ -2330,6 +2409,7 @@ function animate3D() {
     const playerObj = use3dModel ? playerMesh : playerSprite;
 
     // --- COMBAT TRIGGER ---
+    /* Redundant trigger removed to allow AI logic (stealth/flanking) to handle combat start
     if (playerObj && !isCombatView && !isAttractMode) {
         for (let i = 0; i < wanderers.length; i++) {
             const w = wanderers[i];
@@ -2351,6 +2431,71 @@ function animate3D() {
                 }
                 startCombat(w);
                 break; // Only trigger one combat at a time
+            }
+        }
+    }
+    */
+
+    // Proximity Trigger for Markers (Chest, Altar, etc.)
+    if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
+        for (const r of game.rooms) {
+            // Only check markers that are not the current room
+            if (r.id !== game.currentRoomIdx && (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret)) {
+                const dist = Math.hypot(r.gx - playerObj.position.x, r.gy - playerObj.position.z);
+                // Use tight distance threshold for markers so you have to walk INTO them
+                if (dist < 0.6) {
+                    console.log(`[Proximity] Triggering Marker Room ${r.id}`);
+                    enterRoom(r.id);
+                    break; // Only trigger one at a time
+                }
+            }
+        }
+    }
+
+    // Duck Collection Logic
+    if (game.inDuckDungeon && playerObj) {
+        for (const r of game.rooms) {
+            if (r.isDuckChest && !r.isCollected) {
+                const dist = Math.hypot(r.gx - playerObj.position.x, r.gy - playerObj.position.z);
+                if (dist < 0.8) {
+                    r.isCollected = true;
+                    game.ducksFound++;
+                    audio.play('quack', { volume: 0.8 });
+                    spawnFloatingText(`QUACK! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
+                    
+                    const mesh = roomMeshes.get(r.id);
+                    if (mesh) scene.remove(mesh);
+
+                    updateUI(); // Update counter
+
+                    if (game.ducksFound >= game.ducksToFind) {
+                        setTimeout(exitTrueDungeon, 1000);
+                    }
+                }
+            }
+        }
+    }
+
+    // Room Entry via Proximity (Free Movement support)
+    if (!isCombatView && !isAttractMode && !isEditMode) {
+        const playerObj = use3dModel ? playerMesh : playerSprite;
+        if (playerObj) {
+            // Find which room we are physically in
+            const physicalRoom = game.rooms.find(r => 
+                Math.abs(r.gx - playerObj.position.x) < r.w/2 - 0.1 && 
+                Math.abs(r.gy - playerObj.position.z) < r.h/2 - 0.1
+            );
+
+            if (physicalRoom && physicalRoom.id !== game.currentRoomIdx) {
+                const current = game.rooms.find(r => r.id === game.currentRoomIdx);
+                // Only trigger if connected
+                if (current && current.connections.includes(physicalRoom.id)) {
+                    // Check if we are already interacting (modal open) to prevent spam
+                    const isInteracting = (game.activeRoom && game.activeRoom.id === physicalRoom.id && document.getElementById('combatModal').style.display === 'flex');
+                    if (!isInteracting) {
+                        enterRoom(physicalRoom.id);
+                    }
+                }
             }
         }
     }
@@ -2538,11 +2683,12 @@ function animate3D() {
                             if (distance > 1.2) {
                                 wanderer.mesh.position.add(dir.multiplyScalar(moveDist));
                                 // Snap to floor to prevent flying/sinking
-                                if (globalFloorMesh) {
+                                const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+                                if (targetMesh) {
                                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
-                                    const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                                    const hits = terrainRaycaster.intersectObject(targetMesh, true);
                                     if (hits.length > 0) {
-                                        wanderer.mesh.position.y = hits[0].point.y;
+                                        wanderer.mesh.position.y = hits[0].point.y + (use3dModel ? 0 : 0.75); // Offset for sprites if needed
                                     }
                                 }
                             }
@@ -2550,7 +2696,20 @@ function animate3D() {
                             // Combat Trigger (Touch)
                             if (distance < 1.2) {
                                 // Trigger Combat
-                                startCombat(wanderer);
+                                // --- FLANKING CHECK ---
+                                const wandererForward = new THREE.Vector3();
+                                wanderer.mesh.getWorldDirection(wandererForward);
+                                wandererForward.y = 0; wandererForward.normalize();
+
+                                const toPlayer = new THREE.Vector3().subVectors(playerPos, wandererPos);
+                                toPlayer.y = 0; toPlayer.normalize();
+
+                                const dot = wandererForward.dot(toPlayer);
+                                // If dot is negative, player is generally behind.
+                                // We use the same angle as the vision cone to define the "back arc".
+                                const isFlank = dot < -visionConeAngleCos;
+                                
+                                startCombat(wanderer, isFlank);
                             }
                         }
                     }
@@ -2731,9 +2890,28 @@ function movePlayerTo(targetVec, isRunning = false) {
     const dist = startPos.distanceTo(targetVec);
     const duration = (dist / speed) * 1000;
 
+    // Consume Torch Fuel based on distance (Free Movement)
+    // Rate: 0.05 per unit (approx 0.5 per room-to-room travel)
+    game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.05));
+    updateUI();
+
     // Calculate movement direction for the look-ahead raycast
     const moveDir = new THREE.Vector3().subVectors(targetVec, startPos).normalize();
     moveDir.y = 0; // Keep it horizontal
+
+    // --- COLLISION DETECTION SETUP ---
+    // Collect solid objects: All rooms except current and Room 0 (Obelisk)
+    const solidObjects = [];
+    roomMeshes.forEach((mesh, id) => {
+        const r = game.rooms.find(room => room.id === id);
+        // Exclude markers/open areas from being solid walls so we can walk into them
+        const isMarker = r && (r.isLocked || r.isTrap || r.isAlchemy || r.isSecret || r.isShrine);
+        if (id !== 0 && id !== game.currentRoomIdx && !isMarker) {
+            solidObjects.push(mesh);
+        }
+    });
+    // Add decorations (trees/rocks) if needed, though they are instanced and might need specific handling
+    // For now, rooms are the main blockers.
 
     // Face target
     if (use3dModel && playerMesh) {
@@ -2790,6 +2968,17 @@ function movePlayerTo(targetVec, isRunning = false) {
                     if (Math.abs(nextY - currY) > 1.5) {
                         stopMovement();
                     }
+
+                    // 3. Solid Object Collision (Walls/Buildings)
+                    // Cast forward from player center
+                    collisionRaycaster.set(new THREE.Vector3(playerObj.position.x, playerObj.position.y + 1.0, playerObj.position.z), moveDir);
+                    collisionRaycaster.camera = camera; // Fix for sprite raycasting error
+                    collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
+                    const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
+                    
+                    if (wallHits.length > 0) {
+                        stopMovement();
+                    }
                 } else {
                     // No ground hit? We are staring into the void. STOP.
                     if (playerMoveTween) playerMoveTween.stop();
@@ -2842,7 +3031,7 @@ function movePlayerSprite(oldId, newId) {
     audio.play('footstep', { volume: 0.4, rate: 0.9 + Math.random() * 0.2 });
 
     // Consume Torch Fuel
-    game.torchCharge = Math.max(0, game.torchCharge - 1);
+    game.torchCharge = Math.max(0, game.torchCharge - 0.2); // Reduced consumption for tile movement
     if (game.torchCharge < 5) logMsg(`Torch is fading... (${game.torchCharge} left)`);
     updateUI();
 
@@ -3057,6 +3246,12 @@ function takeDamage(amount) {
     }
 
     game.hp -= remaining;
+    
+    if (remaining > 0) {
+        spawnHudFloatingText(`-${remaining}`, '#ff0000');
+    }
+    
+    updateUI(); // Ensure HUD updates immediately
 
     // Trigger 3D Hit Animation
     if (use3dModel && actions.hit && actions.idle && amount > 0) {
@@ -3087,6 +3282,10 @@ function updateAtmosphere(floor) {
     if (floor === 99) {
         bg = new THREE.Color(0x220000); // Dark Red Background
         fogColor = new THREE.Color(0x440000); // Red Fog
+    } else if (floor === 100) {
+        // Duck Pond Theme
+        bg = new THREE.Color(0x002244); // Deep Blue
+        fogColor = new THREE.Color(0x004488); // Blue Fog
     }
     scene.background = bg;
 
@@ -3682,11 +3881,12 @@ function enterRoom(id) {
     if (room.state === 'cleared' && !room.isFinal) { logMsg("Safe passage."); return; }
     if (room.state === 'cleared' && room.isFinal) { game.activeRoom = room; showCombat(); return; }
 
-    if (room.isLocked && room.state !== 'cleared') {
+    if (room.isLocked) {
         // Check if this is the Cursed Chest (True Dungeon Trigger)
         // For now, we assume ALL locked rooms use the Cursed Chest marker and trigger this.
         game.activeRoom = room;
         showDungeonPrompt(room);
+        // Do NOT return here if we want to allow movement logic? No, prompt blocks.
         return;
     }
 
@@ -5199,8 +5399,9 @@ let gameSettings = {
     shadowsEnabled: 'medium', // false, 'low', 'medium', 'high'
     celShadingEnabled: false,
     celOutlineEnabled: true,
-    lod: { near: 40, far: 80 }, // Default LOD distances
-    pixelRatio: 1.5
+    lod: { near: 40, far: 80 },
+    pixelRatio: 1.5,
+    benchmarkFPS: 30 // Default safe value
 };
 
 function loadSettings() {
@@ -5211,6 +5412,7 @@ function loadSettings() {
 
         if (!gameSettings.lod) gameSettings.lod = { near: 40, far: 80 };
         if (!gameSettings.pixelRatio) gameSettings.pixelRatio = 1.5;
+        if (!gameSettings.benchmarkFPS) gameSettings.benchmarkFPS = 30;
         // Migration for old boolean setting
         if (gameSettings.tiltShift !== undefined) {
             gameSettings.tiltShiftMode = gameSettings.tiltShift ? 'css' : 'off';
@@ -5496,6 +5698,7 @@ window.runBenchmark = async function () {
 
     // Run the smart benchmark
     const { profile: bestProfile, fps: finalFps } = await runSmartBenchmark(testProfile);
+    gameSettings.benchmarkFPS = finalFps; // Save for level generation scaling
 
     // Apply the final chosen profile
     window.applyAndSaveProfile(bestProfile);
@@ -6289,42 +6492,118 @@ function showDungeonPrompt(room) {
     `;
 }
 
+function showLoading(msg, imgUrl = null) {
+    let loader = document.getElementById('loadingOverlay');
+    if (!loader) {
+        loader = document.createElement('div');
+        loader.id = 'loadingOverlay';
+        loader.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:#000; z-index:99999; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--gold); font-family:'Cinzel';";
+        loader.innerHTML = `
+            <img id="loadingImg" src="" style="max-width:300px; max-height:300px; margin-bottom:20px; display:none;">
+            <div style="font-size:2rem; margin-bottom:20px;">LOADING</div>
+            <div id="loadingMsg" style="font-family:'Crimson Text'; font-style:italic; color:#aaa;">${msg}</div>
+            <div style="margin-top:20px; width:200px; height:4px; background:#333; border-radius:2px; overflow:hidden;">
+                <div style="width:100%; height:100%; background:var(--gold); animation: loadingBar 1.5s infinite ease-in-out;"></div>
+            </div>
+            <style>@keyframes loadingBar { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }</style>
+        `;
+        document.body.appendChild(loader);
+    } else {
+        document.getElementById('loadingMsg').innerText = msg;
+        const img = document.getElementById('loadingImg');
+        if (imgUrl) { img.src = imgUrl; img.style.display = 'block'; }
+        else { img.style.display = 'none'; }
+        loader.style.display = 'flex';
+    }
+}
+
+function hideLoading() {
+    const loader = document.getElementById('loadingOverlay');
+    if (loader) loader.style.display = 'none';
+}
+
 window.enterTrueDungeon = function() {
-    logMsg("The world twists and warps...");
     closeCombat();
-
-    // 1. Save State
-    savedMapState = {
-        rooms: JSON.parse(JSON.stringify(game.rooms)), // Deep copy
-        floor: game.floor,
-        currentRoomIdx: game.currentRoomIdx,
-        playerPos: (use3dModel ? playerMesh : playerSprite).position.clone(),
-        camPos: camera.position.clone(),
-        camTarget: controls.target.clone(),
-        lockedRoomId: game.activeRoom.id
-    };
-
-    // 2. Setup New Dungeon
-    game.inTrueDungeon = true;
-    game.floor = 99; // Special floor ID for theme/difficulty
-    game.rooms = generateDungeon(game.floor); // Generate new layout
-    game.currentRoomIdx = 0;
-    game.visitedWaypoints = [];
     
-    // 3. Re-init Scene
-    clear3DScene();
-    init3D();
-    preloadFXTextures();
+    // Roll for Duck Dungeon (10% Chance)
+    const isDuck = Math.random() < 0.1;
+    
+    if (isDuck) {
+        showLoading("What the Duck?!", "assets/images/quack.png");
+    } else {
+        showLoading("Warping to the Cursed Realm...");
+    }
 
-    // Generate Flat Floor (True Dungeon Mode)
-    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, null, true);
+    // Defer execution to allow UI to render
+    setTimeout(() => {
+        logMsg("The world twists and warps...");
 
-    updateAtmosphere(game.floor); // Will use floor 99 theme (wraps to one of the existing)
-    initWanderers();
+        // 1. Save State
+        savedMapState = {
+            rooms: game.rooms.map(r => {
+                const copy = { ...r };
+                delete copy.mesh; // Remove Three.js object to prevent circular ref crash
+                return copy;
+            }),
+            floor: game.floor,
+            currentRoomIdx: game.currentRoomIdx,
+            playerPos: (use3dModel ? playerMesh : playerSprite).position.clone(),
+            camPos: camera.position.clone(),
+            camTarget: controls.target.clone(),
+            lockedRoomId: game.activeRoom.id
+        };
 
-    updateUI();
-    logMsg("You have entered the Cursed Realm.");
-    enterRoom(0);
+        // 2. Setup New Dungeon
+        game.inTrueDungeon = true;
+        game.inDuckDungeon = isDuck;
+        game.floor = isDuck ? 100 : 99; // 100 = Duck, 99 = Cursed
+        
+        // Apply Benchmark Math ONLY for True Dungeon
+        const fps = gameSettings.benchmarkFPS || 30;
+        let roomCount = Math.max(8, Math.floor(fps / 3)); // Reduced room count (FPS / 3)
+        const bounds = Math.floor(fps + 20); // FPS + 20 level size
+
+        if (isDuck) {
+            roomCount = Math.max(5, Math.floor(roomCount / 2)); // Fewer rooms for ducks
+        }
+
+        game.rooms = generateDungeon(game.floor, roomCount); // Generate new layout
+        game.currentRoomIdx = 0;
+        game.visitedWaypoints = [];
+
+        // Duck Setup
+        if (isDuck) {
+            game.ducksFound = 0;
+            game.ducksToFind = 0;
+            // Convert random rooms to Duck Chests
+            const potentialDucks = game.rooms.filter(r => r.id !== 0);
+            // Make 50% of rooms ducks
+            const numDucks = Math.max(1, Math.floor(potentialDucks.length * 0.5));
+            shuffle(potentialDucks);
+            for (let i = 0; i < numDucks; i++) {
+                potentialDucks[i].isDuckChest = true;
+                potentialDucks[i].isCollected = false;
+                game.ducksToFind++;
+            }
+        }
+        
+        // 3. Re-init Scene
+        clear3DScene();
+        init3D();
+        preloadFXTextures();
+
+        // Generate Flat Floor (True Dungeon Mode) with calculated bounds
+        globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, bounds, true);
+
+        updateAtmosphere(game.floor); // Will use floor 99 or 100 theme
+        initWanderers();
+
+        updateUI();
+        logMsg(isDuck ? "Collect all the ducks!" : "You have entered the Cursed Realm.");
+        
+        hideLoading();
+        enterRoom(0);
+    }, 100);
 };
 
 window.exitTrueDungeon = function() {
@@ -6332,6 +6611,7 @@ window.exitTrueDungeon = function() {
     
     // 1. Restore State
     game.inTrueDungeon = false;
+    game.inDuckDungeon = false;
     game.rooms = savedMapState.rooms;
     game.floor = savedMapState.floor;
     game.currentRoomIdx = savedMapState.currentRoomIdx;
@@ -6953,7 +7233,7 @@ function restoreDecorations() {
     hiddenDecorationIndices.clear();
 }
 
-function startCombat(wanderer) {
+function startCombat(wanderer, isFlankAttack = false) {
     console.log("🔥 [scoundrel-3d.js] startCombat() function entered.");
     console.log("   -> Triggered by wanderer:", wanderer);
 
@@ -6963,6 +7243,7 @@ function startCombat(wanderer) {
     }
     activeWanderer = wanderer;
 
+    combatState.isPlayerFlank = isFlankAttack;
     // --- FIX LOD FOR COMBAT ---
     // The combat camera is ~70 units away, which might trigger the low-poly box 
     // if the LOD setting is "Medium" (50) or "Low". We force the box distance to Infinity here.
@@ -6978,10 +7259,13 @@ function startCombat(wanderer) {
         const baseStats = getEnemyStats(activeWanderer.filename);
         activeWanderer.stats = { ...baseStats };
         // Scale with Floor
-        activeWanderer.stats.hp += (game.floor * 4);
+        let effectiveFloor = game.floor;
+        if (game.inTrueDungeon) effectiveFloor = 12; // Cap difficulty for True Dungeon so it's playable
+
+        activeWanderer.stats.hp += (effectiveFloor * 4);
         activeWanderer.stats.maxHp = activeWanderer.stats.hp;
-        activeWanderer.stats.ac += Math.floor(game.floor / 2);
-        activeWanderer.stats.str += Math.floor(game.floor / 3);
+        activeWanderer.stats.ac += Math.floor(effectiveFloor / 2);
+        activeWanderer.stats.str += Math.floor(effectiveFloor / 3);
     }
 
     // Add HP Bar to enemy
@@ -7049,8 +7333,11 @@ function startCombat(wanderer) {
     combatState.turn = 'player';
     combatState.isTargeting = false;
     combatState.isDefending = false;
+    combatState.isPlayerFlank = isFlankAttack;
     combatState.skillUsed = false;
     combatState.activeSkill = null;
+    combatState.canAttack = true;
+    combatState.isDashing = false;
 
     updateMovementIndicator();
     showCombat();
@@ -7417,6 +7704,11 @@ window.commandAttack = function () {
         spawnFloatingText("Not your turn!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
         return;
     }
+    if (!combatState.canAttack) {
+        spawnFloatingText("Cannot Attack!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+        logMsg("You cannot attack after Dashing.");
+        return;
+    }
     combatState.isTargeting = true;
     spawnFloatingText("SELECT TARGET", window.innerWidth / 2, window.innerHeight / 2 - 150, '#d4af37');
     logMsg("Select a target to attack.");
@@ -7425,6 +7717,11 @@ window.commandAttack = function () {
 window.commandSkill = function () {
     if (combatState.turn !== 'player') {
         spawnFloatingText("Not your turn!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+        return;
+    }
+    if (!combatState.canAttack) {
+        spawnFloatingText("Cannot Skill!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+        logMsg("You cannot use skills after Dashing.");
         return;
     }
     if (combatState.skillUsed) {
@@ -7446,6 +7743,22 @@ window.commandSkill = function () {
     
     spawnFloatingText(`${skill.name.toUpperCase()}`, window.innerWidth / 2, window.innerHeight / 2 - 150, '#00ffff');
     logMsg(`Skill selected: ${skill.name}. Select target.`);
+};
+
+window.commandDash = function() {
+    if (combatState.turn !== 'player') return;
+    if (combatState.isDashing) {
+        logMsg("Already dashed this turn.");
+        return;
+    }
+    
+    combatState.isDashing = true;
+    combatState.canAttack = false;
+    combatState.currentMove += combatState.maxMove;
+    
+    spawnFloatingText("DASH!", window.innerWidth / 2, window.innerHeight / 2, '#00ffff');
+    logMsg("Dashed! Movement increased. Attack disabled.");
+    updateMovementIndicator();
 };
 
 function executePlayerSkill(target) {
@@ -7576,6 +7889,22 @@ function executePlayerAttack(target) {
             // Critical Hit Check
             const isCrit = (result.attacker.roll === result.attacker.config.sides);
             
+            // --- NEW FLANKING BONUS ---
+            if (combatState.isPlayerFlank) {
+                const originalDamage = result.damage;
+                result.damage = Math.ceil(result.damage * 1.5);
+                const bonus = result.damage - originalDamage;
+
+                if (bonus > 0) {
+                    logCombat(`Flank attack! (+${bonus} Dmg)`, '#ffd700');
+                    spawnFloatingText("BACKSTAB!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
+                }
+                
+                // Bonus only applies to the first attack of the combat encounter.
+                combatState.isPlayerFlank = false; 
+            }
+            // --- END FLANKING BONUS ---
+
             if (isCrit) {
                 spawnFloatingText("CRITICAL!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
                 triggerShake(20, 30); // Intense shake
@@ -7625,6 +7954,11 @@ function executePlayerAttack(target) {
 function checkCombatEnd(target) {
     if (target.stats.hp <= 0) {
         logCombat("Enemy defeated!", '#ffd700');
+        
+        // Add Trophy (Power = Str + 4)
+        const power = (target.stats.str || 1) + 4;
+        game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: target.name });
+        
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
         setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
     } else if (game.hp <= 0) {
@@ -7673,6 +8007,53 @@ function startEnemyTurn() {
         enemyRangeIndicator.scale.setScalar(moveSpeed);
         enemyRangeIndicator.position.copy(enemy.mesh.position);
         enemyRangeIndicator.position.y += 0.1;
+    }
+
+    // --- ENEMY FLEE LOGIC (Dash) ---
+    const hpPct = enemy.stats.hp / enemy.stats.maxHp;
+    // Flee if HP < 15% and NOT in True Dungeon (no escape there)
+    if (hpPct <= 0.15 && !game.inTrueDungeon) {
+        logMsg(`${enemy.name} is trying to escape!`);
+        spawnFloatingText("FLEEING!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
+        
+        // Calculate flee target (away from center)
+        const center = new THREE.Vector3(2000, 2000, 2000);
+        const dirFromCenter = new THREE.Vector3().subVectors(enemy.mesh.position, center).normalize();
+        dirFromCenter.y = 0;
+        
+        // Target edge (radius ~25)
+        const fleeTarget = center.clone().add(dirFromCenter.multiplyScalar(25));
+        
+        // Dash speed for enemy (Double standard 6.0)
+        const dashSpeed = 12.0; 
+        
+        enemy.mesh.lookAt(fleeTarget);
+        if (enemy.actions.walk) enemy.actions.walk.play();
+        if (enemy.actions.idle) enemy.actions.idle.stop();
+        
+        const distToEdge = enemy.mesh.position.distanceTo(fleeTarget);
+        const moveDist = Math.min(distToEdge, dashSpeed);
+        
+        const targetPos = enemy.mesh.position.clone().add(dirFromCenter.multiplyScalar(moveDist));
+
+        new TWEEN.Tween(enemy.mesh.position)
+            .to({ x: targetPos.x, z: targetPos.z }, 1000)
+            .easing(TWEEN.Easing.Quadratic.Out)
+            .onUpdate(() => {
+                 // Snap Y logic handled by existing raycaster if needed, or assume flat for flee
+            })
+            .onComplete(() => {
+                const dist = enemy.mesh.position.distanceTo(center);
+                if (dist > 20) {
+                    logMsg(`${enemy.name} escaped!`);
+                    spawnFloatingText("ESCAPED", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+                    window.exitBattleIsland(); // End combat without loot
+                } else {
+                    endEnemyTurn();
+                }
+            })
+            .start();
+        return;
     }
 
     // 1. Move if needed
@@ -7793,6 +8174,8 @@ function endEnemyTurn() {
     setTimeout(() => {
         combatState.turn = 'player';
         combatState.currentMove = combatState.maxMove;
+        combatState.canAttack = true;
+        combatState.isDashing = false;
         combatState.isDefending = false; // Reset defense
         updateMovementIndicator();
         logCombat("Player turn.");
@@ -7816,6 +8199,7 @@ window.editmap = function (bool) {
     if (isEditMode) {
         controls.minZoom = 0.1; // Allow zooming closer
         if (!ui) {
+            refreshEditorHighlights(); // Highlight unconfigured assets immediately
             ui = document.createElement('div');
             ui.id = 'editorUI';
             ui.style.cssText = "position:fixed; bottom:20px; right:20px; width:320px; background:rgba(0,0,0,0.9); border:2px solid #0ff; padding:15px; color:#fff; font-family:monospace; z-index:10000; display:flex; flex-direction:column; gap:8px; font-size:12px;";
@@ -7857,15 +8241,11 @@ window.editmap = function (bool) {
     } else {
         if (ui) ui.style.display = 'none';
         if (selectedMesh) {
-            // Reset highlight
-            selectedMesh.traverse(c => { if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x000000); });
-            if (currentAxesHelper) {
-                if (currentAxesHelper.parent) currentAxesHelper.parent.remove(currentAxesHelper);
-                currentAxesHelper = null;
-            }
             selectedMesh = null;
+            if (currentAxesHelper && currentAxesHelper.parent) currentAxesHelper.parent.remove(currentAxesHelper);
         }
         controls.minZoom = 0.5; // Reset zoom
+        updateRoomVisuals(); // Restore game colors
     }
 };
 
@@ -7889,24 +8269,27 @@ function handleEditClick(event) {
     const intersects = raycaster.intersectObjects(scene.children, true);
 
     for (let i = 0; i < intersects.length; i++) {
-        // Find the root GLB model (usually a Group inside the Room Mesh)
         let obj = intersects[i].object;
-        while (obj.parent && obj.parent !== scene && !obj.userData.roomId) {
-            // Check if this is a loaded GLB root (usually a Group)
-            if (obj.type === 'Group' || obj.type === 'Scene') break;
-            obj = obj.parent;
+        
+        // Traverse up to find the GLB root (the object that has the configKey)
+        let glbRoot = null;
+        let curr = obj;
+        while (curr && curr !== scene) {
+            if (curr.userData && curr.userData.configKey) {
+                glbRoot = curr;
+                break;
+            }
+            curr = curr.parent;
         }
 
-        // If we found a GLB inside a room mesh
-        if (obj && obj.parent && obj.parent.userData && obj.parent.userData.roomId !== undefined) {
+        if (glbRoot) {
             // Check for Door Warning
-            if (obj.userData.configKey && obj.userData.configKey.includes('door')) {
+            if (glbRoot.userData.configKey.includes('door')) {
                 if (!confirm("⚠️ WARNING: Doors are auto-positioned by the game logic.\n\nEditing this will create a static override for ALL doors, which may break their alignment in other rooms.\n\nAre you sure you want to edit the door config?")) {
                     return;
                 }
             }
-
-            selectEditorMesh(obj);
+            selectEditorMesh(glbRoot);
             break;
         }
     }
@@ -7914,16 +8297,12 @@ function handleEditClick(event) {
 
 function selectEditorMesh(mesh) {
     if (selectedMesh) {
-        // Reset old highlight
-        selectedMesh.traverse(c => { if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x000000); });
         if (currentAxesHelper) {
             if (currentAxesHelper.parent) currentAxesHelper.parent.remove(currentAxesHelper);
             currentAxesHelper = null;
         }
     }
     selectedMesh = mesh;
-    // Highlight new
-    selectedMesh.traverse(c => { if (c.isMesh && c.material.emissive) c.material.emissive.setHex(0x00ffff); });
 
     // Add Axes Helper (Red=X, Green=Y, Blue=Z)
     currentAxesHelper = new THREE.AxesHelper(2.5);
@@ -7949,6 +8328,8 @@ function selectEditorMesh(mesh) {
     updateInput('edRotY', mesh.rotation.y);
     updateInput('edScale', mesh.scale.x); // Assume uniform X/Z
     updateInput('edScaleY', mesh.scale.y);
+
+    refreshEditorHighlights(); // Update colors (Selected vs Unconfigured)
 }
 
 function applyEditorTransform() {
@@ -7965,11 +8346,42 @@ function applyEditorTransform() {
     selectedMesh.rotation.y = ry;
     selectedMesh.scale.set(s, sy, s); // X and Z linked to Scale, Y independent
 
-    // Update Config Object
-    // We need to know WHICH file this is. 
-    // Since we don't store the filename on the mesh, we have to infer or store it during load.
-    // Let's assume the user knows what they are editing for now, or we add userData during load.
-    // For now, let's just log it.
+    // Update Config Object in Real-Time
+    const key = selectedMesh.userData.configKey;
+    if (key) {
+        roomConfig[key] = {
+            pos: { x: px, y: py, z: pz },
+            rot: { x: selectedMesh.rotation.x, y: ry, z: selectedMesh.rotation.z },
+            scale: { x: s, y: sy, z: s }
+        };
+        // Refresh highlights (The item is now "Configured" so it shouldn't be green anymore)
+        refreshEditorHighlights();
+    }
+}
+
+function refreshEditorHighlights() {
+    if (!isEditMode) return;
+    scene.traverse(obj => {
+        if (obj.userData.configKey) {
+            let color = 0x000000; // Default (Configured)
+            let intensity = 0;
+
+            if (obj === selectedMesh) {
+                color = 0x00ffff; // Cyan (Selected)
+                intensity = 0.5;
+            } else if (!roomConfig[obj.userData.configKey]) {
+                color = 0x00ff00; // Green (Unconfigured / New)
+                intensity = 0.5;
+            }
+
+            obj.traverse(c => {
+                if (c.isMesh && c.material && c.material.emissive) {
+                    c.material.emissive.setHex(color);
+                    c.material.emissiveIntensity = intensity;
+                }
+            });
+        }
+    });
 }
 
 window.saveRoomConfig = function () {
@@ -7982,11 +8394,13 @@ window.saveRoomConfig = function () {
         if (!key) return;
     }
 
+    // Ensure current selection is saved to config before export
     roomConfig[key] = {
         pos: { x: selectedMesh.position.x, y: selectedMesh.position.y, z: selectedMesh.position.z },
         rot: { x: selectedMesh.rotation.x, y: selectedMesh.rotation.y, z: selectedMesh.rotation.z },
         scale: { x: selectedMesh.scale.x, y: selectedMesh.scale.y, z: selectedMesh.scale.z }
     };
+    refreshEditorHighlights();
 
     console.log("Updated Config:", JSON.stringify(roomConfig, null, 2));
 
@@ -7996,6 +8410,85 @@ window.saveRoomConfig = function () {
     link.href = URL.createObjectURL(blob);
     link.download = 'room_config.json';
     link.click();
+};
+
+window.spawnGallery = function() {
+    console.log("Starting Gallery Mode for Configuration...");
+    // Force edit mode off first to clean up UI
+    if (isEditMode) editmap(false);
+    
+    clear3DScene();
+    
+    // Create a flat floor for the gallery
+    const gallerySize = 100;
+    const floorGeo = new THREE.PlaneGeometry(gallerySize * 2, gallerySize * 2);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.receiveShadow = true;
+    scene.add(floor);
+    globalFloorMesh = floor; 
+
+    // Add lights
+    const amb = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(amb);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    dir.position.set(50, 100, 50);
+    dir.castShadow = true;
+    scene.add(dir);
+
+    const models = GALLERY_MODELS;
+
+    let x = -40;
+    let z = -40;
+    const spacing = 15;
+    const rowLength = 6;
+    let count = 0;
+
+    models.forEach((file) => {
+        const path = `assets/images/glb/${file}`;
+        const configKey = file;
+        
+        // Create a placeholder parent
+        const parent = new THREE.Mesh(new THREE.BoxGeometry(1,0.1,1), new THREE.MeshBasicMaterial({color: 0x444444, wireframe:true}));
+        parent.position.set(x, 0, z);
+        parent.userData = { roomId: 9000 + count }; // Fake ID to allow selection logic if needed
+        scene.add(parent);
+
+        loadGLB(path, (model) => {
+            parent.add(model);
+            
+            // Add label
+            const canvas = document.createElement('canvas');
+            canvas.width = 512; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(file, 256, 40);
+            const tex = new THREE.CanvasTexture(canvas);
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent:true}));
+            sprite.position.set(0, 8, 0);
+            sprite.scale.set(10, 1.25, 1);
+            parent.add(sprite);
+
+        }, 1.0, configKey);
+
+        count++;
+        x += spacing;
+        if (count % rowLength === 0) {
+            x = -40;
+            z += spacing;
+        }
+    });
+
+    // Move camera to view
+    camera.position.set(0, 60, 60);
+    controls.target.set(0, 0, 0);
+    controls.update();
+    
+    // Enable edit mode automatically
+    setTimeout(() => editmap(true), 500);
 };
 
 async function loadRoomConfig() {

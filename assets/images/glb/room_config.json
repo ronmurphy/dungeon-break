@@ -11,15 +11,15 @@
       "z": 0
     },
     "scale": {
-      "x": 0.8,
-      "y": 2,
-      "z": 0.8
+      "x": 2.4,
+      "y": 2.4,
+      "z": 2.4
     }
   },
   "room_spire-web.glb": {
     "pos": {
       "x": 0,
-      "y": 2.6,
+      "y": 5,
       "z": 0
     },
     "rot": {
@@ -28,15 +28,15 @@
       "z": 0
     },
     "scale": {
-      "x": 3.7,
-      "y": 4.9,
-      "z": 3.7
+      "x": 5,
+      "y": 5,
+      "z": 5
     }
   },
   "room_secret-web.glb": {
     "pos": {
       "x": 0,
-      "y": 1.25,
+      "y": 3.5,
       "z": 0
     },
     "rot": {
@@ -45,9 +45,9 @@
       "z": 0
     },
     "scale": {
-      "x": 1.1,
-      "y": 1.1,
-      "z": 1.1
+      "x": 3.6,
+      "y": 3.6,
+      "z": 3.6
     }
   },
   "waypoint-web.glb": {
@@ -70,7 +70,7 @@
   "room_round-web.glb": {
     "pos": {
       "x": 0,
-      "y": 0.85,
+      "y": 1.7,
       "z": 0
     },
     "rot": {
@@ -79,15 +79,49 @@
       "z": 0
     },
     "scale": {
-      "x": 1,
-      "y": 2.1,
-      "z": 1
+      "x": 5,
+      "y": 5,
+      "z": 5
     }
   },
   "room_dome-web.glb": {
     "pos": {
       "x": 0,
-      "y": 0.55,
+      "y": 2.6,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    }
+  },
+  "campfire_tower-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 2.1,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 3.8,
+      "y": 3.9,
+      "z": 3.8
+    }
+  },
+  "Whispering_Obelisk-marker-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 1,
       "z": 0
     },
     "rot": {
@@ -101,10 +135,61 @@
       "z": 1
     }
   },
-  "campfire_tower-web.glb": {
+  "Whispering_Manor-web.glb": {
     "pos": {
       "x": 0,
-      "y": 0.6,
+      "y": 4.4,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 4.4,
+      "y": 4.4,
+      "z": 4.4
+    }
+  },
+  "Spiralwood_Tower-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 5,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    }
+  },
+  "Stone_Wat-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 5,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    }
+  },
+  "Warden_Cube-marker-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 0.9,
       "z": 0
     },
     "rot": {
@@ -116,6 +201,142 @@
       "x": 1,
       "y": 1,
       "z": 1
+    }
+  },
+  "Dreadspire_Citadel-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 5,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    }
+  },
+  "Cursed_Treasure_Chest-marker-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 1,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  "gothic_tower-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 5,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    }
+  },
+  "Azure_Flame_Obelisk-marker-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 1,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  "Arcane_Altar-marker-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 1,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  "Emberwatch_Tower-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 5,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 5,
+      "y": 5,
+      "z": 5
+    }
+  },
+  "Eldritch_Hex_Cube-marker-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 1,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  "duck-web.glb": {
+    "pos": {
+      "x": 0,
+      "y": 0.4,
+      "z": 0
+    },
+    "rot": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.5,
+      "y": 0.5,
+      "z": 0.5
     }
   }
 }

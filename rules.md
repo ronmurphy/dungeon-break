@@ -29,10 +29,14 @@ When you attack, you don't just roll to hit; you roll to **overpower**.
     *   **Damage:** `Winner's Roll - Loser's Armor Class (AC)`.
     *   **Tie:** A "Clash" occurs. No damage is dealt, sparks fly.
 
+### 3. Flanking & Surprise Attacks
+- If you initiate combat by approaching an enemy from behind (outside their cone of vision), your first attack in that combat is a **Flank Attack**.
+- A Flank Attack deals **1.5x damage**, rounded up.
+
 note: The Scoundrel, Stalker and Minstrel use Dexterity and not Strength for Player Power.
       If a player has no weapons equipped, their weapon value becomes 1.
 
-### 3. Defense & Armor
+### 4. Defense & Armor
 Armor doesn't make you harder to hit; it **absorbs damage**.
 - **AC (Armor Class):** Directly subtracts from incoming damage.
 - **Strategy:** Heavy armor is vital against hard-hitting enemies (high die sizes), while high Strength lets you punch through enemy armor.

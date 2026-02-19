@@ -15,6 +15,18 @@ export function spawnFloatingText(text, x, y, color) {
     setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 1000);
 }
 
+export function spawnHudFloatingText(text, color) {
+    const hpBar = document.getElementById('hudHpBar');
+    if (!hpBar || hpBar.offsetParent === null) return; // Hidden
+
+    const rect = hpBar.getBoundingClientRect();
+    // Spawn near the end of the bar
+    const x = rect.left + rect.width;
+    const y = rect.top;
+    
+    spawnFloatingText(text, x, y - 20, color);
+}
+
 export function logMsg(m) {
     const log = document.getElementById('gameLog');
     if (log) {
@@ -211,6 +223,22 @@ export function updateUI() {
         }
     }
 
+    // --- DUCK COUNTER ---
+    let duckCounter = document.getElementById('duckCounter');
+    if (game.inDuckDungeon) {
+        if (!duckCounter) {
+            duckCounter = document.createElement('div');
+            duckCounter.id = 'duckCounter';
+            duckCounter.style.cssText = "position:fixed; top:20px; right:20px; background:rgba(0,0,0,0.8); border:2px solid #ffd700; padding:10px 20px; color:#ffd700; font-family:'Cinzel', serif; font-size:1.5rem; z-index:9000; border-radius:8px; box-shadow:0 0 15px #000; text-shadow: 0 2px 4px #000;";
+            document.body.appendChild(duckCounter);
+        }
+        duckCounter.style.display = 'block';
+        const remaining = (game.ducksToFind || 0) - (game.ducksFound || 0);
+        duckCounter.innerHTML = `🦆 ${remaining} Ducks Left`;
+    } else {
+        if (duckCounter) duckCounter.style.display = 'none';
+    }
+
     // Update Map HUD
     updateMapHUD();
 
@@ -321,6 +349,29 @@ function updateMapHUD() {
             barContainer.appendChild(apBar);
         }
         apBar.style.width = `${game.maxAp > 0 ? Math.max(0, Math.min(100, (game.ap / game.maxAp) * 100)) : 0}%`;
+
+        // Low Health Warning Overlay
+        let lowHealthOverlay = document.getElementById('lowHealthOverlay');
+        if (!lowHealthOverlay) {
+            lowHealthOverlay = document.createElement('div');
+            lowHealthOverlay.id = 'lowHealthOverlay';
+            lowHealthOverlay.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:5000; box-shadow:inset 0 0 150px rgba(255,0,0,0.6); opacity:0; transition: opacity 0.5s;";
+            document.body.appendChild(lowHealthOverlay);
+        }
+        
+        if (game.hp > 0 && game.hp / game.maxHp <= 0.3) {
+            lowHealthOverlay.style.opacity = '1';
+            lowHealthOverlay.style.animation = 'pulseRed 2s infinite';
+            if (!document.getElementById('pulseAnimStyle')) {
+                const style = document.createElement('style');
+                style.id = 'pulseAnimStyle';
+                style.innerHTML = `@keyframes pulseRed { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }`;
+                document.head.appendChild(style);
+            }
+        } else {
+            lowHealthOverlay.style.opacity = '0';
+            lowHealthOverlay.style.animation = 'none';
+        }
 
         // Ensure content is above bars
         Array.from(mapHud.children).forEach(c => {
@@ -922,7 +973,7 @@ function createCombatMenu() {
         { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
         { name: 'Wait', icon: 'icon_wait.png', fn: "window.commandWait()" },
         { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
-        { name: 'Tactics', icon: 'icon_tactics.png', fn: "console.log('Tactics')" }
+        { name: 'Dash', icon: 'icon_tactics.png', fn: "window.commandDash()" }
     ];
 
     actions.forEach(act => {

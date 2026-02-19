@@ -25,6 +25,18 @@ export function getThemeForFloor(floor) {
             weather: 'ember' 
         };
     }
+    // Special Theme for Duck Dungeon (Floor 100)
+    if (floor === 100) {
+        return {
+            id: 100,
+            name: 'Duck Pond',
+            tile: 6, // Ice/Water tile
+            color: 0x004488, // Deep Blue
+            fogDensity: 0.03,
+            hemiIntensity: 0.6,
+            weather: 'magic_yellow' // Yellow floating particles
+        };
+    }
     // map floor 1 -> index 0 (theme 1)
     // wrap around 1-9
     const idx = (floor - 1) % 9;
@@ -39,25 +51,27 @@ export function shuffle(arr) {
     return arr;
 }
 
-export function generateDungeon(floor) {
+export function generateDungeon(floor, roomCountOverride = null) {
     // Escalation Logic
-    let numRooms = 12;
+    let numRooms = roomCountOverride || 12;
     let merchantCount = 0;
 
-    if (floor <= 3) {
-        numRooms = 12;
-        merchantCount = 4 - floor; // 1->3, 2->2, 3->1
-    } else if (floor <= 6) {
-        numRooms = 24;
-        // Levels 4(2), 5(1), 6(0)
-        if (floor === 4) merchantCount = 2;
-        else if (floor === 5) merchantCount = 1;
-        else merchantCount = 0;
-    } else {
-        numRooms = 36;
-        // Levels 7(1), 8(0), 9(0)
-        if (floor === 7) merchantCount = 1;
-        else merchantCount = 0;
+    if (!roomCountOverride) {
+        if (floor <= 3) {
+            numRooms = 12;
+            merchantCount = 4 - floor; // 1->3, 2->2, 3->1
+        } else if (floor <= 6) {
+            numRooms = 24;
+            // Levels 4(2), 5(1), 6(0)
+            if (floor === 4) merchantCount = 2;
+            else if (floor === 5) merchantCount = 1;
+            else merchantCount = 0;
+        } else {
+            numRooms = 36;
+            // Levels 7(1), 8(0), 9(0)
+            if (floor === 7) merchantCount = 1;
+            else merchantCount = 0;
+        }
     }
 
     const rooms = [];
@@ -262,7 +276,8 @@ function countNeighbors(grid, x, z, b) {
 export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null, isFlat = false) {
     const theme = getThemeForFloor(floor);
     // Larger Map: 2.5x base size + scaling
-    const bounds = boundsOverride !== null ? boundsOverride : (30 + (floor * 5));
+    // Cap bounds to prevent massive geometry generation on high floors (e.g. Floor 99)
+    const bounds = boundsOverride !== null ? boundsOverride : Math.min(80, (30 + (floor * 5)));
 
     const size = bounds * 2 + 1;
     let grid = {};

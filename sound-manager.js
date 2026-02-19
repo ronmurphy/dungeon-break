@@ -229,6 +229,16 @@ export class SoundManager {
                 return Math.sin(t * freq * Math.PI * 2) * (1 - t/1.2) * 0.8;
             }));
         }
+        
+        // 8. Duck Quack (Synthesized)
+        if (!this.buffers.has('quack')) {
+            this.buffers.set('quack', createBuffer(0.25, (i, t) => {
+                // Sawtooth-ish wave with falling pitch + noise
+                const freq = 300 * (1 - t * 1.5); 
+                const osc = ((t * freq) % 1) - 0.5;
+                return (osc * 0.7 + (Math.random() - 0.5) * 0.3) * (1 - t/0.25);
+            }));
+        }
 
         // 7. UI Sounds
         if (!this.buffers.has('potion_pour')) {
