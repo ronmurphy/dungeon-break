@@ -1,67 +1,93 @@
 # Dungeon Break - Progress & Roadmap
 
-This document tracks the development of "Dungeon Break," a tactical, "coffee-break" RPG. It reflects the project's pivot from its original "Scoundrel" card-based mechanics.
-
-## ✅ Phase 1: The Great Pivot (Complete)
-
-We have successfully transitioned the core engine from a card-based dungeon crawler to a free-roaming tactical RPG.
-
--   **New Core Loop:** The game is no longer a room-by-room card puzzle. The player can now freely explore the 3D environment.
--   **"Click-to-Move" Engine:**
-    -   Implemented raycasting against the floor mesh for direct point-and-click movement.
-    -   Player character now has **Walk** (Left Click) and **Run** (Right Click) speeds.
-    -   Movement is slope-aware and features cliff/void prevention to stop the player from walking off edges.
--   **Atmospheric Polish:**
-    -   The player's floating diamond marker now has a soft, pulsing `SpotLight` that illuminates the area, enhancing the "outside" exploration feel.
--   **Code Refactoring:**
-    -   All legacy "Scoundrel" card game logic (e.g., `pickCard` combat, "pick 3" loop) has been removed from `scoundrel-3d.js`, cleaning up the codebase for the new mechanics.
--   **New Combat Foundation:**
-    -   Created `dnd-mechanics.js` to house the new, simplified D&D combat rules ("Stat + Weapon = Die Size" and Armor as Damage Reduction).
-
-## 🎯 Phase 2: First Contact (Current Focus)
-
-The next step is to make the world feel alive and dangerous. We need to implement the first real gameplay loop: **Exploration -> Encounter**.
-
-### 1. Wandering Enemies
--   **Goal:** Populate the world with visible threats.
--   **Implementation:**
-    -   Create a `Wanderer` class/system in `scoundrel-3d.js`.
-    -   Spawn `skeleton-web.glb` and the "evil" player models (`male_evil-web.glb`, `female_evil-web.glb`) as wandering enemies on the map.
-    -   Give them a simple "patrol" AI: pick a random nearby point on the `globalFloorMesh` and walk to it.
-
-### 2. Proximity Trigger
-    -   Implemented "Cone of Vision" for wandering enemies, enabling stealth gameplay. Enemies now have a 120-degree view angle and can "see" the player up to 4.0 units away.
-    -   Enemies will now chase the player when seen, they will stop moving and roam to a new spot on the map to walk when they lose line of sight.
-
-
-
-
-### 2. Teleporting to New "Battle House" when touching the enemy.
--   **Goal:** Initiate combat when the player gets close to an enemy.
--   **Implementation:**
-    -   In the `animate3D` loop, check the distance between the player and all active `Wanderer` instances.
-    -   If `distance < 3.0` (or a similar threshold), stop player movement and trigger the combat sequence.
-
-### 3. Combat UI: The Command Menu
--   **Goal:** Create the basic UI for making decisions in a fight.
--   **Implementation:**
-    -   When combat is triggered, display a simple HTML overlay with buttons: `[ATTACK]`, `[SKILL]`, `[ITEM]`, `[FLEE]`.
-    -   This menu will be the foundation for all turn-based actions.
-
-### 4. Initiative & Turn Order
--   **Goal:** Decide who goes first in combat.
--   **Implementation:**
-    -   On combat start, roll a virtual d20 for the Player and the Enemy.
-    -   Display the results (e.g., "Player rolled 15, Skeleton rolled 8").
-    -   The higher roll gets the first turn. This will control when the Command Menu is active.
-
-### 5. The First Attack
--   **Goal:** Wire up the `ATTACK` command to the new D&D mechanics.
--   **Implementation:**
-    -   Clicking the `ATTACK` button will enter a "Targeting Mode."
-    -   Clicking an enemy will call `CombatResolver.resolveAttack()` from `dnd-mechanics.js`.
-    -   **Visuals:** This is where we'll implement the 3D dice roll. When an attack is made, we'll spawn your blank `d20.glb`, have it roll, and then swap its texture to show the result.
+*Last updated: 2026-02-20*
 
 ---
 
-This is a fantastic list. Getting the wandering enemies and proximity trigger working will be the "Aha!" moment where this truly starts to feel like a new game. Let's get to it!
+## ✅ Phase 1: The Great Pivot (Complete)
+
+- **Click-to-Move Engine:** Raycasting against floor mesh, Walk (LMB) and Run (RMB) speeds, slope-aware, cliff/void prevention.
+- **Atmospheric Polish:** Player floating diamond marker with pulsing SpotLight.
+- **Code Cleanup:** All legacy Scoundrel card logic removed from `scoundrel-3d.js`.
+- **D&D Foundation:** `dnd-mechanics.js` created with `DiceRoller`, `CombatResolver.resolveClash()`, and the Dulling Blade durability mechanic.
+
+---
+
+## ✅ Phase 2: First Contact (Complete)
+
+### Wandering Enemies
+- Enemies spawn on the map (`skeleton-web.glb`, `male_evil-web.glb`, `female_evil-web.glb`).
+- **Patrol AI:** Pick random point on `globalFloorMesh`, walk to it, repeat.
+- **Cone of Vision:** 120° FOV, 4.0 unit range. Enemies chase player on sight, resume patrol on losing LOS.
+- **Combat Trigger:** Distance < 1.2 units fires `startCombat()`.
+
+### Battle Island & Camera
+- `CombatManager` teleports player + enemy to a separate `BattleIsland` at (2000, 2000, 2000).
+- Camera tweens to FFT-style fixed isometric view. Restores on combat end.
+- `createBattleIsland()` generates a themed arena floor based on current dungeon floor level.
+
+### Turn-Based Combat System
+- **Turn order:** Player goes first (initiative system can be added later).
+- **Combat Tracker UI:** Per-enemy HP bars with color-coded indicators, combat log (last 3 messages), bleed status display.
+- **Multi-enemy combat:** `combatState.enemies[]` roster; each enemy takes a turn in sequence.
+
+#### Player Actions (Combat Menu — 3×3 grid)
+| Action | Status | Notes |
+|---|---|---|
+| Attack | ✅ | `resolveClash()` with 3D dice animations. Range check — throws rock if out of melee range. Flanking bonus (1.5×). |
+| Skill | ✅ | Class-specific: Power Strike (Knight), Cheap Shot (Rogue), Eldritch Blast (Occultist), Smite (Priest), Holy Bash (Paladin). |
+| Item | ⬜ | Stubbed (`console.log`). Needs wiring to hotbar. |
+| Defend | ✅ | +4 AC stance for the enemy's turn. |
+| Equip | ⬜ | Stubbed. |
+| Analyze | ⬜ | Stubbed. |
+| Wait | ✅ | Passes turn to enemy. |
+| Flee | ✅ | Calls `exitBattleIsland()`. |
+| Tactics | ✅ | Sub-menu: Dash, Shove, Guts, (Feint in code). |
+
+#### Tactics Sub-Menu
+| Action | Status | Notes |
+|---|---|---|
+| Dash | ✅ | Doubles movement, disables attack for the turn. |
+| Shove | ✅ | STR clash — pushes enemy 1.5m on success. |
+| Guts | ✅ | Charge up a burst strike. Stacks up to ×2. Always causes bleed. |
+| Feint | ✅ | DEX vs WIS clash — next attack gains flank bonus on success. |
+
+#### Bleed Mechanics ✅ (most recent feature)
+- Edged weapons: crits always inflict bleed (2 dmg × 3 turns), regular hits have 15% chance (1 dmg × 2 turns).
+- Blunt weapons (hammer, mace): cannot cause bleed.
+- Guts strike always inflicts bleed (3 dmg × 3 turns) regardless of weapon type.
+- Bleed ticks at the start of the enemy's turn. Enemy can bleed out before acting.
+- Combat tracker shows 🩸 icon with turns remaining.
+
+#### Enemy AI
+- Moves toward player if out of attack range (2.0 units).
+- Attacks with `resolveClash()` — player takes damage on enemy win, clash on tie.
+- **Guts AI:** 30% chance to charge Guts if far + healthy. Unleashes on next attack turn.
+- **Flee AI:** Flees at <15% HP (disabled in True Dungeon). Removed from fight if it gets >15 units away.
+
+#### Combat End
+- **Victory:** Enemy added to `slainStack` as trophy. Multi-enemy: continues until all dead.
+- **Death:** `gameOver()`.
+- **Flee/End:** `exitBattleIsland()` — camera tweens back, battle island removed after delay.
+
+---
+
+## 🎯 Phase 3: Depth & Polish (Current Focus)
+
+### High Priority
+- [ ] **Item use in combat** — Wire the Item button to hotbar potions/consumables.
+- [ ] **Skill selection UI** — Currently auto-selects first skill. Need a sub-menu to pick from multiple.
+- [ ] **Loot drops** — Enemies should drop items/coins on death, not just add to trophy stack.
+- [ ] **Initiative roll** — Roll d20 on combat start to determine who goes first (player or enemy).
+
+### Medium Priority
+- [ ] **Analyze command** — Show enemy stats (HP, AC, STR) in the combat tracker.
+- [ ] **Equip command** — Allow quick-swapping gear during combat (limited to 1/battle?).
+- [ ] **More enemy variety** — Different stat blocks per enemy type (skeleton = brittle/low HP, evil knight = high armor, etc.).
+- [ ] **Enemy-specific skills** — Some enemies could have their own special moves.
+
+### Polish / Future
+- [ ] **3D dice roll visuals** — Spawn `d20.glb`, animate roll, swap texture to show result.
+- [ ] **Sound effects** — Attack, hit, bleed, victory stings.
+- [ ] **XP / Leveling** — Gain stat points on level-up.
+- [ ] **Floor progression** — Boss encounter at end of each floor, staircase to next floor.

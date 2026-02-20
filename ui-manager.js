@@ -1,4 +1,4 @@
-import { game, getAssetData, getSpellName, SUITS, ARMOR_DATA, ITEM_DATA, CURSED_ITEMS, getDisplayVal } from './game-state.js';
+import { game, getAssetData, getSpellName, SUITS, ARMOR_DATA, ITEM_DATA, CURSED_ITEMS, getDisplayVal, CLASS_DATA } from './game-state.js';
 
 // Helper for floating text
 export function spawnFloatingText(text, x, y, color) {
@@ -495,6 +495,22 @@ function updateMapHUD() {
                 mapWepBtn.style.backgroundPosition = bgPos;
             } else {
                 mapWepBtn.style.backgroundImage = 'none';
+            }
+
+            // Ranger: permanent crossbow badge in the corner of the weapon slot
+            mapWepBtn.style.position = 'relative';
+            let crossbowBadge = mapWepBtn.querySelector('.ranger-crossbow-badge');
+            if (game.classId === 'ranger') {
+                if (!crossbowBadge) {
+                    crossbowBadge = document.createElement('div');
+                    crossbowBadge.className = 'ranger-crossbow-badge';
+                    crossbowBadge.title = 'Crossbow (Permanent — Ranger)';
+                    crossbowBadge.style.cssText = 'position:absolute; bottom:0; right:0; width:22px; height:22px; background:rgba(0,0,0,0.75); border:1px solid #00cc44; border-radius:2px; pointer-events:none;';
+                    crossbowBadge.innerHTML = '<img src="assets/images/crossbow.png" style="width:100%; height:100%; object-fit:contain;">';
+                    mapWepBtn.appendChild(crossbowBadge);
+                }
+            } else if (crossbowBadge) {
+                crossbowBadge.remove();
             }
         }
 
@@ -1206,7 +1222,16 @@ function updateCombatMenu(pageName) {
     const menu = document.getElementById('combatMenuGrid');
     if (!menu) return;
 
-    const items = COMBAT_PAGES[pageName];
+    let items = COMBAT_PAGES[pageName];
+
+    // For the main page, replace the generic "Skill" label with the class's actual skill name
+    if (pageName === 'main') {
+        const cData = CLASS_DATA[game.classId];
+        const skill = cData && cData.skills && cData.skills[0];
+        if (skill) {
+            items = items.map((item, i) => i === 1 ? { ...item, name: skill.name } : item);
+        }
+    }
     const buttons = Array.from(menu.children);
 
     // Animate Out (Flip halfway)

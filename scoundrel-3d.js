@@ -71,6 +71,8 @@ window.exitBattleIsland = function () {
 
     removeCombatTracker();
     hideCombatMenu();
+    combatState.siphonTurns = 0;
+    updateSiphonBadge(); // Clears the badge if still showing
 
     // Clean up every enemy that was in this combat
     combatState.enemies.forEach(w => {
@@ -252,7 +254,9 @@ let combatState = {
     gutsCharge: 0, // Stored damage for Guts tactic
     gutsStacks: 0, // Number of times Guts has been used
     enemies: [], // All active combatants (on-map multi-enemy support)
-    activeEnemyIdx: 0 // Which enemy in the list is currently taking their turn
+    activeEnemyIdx: 0, // Which enemy in the list is currently taking their turn
+    distractionPoint: null, // Bard's Distract: enemies move here instead of the player for one round
+    siphonTurns: 0 // Necromancer's Siphon Life: attacks drain HP for N turns
 };
 
 let savedMapState = null; // For True Dungeon recursion
@@ -3308,9 +3312,14 @@ function updateAtmosphere(floor) {
 
     // --- DYNAMIC FOG DENSITY ---
     // Calculate density based on current LOD settings to hide pop-in.
+    // MIN_FOG_FAR guarantees the player can always see a playable area on low-end profiles.
+    // On potato (LOD far=12) the box placeholder may occasionally be visible at the fog edge —
+    // that's an acceptable tradeoff vs. the fog wall covering the entire screen.
     const visibilityAtFar = 0.15; // 15% visible at the far LOD distance
-    const farDist = (gameSettings.lod && gameSettings.lod.far) ? gameSettings.lod.far : 80; // Default to 80
-    const density = -Math.log(visibilityAtFar) / farDist;
+    const farDist = (gameSettings.lod && gameSettings.lod.far) ? gameSettings.lod.far : 80;
+    const MIN_FOG_FAR = 25; // Never let fog get denser than a 25-unit view distance
+    const effectiveFogFar = Math.max(farDist, MIN_FOG_FAR);
+    const density = -Math.log(visibilityAtFar) / effectiveFogFar;
     scene.fog = new THREE.FogExp2(fogColor, isEditMode ? 0 : density);
     // --- END DYNAMIC FOG ---
 
@@ -4227,10 +4236,11 @@ function createShopCard(item, isSell, source, idx) {
     card.style.width = '140px';
     card.style.height = '200px';
     
-    const discount = (game.classId === 'bard') ? 0.8 : 1.0;
+    const buyDiscount = (game.classId === 'bard') ? 0.8 : 1.0;
+    const sellRate = (game.classId === 'bard') ? 0.65 : 0.5; // Minstrel: Silver Tongue sells for 65% (+15%)
     // Default cost to 0 if undefined (e.g. starter weapons). Enforce min sell price of 10.
     const baseCost = item.cost || 0;
-    const price = isSell ? Math.max(10, Math.floor(baseCost * 0.5)) : Math.floor(baseCost * discount);
+    const price = isSell ? Math.max(10, Math.floor(baseCost * sellRate)) : Math.floor(baseCost * buyDiscount);
     
     const asset = getAssetData(item.type, item.id || item.val, null);
     const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
@@ -5834,10 +5844,10 @@ window.updateSetting = function (type, val) {
         updateLODs();
         // Dynamically adjust fog density to match the far LOD distance.
         if (scene && scene.fog) {
-            // We want objects to be ~15% visible (85% fog) at the 'far' LOD distance.
             const visibilityAtFar = 0.15;
-            const newDensity = -Math.log(visibilityAtFar) / val.far;
-            scene.fog.density = newDensity;
+            const MIN_FOG_FAR = 25;
+            const effectiveFogFar = Math.max(val.far, MIN_FOG_FAR);
+            scene.fog.density = -Math.log(visibilityAtFar) / effectiveFogFar;
         }
     }
     if (type === 'pixelRatio') {
@@ -7568,6 +7578,9 @@ function startCombat(wanderer, isFlankAttack = false) {
     combatState.isDashing = false;
     combatState.gutsCharge = 0;
     combatState.gutsStacks = 0;
+    combatState.distractionPoint = null;
+    combatState.siphonTurns = 0;
+    updateSiphonBadge(); // Clear any leftover badge
 
     updateMovementIndicator();
     showCombat();
@@ -7980,11 +7993,19 @@ window.commandSkill = function () {
         return;
     }
 
-    // For now, auto-select the first skill
+    // Auto-select the first skill
     const skill = cData.skills[0];
     combatState.activeSkill = skill;
+
+    // Skills that don't need a target fire immediately
+    if (skill.id === 'distract' || skill.id === 'flashbang' || skill.id === 'siphon') {
+        const color = skill.id === 'flashbang' ? '#ffff88' : skill.id === 'siphon' ? '#aa44ff' : '#ffaa00';
+        spawnFloatingText(skill.name.toUpperCase(), window.innerWidth / 2, window.innerHeight / 2 - 150, color);
+        executePlayerSkill(null);
+        return;
+    }
+
     combatState.isTargeting = true;
-    
     spawnFloatingText(`${skill.name.toUpperCase()}`, window.innerWidth / 2, window.innerHeight / 2 - 150, '#00ffff');
     logMsg(`Skill selected: ${skill.name}. Select target.`);
 };
@@ -8086,8 +8107,35 @@ function inflictBleed(target, dmgPerTurn = 2, turns = 3) {
 
 function executePlayerSkill(target) {
     if (!combatState.activeSkill) return;
-    
+
     const skill = combatState.activeSkill;
+
+    // Range gate: Snipe requires the player to be at range — refund if too close
+    if (skill.id === 'snipe') {
+        const dist = (target && target.mesh) ? playerMesh.position.distanceTo(target.mesh.position) : 0;
+        if (dist <= 1.5) {
+            spawnFloatingText("TOO CLOSE!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+            logMsg("Snipe requires range. Step back first.");
+            combatState.isTargeting = false;
+            combatState.turn = 'player';
+            return; // Skill charge NOT consumed
+        }
+    }
+
+    // Range gate: Flashbang only works in close range — you need to be IN the fight
+    if (skill.id === 'flashbang') {
+        const anyClose = combatState.enemies.some(e =>
+            e.stats && e.stats.hp > 0 && e.mesh &&
+            playerMesh.position.distanceTo(e.mesh.position) <= 3.0
+        );
+        if (!anyClose) {
+            spawnFloatingText("TOO FAR!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+            logMsg("Flashbang only works in close range. Move in first.");
+            combatState.turn = 'player';
+            return; // Skill charge NOT consumed
+        }
+    }
+
     combatState.isTargeting = false;
     combatState.turn = 'busy';
     combatState.skillUsed = true;
@@ -8102,6 +8150,9 @@ function executePlayerSkill(target) {
 
     // Skill Logic Switch
     setTimeout(() => {
+        // Fire skill FX for all classes — ground flash + texture particles
+        spawnSkillFX(skill.id);
+
         let damage = 0;
         let msg = "";
         let color = '#00ffff';
@@ -8133,7 +8184,6 @@ function executePlayerSkill(target) {
             damage = Math.floor(Math.random() * 8) + 1; // 1d8
             msg = `Eldritch Blast deals ${damage} magic dmg!`;
             color = '#aa00ff';
-            spawnAboveModalTexture('twirl_01.png', window.innerWidth/2, window.innerHeight/2, 10, { tint:'#aa00ff', blend:'lighter' });
         }
         else if (skill.id === 'smite') { // Priest
             damage = 2;
@@ -8184,6 +8234,81 @@ function executePlayerSkill(target) {
                 msg = "Feint failed.";
             }
         }
+        else if (skill.id === 'snipe') { // Ranger — precision crossbow shot from range
+            const playerDex = game.stats.dex || 1;
+            const crossbowPower = playerDex + 4; // Permanent crossbow val = 4
+            const enemyPower = (target.stats.str || 1) + 4;
+            const playerAC = 10 + (game.maxAp || 0);
+
+            spawn3DProjectile(playerMesh.position, target.mesh.position, 'rock');
+            const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, target.stats.ac || 10);
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Snipe", () => {});
+
+            if (res.attacker.total > res.defender.total) {
+                // Precision shot: always hits with 1.5× aimed multiplier
+                damage = Math.ceil(res.damage * 1.5);
+                // High crit threshold: crits on top 30% of the die (vs normal max-only)
+                const critThreshold = Math.ceil(res.attacker.config.sides * 0.7);
+                const isCrit = res.attacker.roll >= critThreshold;
+                if (isCrit) {
+                    spawnFloatingText("SNIPE!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#00ff44');
+                    triggerShake(12, 20);
+                    inflictBleed(target, 3, 3); // Arrow bleed
+                    damage = Math.ceil(damage * 1.3); // Bonus on crit
+                }
+                msg = `Snipe hits for ${damage}!`;
+                color = '#00cc44';
+            } else {
+                msg = "Snipe missed!";
+                color = '#aaa';
+            }
+        }
+        else if (skill.id === 'distract') { // Bard
+            // Throw a rock in a random direction — enemies investigate the sound next turn
+            const angle = Math.random() * Math.PI * 2;
+            const throwDist = 4 + Math.random() * 3; // 4-7 units away
+            const distractPoint = new THREE.Vector3(
+                playerMesh.position.x + Math.cos(angle) * throwDist,
+                playerMesh.position.y,
+                playerMesh.position.z + Math.sin(angle) * throwDist
+            );
+            spawn3DProjectile(playerMesh.position, distractPoint, 'rock');
+            combatState.distractionPoint = distractPoint;
+            msg = "Rock clatters in the shadows... enemies will investigate!";
+            color = '#ffaa00';
+            // No damage — pure utility
+        }
+        else if (skill.id === 'flashbang') { // Artificer
+            const blastRadius = 5.0; // Covers melee (2.0) + ranged zone — close enemies only
+            let blinded = 0;
+            combatState.enemies.forEach(e => {
+                if (!e.stats || e.stats.hp <= 0 || !e.mesh) return;
+                if (playerMesh.position.distanceTo(e.mesh.position) <= blastRadius) {
+                    e.stats.blinded = true;
+                    blinded++;
+                }
+            });
+            // Big white flash FX
+            spawnAboveModalTexture('spark_01.png', window.innerWidth / 2, window.innerHeight / 2, 25, {
+                tint: '#ffffff', blend: 'lighter', sizeRange: [40, 100], spread: 150, decay: 0.03
+            });
+            msg = `Flashbang! ${blinded} enem${blinded !== 1 ? 'ies' : 'y'} blinded for 1 round!`;
+            color = '#ffff88';
+            // No damage — pure disruption (FX handled by spawnSkillFX)
+        }
+        else if (skill.id === 'siphon') { // Necromancer — multi-turn life drain buff
+            if (combatState.siphonTurns > 0) {
+                // Already active — refresh/extend instead
+                combatState.siphonTurns = 3;
+                msg = `Siphon Life refreshed — 3 attacks remain!`;
+            } else {
+                combatState.siphonTurns = 3;
+                msg = `Siphon Life active — next 3 attacks drain HP!`;
+            }
+            color = '#aa44ff';
+            updateSiphonBadge();
+            // No damage — pure buff (FX handled by spawnSkillFX)
+        }
         else {
             // Default fallback
             damage = 2;
@@ -8203,6 +8328,164 @@ function executePlayerSkill(target) {
     }, 600);
 }
 
+/**
+ * Spawns a radial light bloom at the base of the screen, mimicking a ground-level flash.
+ * Pure CSS — zero GPU cost, fully potato-friendly.
+ * @param {string} color  CSS color string (e.g. 'rgba(255,150,0,0.9)')
+ * @param {object} opts   { intensity, size, rise, hold, fall }
+ */
+function spawnGroundFlash(color, opts = {}) {
+    const el = document.createElement('div');
+    const size = opts.size || '70%';
+    el.style.cssText = `position:fixed; inset:0; pointer-events:none; z-index:9998;
+        background: radial-gradient(ellipse ${size} 38% at 50% 92%, ${color} 0%, transparent 100%);
+        opacity:0; transition: opacity ${opts.rise || 80}ms ease;`;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => {
+        el.style.opacity = String(opts.intensity || 0.55);
+        setTimeout(() => {
+            el.style.transition = `opacity ${opts.fall || 420}ms ease`;
+            el.style.opacity = '0';
+            setTimeout(() => el.remove(), (opts.fall || 420) + 50);
+        }, opts.hold || 120);
+    });
+}
+
+/**
+ * Fires per-skill visual FX using existing texture sprites + ground flash.
+ * Called once per skill activation, inside the 600ms delayed window.
+ */
+function spawnSkillFX(skillId) {
+    const cx = window.innerWidth / 2;
+    const cy = window.innerHeight / 2;
+    // random helper for numbered texture variants
+    const rnd = (prefix, min, max) => `${prefix}${min + Math.floor(Math.random() * (max - min + 1))}.png`;
+
+    switch (skillId) {
+        case 'power_strike': // Knight — heavy gold/orange impact
+            spawnGroundFlash('rgba(255,150,0,0.9)', { intensity: 0.6, size: '65%', hold: 100 });
+            spawnAboveModalTexture(rnd('slash_0', 1, 5), cx, cy, 8,
+                { tint: '#ffaa00', blend: 'lighter', sizeRange: [30, 80], spread: 80 });
+            spawnAboveModalTexture('spark_01.png', cx, cy, 14,
+                { tint: '#ffdd44', blend: 'lighter', sizeRange: [12, 38], spread: 100, decay: 0.04 });
+            spawnAboveModalTexture('scorch_01.png', cx, cy + 60, 4,
+                { tint: '#ff6600', blend: 'multiply', sizeRange: [40, 90], spread: 50 });
+            break;
+
+        case 'cheap_shot': // Rogue — quick scratch + wisp of smoke
+            spawnAboveModalTexture('scratch_01.png', cx + 50, cy, 5,
+                { tint: '#ccccff', blend: 'lighter', sizeRange: [20, 55], spread: 40 });
+            spawnAboveModalTexture('smoke_01.png', cx, cy + 30, 7,
+                { tint: '#888899', blend: 'normal', sizeRange: [25, 55], spread: 50, decay: 0.018 });
+            spawnAboveModalTexture(rnd('spark_0', 3, 5), cx, cy - 20, 8,
+                { tint: '#ddddff', blend: 'lighter', sizeRange: [8, 24], spread: 60, decay: 0.05 });
+            break;
+
+        case 'eldritch_blast': // Occultist — void purple magic burst
+            spawnGroundFlash('rgba(100,0,200,0.9)', { intensity: 0.45, size: '58%', rise: 60, hold: 200, fall: 550 });
+            spawnAboveModalTexture(rnd('magic_0', 1, 5), cx, cy, 12,
+                { tint: '#aa00ff', blend: 'lighter', sizeRange: [25, 70], spread: 100 });
+            spawnAboveModalTexture('circle_01.png', cx, cy, 4,
+                { tint: '#8800cc', blend: 'lighter', sizeRange: [50, 120], spread: 30, decay: 0.012 });
+            spawnAboveModalTexture('twirl_01.png', cx, cy - 10, 3,
+                { tint: '#dd44ff', blend: 'lighter', sizeRange: [40, 90], spread: 20, decay: 0.01 });
+            break;
+
+        case 'smite': // Priest — holy light descends from above
+            spawnGroundFlash('rgba(255,255,180,0.95)', { intensity: 0.72, size: '50%', rise: 50, hold: 160, fall: 650 });
+            spawnAboveModalTexture('light_01.png', cx, cy - 40, 10,
+                { tint: '#ffffaa', blend: 'lighter', sizeRange: [40, 100], spread: 60, decay: 0.012 });
+            spawnAboveModalTexture(rnd('star_0', 1, 5), cx, cy, 10,
+                { tint: '#ffffff', blend: 'lighter', sizeRange: [14, 32], spread: 130, decay: 0.025 });
+            spawnAboveModalTexture('flare_01.png', cx, cy, 3,
+                { tint: '#ffeeaa', blend: 'lighter', sizeRange: [70, 130], spread: 20, decay: 0.008 });
+            break;
+
+        case 'holy_bash': // Paladin — blue-white consecrated slam
+            spawnGroundFlash('rgba(100,150,255,0.9)', { intensity: 0.5, size: '60%', rise: 70, hold: 100, fall: 420 });
+            spawnAboveModalTexture('light_02.png', cx, cy, 8,
+                { tint: '#aaccff', blend: 'lighter', sizeRange: [30, 80], spread: 70 });
+            spawnAboveModalTexture('slash_01.png', cx, cy, 5,
+                { tint: '#88aaff', blend: 'lighter', sizeRange: [25, 65], spread: 50 });
+            spawnAboveModalTexture('spark_01.png', cx, cy, 12,
+                { tint: '#ffffff', blend: 'lighter', sizeRange: [8, 28], spread: 90, decay: 0.04 });
+            break;
+
+        case 'distract': // Bard — rock impact: dirt cloud + earthy flash at distraction point
+            spawnGroundFlash('rgba(180,120,40,0.7)', { intensity: 0.28, size: '40%', rise: 110, hold: 80, fall: 520 });
+            spawnAboveModalTexture(rnd('dirt_0', 1, 2), cx + 80, cy + 40, 8,
+                { tint: '#aa7733', blend: 'normal', sizeRange: [18, 50], spread: 80, decay: 0.02 });
+            spawnAboveModalTexture(rnd('smoke_0', 2, 5), cx + 60, cy, 7,
+                { tint: '#887755', blend: 'normal', sizeRange: [22, 55], spread: 60, decay: 0.015 });
+            spawnAboveModalTexture(rnd('spark_0', 2, 4), cx + 70, cy + 20, 5,
+                { tint: '#ffbb55', blend: 'lighter', sizeRange: [8, 22], spread: 40, decay: 0.05 });
+            break;
+
+        case 'snipe': // Ranger — muzzle flash + green tracer
+            spawnAboveModalTexture(rnd('muzzle_0', 1, 3), cx - 60, cy + 30, 4,
+                { tint: '#00ff44', blend: 'lighter', sizeRange: [28, 60], spread: 18, decay: 0.07 });
+            spawnAboveModalTexture(rnd('trace_0', 1, 5), cx, cy, 6,
+                { tint: '#88ffaa', blend: 'lighter', sizeRange: [10, 28], spread: 90, decay: 0.04 });
+            spawnAboveModalTexture('spark_02.png', cx + 60, cy - 20, 10,
+                { tint: '#00cc44', blend: 'lighter', sizeRange: [6, 20], spread: 50, decay: 0.055 });
+            break;
+
+        case 'flashbang': // Artificer — full-screen white bloom, overrides the existing spark burst
+            spawnGroundFlash('rgba(255,255,230,1.0)', { intensity: 0.88, size: '100%', rise: 25, hold: 200, fall: 750 });
+            spawnAboveModalTexture('light_03.png', cx, cy + 20, 10,
+                { tint: '#ffffff', blend: 'lighter', sizeRange: [50, 130], spread: 110, decay: 0.009 });
+            spawnAboveModalTexture('flare_01.png', cx, cy, 5,
+                { tint: '#ffffee', blend: 'lighter', sizeRange: [70, 150], spread: 25, decay: 0.007 });
+            break;
+
+        case 'siphon': // Necromancer — deep purple soul drain
+            spawnGroundFlash('rgba(100,0,180,0.85)', { intensity: 0.42, size: '55%', rise: 100, hold: 280, fall: 850 });
+            spawnAboveModalTexture(rnd('magic_0', 3, 5), cx, cy, 9,
+                { tint: '#aa44ff', blend: 'lighter', sizeRange: [22, 58], spread: 90, decay: 0.014 });
+            spawnAboveModalTexture('circle_02.png', cx, cy, 4,
+                { tint: '#8800cc', blend: 'lighter', sizeRange: [55, 120], spread: 22, decay: 0.009 });
+            spawnAboveModalTexture(rnd('symbol_0', 1, 2), cx, cy - 20, 3,
+                { tint: '#cc88ff', blend: 'lighter', sizeRange: [30, 65], spread: 40, decay: 0.011 });
+            break;
+    }
+}
+
+/**
+ * Updates (or removes) the Siphon Life status badge shown during combat.
+ */
+function updateSiphonBadge() {
+    let badge = document.getElementById('siphonBadge');
+    if (combatState.siphonTurns > 0) {
+        if (!badge) {
+            badge = document.createElement('div');
+            badge.id = 'siphonBadge';
+            badge.style.cssText = 'position:fixed; top:16px; left:50%; transform:translateX(-50%); background:rgba(60,0,100,0.88); color:#cc88ff; padding:4px 12px; border-radius:12px; font-size:13px; font-family:monospace; letter-spacing:1px; border:1px solid #aa44ff; z-index:10000; pointer-events:none;';
+            document.body.appendChild(badge);
+        }
+        badge.textContent = `✦ SIPHON LIFE ×${combatState.siphonTurns}`;
+    } else if (badge) {
+        badge.remove();
+    }
+}
+
+/**
+ * Necromancer passive: if Siphon Life is active, drain HP from the target.
+ * Melee/Guts restore more; rocks cap at 1 HP.
+ */
+function applySiphonDrain(damage, isRock = false) {
+    if (combatState.siphonTurns <= 0) return;
+    const heal = isRock ? 1 : Math.max(1, Math.floor(damage * 0.35));
+    game.hp = Math.min(game.maxHp, game.hp + heal);
+    combatState.siphonTurns--;
+    spawnFloatingText(`+${heal} DRAIN`, window.innerWidth / 2 - 120, window.innerHeight / 2 - 60, '#aa44ff');
+    logCombat(`Siphon drains ${heal} HP! (${combatState.siphonTurns} left)`, '#aa44ff');
+    if (combatState.siphonTurns === 0) {
+        logCombat("Siphon Life fades.", '#888');
+    }
+    updateSiphonBadge();
+    updateUI();
+}
+
 function executePlayerAttack(target) {
     combatState.isTargeting = false;
     combatState.turn = 'busy';
@@ -8215,6 +8498,7 @@ function executePlayerAttack(target) {
         spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ffaa00');
         
         target.stats.hp -= damage;
+        applySiphonDrain(damage, false); // Guts counts as melee for siphon
 
         // Guts strike always shakes the world and causes bleed (regardless of weapon type)
         triggerShake(18, 25);
@@ -8245,14 +8529,58 @@ function executePlayerAttack(target) {
     const dist = playerObj.position.distanceTo(target.mesh.position);
     
     const isSpell = game.equipment.weapon && game.equipment.weapon.isSpell;
-    const maxRange = isSpell ? 5.0 : 1.5; // 1.5 melee (1.0 ring + buffer)
-    
+    const isRanger = game.classId === 'ranger';
+    const maxRange = isSpell ? 5.0 : (isRanger ? 6.0 : 1.5);
+
     if (dist > maxRange) {
         if (isSpell) {
             logMsg("Target out of range!");
             spawnFloatingText("TOO FAR", window.innerWidth/2, window.innerHeight/2, '#ff0000');
             combatState.isTargeting = false;
             combatState.turn = 'player'; // Refund turn
+            return;
+        } else if (isRanger) {
+            // Ranger fires crossbow — permanent ranged weapon, DEX-based, more powerful than a rock
+            logMsg("Ranger fires crossbow!");
+            spawnFloatingText("CROSSBOW", window.innerWidth/2, window.innerHeight/2 - 100, '#00cc44');
+            spawn3DProjectile(playerObj.position, target.mesh.position, 'rock');
+
+            setTimeout(() => {
+                const playerDex = game.stats.dex || 1;
+                const crossbowPower = playerDex + 4; // Crossbow val = 4
+                const enemyPower = (target.stats.str || 1) + 4;
+                const playerAC = 10 + (game.maxAp || 0);
+                const enemyAC = target.stats.ac || 10;
+
+                const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC);
+                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Crossbow", () => {});
+                spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name || "Enemy", () => {
+                    if (res.winner === 'attacker') {
+                        const isCrit = res.attacker.roll === res.attacker.config.sides;
+                        if (isCrit) {
+                            spawnFloatingText("CRITICAL!", window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
+                            triggerShake(15, 25);
+                            inflictBleed(target, 2, 3); // Arrow bleed on crit
+                        }
+                        target.stats.hp -= res.damage;
+                        spawnFloatingText(`-${res.damage}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
+                        logCombat(`Crossbow hits! (Roll ${res.attacker.total} vs ${res.defender.total})`, '#00cc44');
+                        logCombat(`> Dealt ${res.damage} dmg`, '#fff');
+                        if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
+                        if (target.actions && target.actions.hit) target.actions.hit.reset().play();
+                    } else if (res.winner === 'defender') {
+                        takeDamage(res.damage);
+                        spawnFloatingText(`-${res.damage}`, window.innerWidth/2 - 100, window.innerHeight/2 + 50, '#ff0000');
+                        logCombat(`Enemy counters! (Roll ${res.defender.total} vs ${res.attacker.total})`, '#f44');
+                        if (actions.hit) actions.hit.reset().play();
+                    } else {
+                        spawnFloatingText("CLASH!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
+                        logCombat("Clash! Arrow deflected.", '#aaa');
+                    }
+                    updateUI();
+                    checkCombatEnd(target);
+                });
+            }, 600);
             return;
         } else {
             // Throw Rock Logic
@@ -8278,6 +8606,7 @@ function executePlayerAttack(target) {
                         // Hit - Fixed 1d4 damage
                         const dmg = DiceRoller.roll(4);
                         target.stats.hp -= dmg;
+                        applySiphonDrain(dmg, true); // Rock = capped at 1 HP drain
                         spawnFloatingText(`-${dmg}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
                         logCombat(`Rock hits! ${dmg} dmg.`, '#fff');
                         
@@ -8366,6 +8695,7 @@ function executePlayerAttack(target) {
             // Player Hits
             spawnFloatingText("HIT!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00');
             target.stats.hp -= result.damage;
+            applySiphonDrain(result.damage, false); // Melee drain
             spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
             logCombat(`Player hits! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
             logCombat(`> Dealt ${result.damage} dmg`, '#fff');
@@ -8479,6 +8809,14 @@ function startEnemyTurn() {
         }
     }
 
+    // --- BLINDED CHECK (Artificer Flashbang) ---
+    if (enemy.stats.blinded) {
+        spawnFloatingText("BLINDED!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffff88');
+        logCombat(`${enemy.name || 'Enemy'} is blinded — stumbles helplessly!`, '#ffff88');
+        endEnemyTurn();
+        return;
+    }
+
     const dist = enemy.mesh.position.distanceTo(playerObj.position);
     const attackRange = 2.0;
     const moveSpeed = 6.0;
@@ -8556,14 +8894,20 @@ function startEnemyTurn() {
         return;
     }
 
+    // Distraction: Bard's rock throw diverts enemies for one round.
+    // Enemies already in melee range can't be fooled — they can see the player right there.
+    const isAlreadyMelee = enemy.mesh.position.distanceTo(playerObj.position) <= attackRange;
+    const isDistracted = !!combatState.distractionPoint && !isAlreadyMelee;
+    const investigateTarget = isDistracted ? combatState.distractionPoint : playerObj.position;
+    const investigateDist = enemy.mesh.position.distanceTo(investigateTarget);
+
     // 1. Move if needed
-    if (dist > attackRange) {
-        // Calculate move target
-        const dir = new THREE.Vector3().subVectors(playerObj.position, enemy.mesh.position).normalize();
-        const moveDist = Math.min(dist - (attackRange - 0.5), moveSpeed);
+    if (investigateDist > attackRange) {
+        const dir = new THREE.Vector3().subVectors(investigateTarget, enemy.mesh.position).normalize();
+        const moveDist = Math.min(investigateDist - (attackRange - 0.5), moveSpeed);
         const targetPos = enemy.mesh.position.clone().add(dir.multiplyScalar(moveDist));
 
-        enemy.mesh.lookAt(playerObj.position);
+        enemy.mesh.lookAt(investigateTarget);
         if (enemy.actions.walk) enemy.actions.walk.play();
         if (enemy.actions.idle) enemy.actions.idle.stop();
 
@@ -8576,11 +8920,8 @@ function startEnemyTurn() {
                     const rayOrigin = new THREE.Vector3(enemy.mesh.position.x, CombatManager.combatTarget.y + 20, enemy.mesh.position.z);
                     terrainRaycaster.set(rayOrigin, new THREE.Vector3(0, -1, 0));
                     const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
-                    if (hits.length > 0) {
-                        enemy.mesh.position.y = hits[0].point.y;
-                    }
+                    if (hits.length > 0) enemy.mesh.position.y = hits[0].point.y;
                 }
-                // Update indicator position
                 if (enemyRangeIndicator) enemyRangeIndicator.position.copy(enemy.mesh.position);
             })
             .onComplete(() => {
@@ -8588,10 +8929,15 @@ function startEnemyTurn() {
                 if (enemy.actions.idle) enemy.actions.idle.play();
                 if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
 
-                // Check if can attack now
-                const newDist = enemy.mesh.position.distanceTo(playerObj.position);
+                const newDist = enemy.mesh.position.distanceTo(investigateTarget);
                 if (newDist <= attackRange) {
-                    executeEnemyAttack(enemy);
+                    if (isDistracted) {
+                        spawnFloatingText("?!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffaa00');
+                        logCombat(`${enemy.name || 'Enemy'} investigates... nobody there!`, '#aaa');
+                        endEnemyTurn();
+                    } else {
+                        executeEnemyAttack(enemy);
+                    }
                 } else {
                     endEnemyTurn();
                 }
@@ -8599,7 +8945,13 @@ function startEnemyTurn() {
             .start();
     } else {
         if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
-        executeEnemyAttack(enemy);
+        if (isDistracted) {
+            spawnFloatingText("?!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffaa00');
+            logCombat(`${enemy.name || 'Enemy'} investigates... nobody there!`, '#aaa');
+            endEnemyTurn();
+        } else {
+            executeEnemyAttack(enemy);
+        }
     }
 }
 
@@ -8702,6 +9054,17 @@ function endEnemyTurn() {
         } else {
             // All enemies done — reset index and return to player
             combatState.activeEnemyIdx = 0;
+            // Distraction expires — enemies have had their round to investigate
+            if (combatState.distractionPoint) {
+                logCombat("The enemies catch on — the distraction is spent.", '#888');
+                combatState.distractionPoint = null;
+            }
+            // Flashbang wears off — blinded enemies recover their sight
+            const wasBlinded = combatState.enemies.some(e => e.stats && e.stats.blinded);
+            if (wasBlinded) {
+                combatState.enemies.forEach(e => { if (e.stats) delete e.stats.blinded; });
+                logCombat("Enemies recover from the flash.", '#888');
+            }
             combatState.turn = 'player';
             combatState.currentMove = combatState.maxMove;
             combatState.canAttack = true;
