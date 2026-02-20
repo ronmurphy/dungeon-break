@@ -22,7 +22,7 @@ import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, updateInitStrip } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -134,14 +134,20 @@ let isEngagingCombat = false; // Prevent combat trigger spam
 let wanderers = [];
 let corpses = []; // { mesh, name, fuelReward } — skull sprites left after on-map kills
 let _aiFrameCount = 0; // Incremented each animate3D frame; used to throttle wanderer AI + mixers
+let _azureFlameReadyAt = 0; // Timestamp after which Azure Flame proximity can fire (spawn grace)
 const WANDERER_MODELS = [
     'skeleton-web.glb',
     'female_evil-web.glb', 'female_evil-true-web.glb',
-    'male_evil-web.glb', 'male_evil-true-web.glb',
+    'male_evil-web.glb',   'male_evil-true-web.glb',
+    'male-web.glb',        'female-web.glb',
     'ironjaw-web.glb',
-    'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb', 'SkeletalViking-web.glb',
-    'king-web.glb', 'queen-web.glb', 'sorceress-web.glb', 'assassin-web.glb'
+    'Gwark-web.glb',       'SkeletalViking-web.glb',
+    'a-sand-assassin-web.glb',
+    'a-sorcoress-web.glb',
+    'a-skeleton-king-web.glb',
 ];
+// Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
+// 'a-female_twin-web.glb', 'a_male_twin-web.glb'
 
 // List of models to display in Gallery Mode (editmap)
 // Add new building/prop filenames here to configure them.
@@ -2484,9 +2490,9 @@ function animate3D() {
     }
 
     // Azure Flame proximity (Start Room — always present, never cleared)
-    // Trigger whenever the player walks close enough; modal's own presence prevents re-firing.
-    // The 'leave' handler already nudges the player outside range, so no extra cooldown needed.
-    if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
+    // _azureFlameReadyAt gives a 4s grace on spawn/floor entry so the modal doesn't
+    // fire immediately while the player is standing on top of it.
+    if (!isCombatView && !isAttractMode && !isEditMode && playerObj && Date.now() >= _azureFlameReadyAt) {
         const azureRoom = game.rooms.find(r => r.id === 0);
         const modal = document.getElementById('combatModal');
         const modalOpen = modal && modal.style.display === 'flex';
@@ -3695,6 +3701,7 @@ function finalizeStartDive() {
     game.bonfireUsed = false; game.merchantUsed = false;
     game.currentTrack = null;
     game.visitedWaypoints = [];
+    _azureFlameReadyAt = Date.now() + 4000; // 4s grace — player spawns on top of the flame
     game.enemiesDefeated = 0;
 
     // Apply Hidden Class Bonuses
@@ -3903,6 +3910,7 @@ function descendToNextFloor() {
     game.deck = createDeck(); game.rooms = generateDungeon(game.floor);
     game.currentRoomIdx = 0; game.lastAvoided = false;
     game.bonfireUsed = false; game.merchantUsed = false;
+    _azureFlameReadyAt = Date.now() + 4000; // Grace period — player drops onto the flame on floor entry
     game.pendingPurchase = null;
     game.isBossFight = false;
     game.currentTrack = null; // Force music re-eval
@@ -7607,9 +7615,20 @@ function startCombat(wanderer, isFlankAttack = false) {
         if (!combatState.enemies.includes(wanderer)) {
             combatState.enemies.push(wanderer);
             initWandererForCombat(wanderer);
+            // Give the reinforcement an initiative roll and insert into the order
+            if (combatState.initiativeOrder) {
+                const str = wanderer.stats ? (wanderer.stats.str || 1) : 1;
+                wanderer.stats.initRoll = Math.ceil(Math.random() * 20) + Math.floor(str / 2);
+                const newIdx = combatState.enemies.length - 1;
+                combatState.initiativeOrder.push({
+                    label: enemyDisplayName(wanderer), roll: wanderer.stats.initRoll,
+                    isPlayer: false, enemyIdx: newIdx,
+                });
+                combatState.initiativeOrder.sort((a, b) => b.roll - a.roll || (a.isPlayer ? -1 : 1));
+            }
             logMsg(`A ${enemyDisplayName(wanderer)} joins the fight!`);
             spawnFloatingText("REINFORCEMENT!", window.innerWidth / 2, window.innerHeight / 2 - 120, '#ff4400', 28);
-            showCombatTracker(combatState.enemies); // Refresh tracker with new enemy
+            showCombatTracker(combatState.enemies, combatState.initiativeOrder); // Refresh tracker with new enemy + updated order
         }
         return;
     }
@@ -7665,16 +7684,69 @@ function startCombat(wanderer, isFlankAttack = false) {
 
     updateMovementIndicator();
     showCombat();
-    showCombatMenu();
-    showCombatTracker(combatState.enemies);
 
-    // Flanked: enemy gets a free opening attack
     if (isFlankAttack) {
+        // Ambush: no initiative roll — enemy clearly goes first
+        showCombatMenu();
+        showCombatTracker(combatState.enemies);
         spawnFloatingText("AMBUSH!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000', 40);
         logCombat("Flanked! Enemy strikes first.", '#ff0000');
         combatState.turn = 'busy';
         setTimeout(startEnemyTurn, 500);
+    } else {
+        // Normal encounter — roll initiative (shows dice, then gives menu to winner)
+        rollInitiative();
     }
+}
+
+function rollInitiative() {
+    combatState.turn = 'busy';
+
+    // Player: d20 + DEX bonus
+    const playerDex = game.stats.dex || 0;
+    const playerRoll = Math.ceil(Math.random() * 20) + playerDex;
+    combatState.playerInitRoll = playerRoll;
+
+    // Each enemy: d20 + floor(STR/2) as a speed proxy
+    combatState.enemies.forEach(w => {
+        const str = w.stats ? (w.stats.str || 1) : 1;
+        w.stats.initRoll = Math.ceil(Math.random() * 20) + Math.floor(str / 2);
+    });
+
+    // Build sorted initiative order — ties go to player
+    const entries = [{ label: 'You', roll: playerRoll, isPlayer: true }];
+    combatState.enemies.forEach((w, i) => {
+        entries.push({ label: enemyDisplayName(w), roll: w.stats.initRoll, isPlayer: false, enemyIdx: i });
+    });
+    entries.sort((a, b) => b.roll - a.roll || (a.isPlayer ? -1 : 1));
+    combatState.initiativeOrder = entries;
+    combatState.playerGoesFirst = entries[0].isPlayer;
+
+    // Show tracker now that we have an order
+    showCombatTracker(combatState.enemies, combatState.initiativeOrder);
+
+    // Pick the highest-rolling enemy for the dice display
+    const topEntry = entries.find(e => !e.isPlayer);
+    const enemyRoll  = topEntry ? topEntry.roll : 10;
+    const enemyLabel = topEntry ? topEntry.label : 'Enemy';
+
+    logCombat(`⚡ Initiative: You (${playerRoll}) vs ${enemyLabel} (${enemyRoll})`, '#ffdd44');
+
+    // Spawn both d20s simultaneously — player left (green), enemy right (red)
+    spawnDice3D(20, playerRoll, 0x00cc44, { x: -1.5, y: 0.5 }, 'You', () => {});
+    spawnDice3D(20, enemyRoll,  0xff4400, { x:  1.5, y: 0.5 }, enemyLabel, () => {
+        if (combatState.playerGoesFirst) {
+            logCombat('You win initiative — strike first!', '#00cc44');
+            spawnFloatingText('⚡ YOU GO FIRST!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#00cc44', 24);
+            combatState.turn = 'player';
+            updateInitStrip('player');
+            showCombatMenu();
+        } else {
+            logCombat(`${enemyLabel} wins initiative — brace!`, '#ff4400');
+            spawnFloatingText(`⚡ ${enemyLabel.toUpperCase()} FIRST!`, window.innerWidth / 2, window.innerHeight / 2 - 80, '#ff4400', 24);
+            setTimeout(startEnemyTurn, 400);
+        }
+    });
 }
 
 function enterCombatView() {
@@ -8861,6 +8933,8 @@ function startEnemyTurn() {
     const idx = Math.min(combatState.activeEnemyIdx, aliveEnemies.length - 1);
     activeWanderer = aliveEnemies[idx];
 
+    // Highlight this enemy's pill in the initiative strip
+    updateInitStrip(combatState.enemies.indexOf(activeWanderer));
     logCombat(`${enemyDisplayName(activeWanderer)} acts...`);
 
     if (!activeWanderer.mesh) {
@@ -9152,6 +9226,7 @@ function endEnemyTurn() {
             combatState.isDashing = false;
             combatState.isDefending = false;
             updateMovementIndicator();
+            updateInitStrip('player');
             logCombat("Player turn.");
         }
     }, 1000);

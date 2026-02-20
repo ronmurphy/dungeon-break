@@ -26,6 +26,9 @@
   --d10:  #28c8e8;
   --d12:  #28d890;
   --d20:  #8870f8;
+  --d30:  #c050ff;
+  --d40:  #ff4080;
+  --d60:  #ffb020;
   --d100: #e850a8;
 }
 
@@ -243,6 +246,34 @@ html, body {
 .roll-btn:hover { background: linear-gradient(180deg,#d8a820 0%,#9a7010 100%); transform:translateY(-1px); box-shadow:0 0 20px rgba(200,150,10,.4), 0 4px 12px rgba(0,0,0,.6); }
 .roll-btn:active { transform:translateY(0); }
 .roll-btn-secondary { background: linear-gradient(180deg,#3a3020 0%,#201808 100%); border-color:var(--gold-dim); }
+.roll-btn-deal {
+  background: linear-gradient(180deg,#5a1080 0%,#2e0650 100%);
+  border-color: var(--d30);
+  color: #f0d0ff;
+  box-shadow: 0 2px 8px rgba(0,0,0,.5), inset 0 1px 0 rgba(200,100,255,.2);
+}
+.roll-btn-deal:hover { background: linear-gradient(180deg,#7a18a8 0%,#420878 100%); box-shadow:0 0 18px rgba(192,80,255,.35), 0 4px 12px rgba(0,0,0,.6); }
+
+.roll-row { display:flex; gap:.5rem; width:100%; }
+.roll-row .roll-btn { flex:1; }
+
+/* Escape offer */
+.escape-msg {
+  display:flex; flex-direction:column; gap:.18rem;
+  padding:.35rem .5rem;
+  background:rgba(80,0,100,.18); border:1px solid rgba(192,80,255,.2);
+  border-radius:3px;
+}
+.escape-broker {
+  font-family:'Cinzel',serif; font-size:.68rem; font-weight:700;
+  color:var(--d30); letter-spacing:.06em;
+}
+.escape-text {
+  font-family:'Crimson Text',serif; font-size:.88rem;
+  color:var(--text-2); font-style:italic; line-height:1.35;
+}
+.escape-btns { display:flex; gap:.5rem; }
+.escape-btns .roll-btn { flex:1; }
 
 /* ═══════════════════════════════════════
    GAME SCREEN

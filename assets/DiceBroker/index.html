@@ -30,9 +30,9 @@
         <div class="opt-group">
           <div class="opt-label">⚔ STAKE</div>
           <div class="opt-row" id="diff-group">
-            <button class="s-btn active" data-v="easy"><span class="s-title">Brawl</span><span class="s-sub">1× D100</span></button>
-            <button class="s-btn" data-v="medium"><span class="s-title">Outlaw</span><span class="s-sub">3× D100</span></button>
-            <button class="s-btn" data-v="hard"><span class="s-title">Long Night</span><span class="s-sub">5× D100</span></button>
+            <button class="s-btn active" data-v="easy"><span class="s-title">Brawl</span><span class="s-sub">Score 75+</span></button>
+            <button class="s-btn" data-v="medium"><span class="s-title">Outlaw</span><span class="s-sub">Score 100+</span></button>
+            <button class="s-btn" data-v="hard"><span class="s-title">Long Night</span><span class="s-sub">Score 125+</span></button>
           </div>
         </div>
         <div class="opt-group">
@@ -52,7 +52,8 @@
             <li>Roll <b>all</b> your dice for max power — but risk losing any</li>
             <li>Winner: <b>Duplicate</b> a die or <b>Upgrade</b> to next rank</li>
             <li>Losers drop a die into the pool. Run dry — eliminated!</li>
-            <li>First to collect the target D100s wins everything!</li>
+            <li>Roll the target score in one round to win — or be the last standing!</li>
+            <li>☠ <b>Broker's Deal</b>: declare your attempt — roll all dice, win or lose big!</li>
           </ul>
           <div class="upgrade-chain">
             <span style="color:#e84040">D4</span><span class="ch-arr">›</span>
@@ -61,6 +62,9 @@
             <span style="color:#28c8e8">D10</span><span class="ch-arr">›</span>
             <span style="color:#28d890">D12</span><span class="ch-arr">›</span>
             <span style="color:#8870f8">D20</span><span class="ch-arr">›</span>
+            <span style="color:#c050ff">D30</span><span class="ch-arr">›</span>
+            <span style="color:#ff4080">D40</span><span class="ch-arr">›</span>
+            <span style="color:#ffb020">D60</span><span class="ch-arr">›</span>
             <span style="color:#e850a8">D100</span>
           </div>
         </div>
@@ -116,7 +120,10 @@
       </div>
 
       <div id="phase-roll" class="phase-block hidden">
-        <button id="roll-btn" class="roll-btn">ROLL</button>
+        <div class="roll-row">
+          <button id="roll-btn" class="roll-btn">ROLL</button>
+          <button id="deal-btn" class="roll-btn roll-btn-deal">☠ Broker's Deal</button>
+        </div>
       </div>
       <div id="phase-choice" class="phase-block hidden">
         <div class="choice-title">⚔ Victory! Choose reward:</div>
@@ -124,6 +131,16 @@
       </div>
       <div id="phase-continue" class="phase-block hidden">
         <button id="continue-btn" class="roll-btn roll-btn-secondary">Next Round →</button>
+      </div>
+      <div id="phase-escape" class="phase-block hidden">
+        <div class="escape-msg">
+          <span class="escape-broker">☠ The Broker leans close…</span>
+          <span class="escape-text">"The odds are against you, friend. No shame in walking away with what little remains."</span>
+        </div>
+        <div class="escape-btns">
+          <button id="escape-walk" class="roll-btn roll-btn-deal">Walk Away</button>
+          <button id="escape-stay" class="roll-btn roll-btn-secondary">Stay and Fight</button>
+        </div>
       </div>
     </div>
 

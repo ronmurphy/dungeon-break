@@ -1092,7 +1092,7 @@ export const COMBAT_COLORS = [
     { hex: 0x00ffff, css: '#00ffff' }, // cyan
 ];
 
-export function showCombatTracker(enemies) {
+export function showCombatTracker(enemies, initOrder = null) {
     removeCombatTracker();
 
     const panel = document.createElement('div');
@@ -1103,6 +1103,44 @@ export function showCombatTracker(enemies) {
         z-index: 6001; pointer-events: none;
         font-family: 'Cinzel', serif; min-width: 240px;
     `;
+
+    // --- Initiative order strip (shown when combat started with a roll) ---
+    if (initOrder && initOrder.length > 0) {
+        const strip = document.createElement('div');
+        strip.id = 'initOrderStrip';
+        strip.style.cssText = `
+            display: flex; gap: 3px; align-items: center; flex-wrap: wrap;
+            background: rgba(10,10,10,0.92);
+            border: 1px solid rgba(255,221,68,0.3); border-left: 3px solid rgba(255,221,68,0.55);
+            padding: 4px 8px;
+        `;
+        const ico = document.createElement('span');
+        ico.style.cssText = 'font-size:0.58rem; color:#ffdd44; margin-right:3px; flex-shrink:0;';
+        ico.textContent = '⚡';
+        strip.appendChild(ico);
+
+        initOrder.forEach((entry, i) => {
+            if (i > 0) {
+                const arr = document.createElement('span');
+                arr.style.cssText = 'font-size:0.58rem; color:#444; flex-shrink:0;';
+                arr.textContent = ' › ';
+                strip.appendChild(arr);
+            }
+            const pill = document.createElement('span');
+            pill.id = `initPill_${entry.isPlayer ? 'player' : entry.enemyIdx}`;
+            pill.style.cssText = `
+                font-family:'Cinzel',serif; font-size:0.52rem; letter-spacing:0.04em;
+                padding: 1px 5px; border-radius: 2px;
+                background: rgba(255,255,255,0.06);
+                color: ${entry.isPlayer ? '#44dd88' : '#ff8866'};
+                border: 1px solid rgba(255,255,255,0.1);
+                white-space: nowrap; transition: all 0.25s;
+            `;
+            pill.textContent = `${entry.label} (${entry.roll})`;
+            strip.appendChild(pill);
+        });
+        panel.appendChild(strip);
+    }
 
     // --- Enemy rows ---
     enemies.forEach((w, i) => {
@@ -1202,6 +1240,25 @@ export function logToTracker(msg, color = '#ccc') {
 export function removeCombatTracker() {
     const el = document.getElementById('combatTracker');
     if (el) el.remove();
+}
+
+export function updateInitStrip(currentActor) {
+    const strip = document.getElementById('initOrderStrip');
+    if (!strip) return;
+    strip.querySelectorAll('span[id^="initPill_"]').forEach(pill => {
+        pill.style.fontWeight = 'normal';
+        pill.style.background = 'rgba(255,255,255,0.06)';
+        pill.style.boxShadow = 'none';
+        pill.style.textShadow = 'none';
+    });
+    const key = currentActor === 'player' ? 'initPill_player' : `initPill_${currentActor}`;
+    const activePill = document.getElementById(key);
+    if (activePill) {
+        activePill.style.fontWeight = '700';
+        activePill.style.background = 'rgba(255,255,255,0.18)';
+        activePill.style.boxShadow = `0 0 8px ${activePill.style.color}`;
+        activePill.style.textShadow = `0 0 6px ${activePill.style.color}`;
+    }
 }
 
 const COMBAT_PAGES = {

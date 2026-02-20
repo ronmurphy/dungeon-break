@@ -13,23 +13,25 @@
 // ───────────────────────────────────────────────────────────────
 //  CONSTANTS
 // ───────────────────────────────────────────────────────────────
-const DICE_SIDES = [4, 6, 8, 10, 12, 20, 100];
+const DICE_SIDES = [4, 6, 8, 10, 12, 20, 30, 40, 60, 100];
 
 const DIE_HEX = {
   4:   0xe84040,  6:  0xe87820,  8:  0xd4b800,
-  10:  0x28c8e8,  12: 0x28d890,  20: 0x8870f8,  100: 0xe850a8,
+  10:  0x28c8e8,  12: 0x28d890,  20: 0x8870f8,
+  30:  0xc050ff,  40: 0xff4080,  60: 0xffb020,  100: 0xe850a8,
 };
 const DIE_CSS = {
   4:   '#e84040',  6:  '#e87820',  8:  '#d4b800',
-  10:  '#28c8e8',  12: '#28d890',  20: '#8870f8',  100: '#e850a8',
+  10:  '#28c8e8',  12: '#28d890',  20: '#8870f8',
+  30:  '#c050ff',  40: '#ff4080',  60: '#ffb020',  100: '#e850a8',
 };
 
 const AI_NAMES = ['Grimbald','Thessaly','Corvyn','Morryn','Aldric','Vesper','Idris'];
 
 const DIFF = {
-  easy:   { label:'Tavern Brawl',  t:1 },
-  medium: { label:"Outlaw's Game", t:3 },
-  hard:   { label:'The Long Night',t:5 },
+  easy:   { label:'Tavern Brawl',  target: 75 },
+  medium: { label:"Outlaw's Game", target: 100 },
+  hard:   { label:'The Long Night',target: 125 },
 };
 
 // ───────────────────────────────────────────────────────────────
@@ -115,6 +117,9 @@ const DiceEngine = (() => {
       case 10:  return new THREE.ConeGeometry(.95, 1.6, 10, 1);
       case 12:  return new THREE.DodecahedronGeometry(1.1, 0);
       case 20:  return new THREE.IcosahedronGeometry(1.15, 0);
+      case 30:  return new THREE.DodecahedronGeometry(1.15, 1);
+      case 40:  return new THREE.IcosahedronGeometry(1.1, 1);
+      case 60:  return new THREE.OctahedronGeometry(1.1, 2);
       case 100: return new THREE.SphereGeometry(1.0, 18, 18);
       default:  return new THREE.BoxGeometry(1.4,1.4,1.4);
     }
@@ -361,7 +366,6 @@ class Player {
     this.roundRolls = [];
   }
   get isProtected() { return !this.madeFirstChoice; }
-  get d100Count()   { return this.dice.filter(d=>d===100).length; }
   get bestDie()     { return this.dice.length ? Math.max(...this.dice) : 0; }
 
   rollSelectedDice() {
@@ -388,7 +392,7 @@ class Player {
     this.dice.sort((a,b)=>b-a);
   }
 
-  loseRandomDie() {
+  _loseSingleDie() {
     if (!this.dice.length) return null;
     let eligible = this.dice.map((_,i)=>i);
     if (this.isProtected) {
@@ -405,6 +409,16 @@ class Player {
     return lost;
   }
 
+  loseDice(count) {
+    const lost = [];
+    for (let i = 0; i < count; i++) {
+      const die = this._loseSingleDie();
+      if (die === null) break;
+      lost.push(die);
+    }
+    return lost;
+  }
+
   getAIChoice() {
     const b = this.bestDie;
     const idx = DICE_SIDES.indexOf(b);
@@ -418,7 +432,8 @@ class Player {
 const G = {
   players: [], pool: [],
   round: 0, difficulty: 'easy', numOpponents: 2,
-  phase: 'setup',
+  phase: 'setup', brokersDeal: false,
+  escapeOffered: false, walkedAway: false,
 };
 
 // ───────────────────────────────────────────────────────────────
@@ -461,7 +476,7 @@ function showScreen(id) {
 const show = id => document.getElementById(id).classList.remove('hidden');
 const hide = id => document.getElementById(id).classList.add('hidden');
 function hideAllPhases() {
-  ['phase-roll','phase-choice','phase-continue'].forEach(hide);
+  ['phase-roll','phase-choice','phase-continue','phase-escape'].forEach(hide);
 }
 
 // ───────────────────────────────────────────────────────────────
@@ -498,6 +513,7 @@ function initGame() {
   G.difficulty   = document.querySelector('#diff-group .s-btn.active').dataset.v;
   G.numOpponents = parseInt(document.querySelector('#opp-group .s-btn.active').dataset.v, 10);
   G.pool = []; G.round = 0; G.phase = 'select';
+  G.escapeOffered = false; G.walkedAway = false;
 
   G.players = [new Player('You', true)];
   const names = [...AI_NAMES].sort(()=>Math.random()-.5);
@@ -505,7 +521,7 @@ function initGame() {
 
   document.getElementById('log-body').innerHTML = '';
   document.getElementById('diff-pill').textContent = DIFF[G.difficulty].label;
-  document.getElementById('target-pill').textContent = `Goal: ${DIFF[G.difficulty].t}× D100`;
+  document.getElementById('target-pill').textContent = `Goal: ${DIFF[G.difficulty].target}+ score`;
 
   showScreen('game-screen');
   startRound();
@@ -515,7 +531,7 @@ function initGame() {
 //  ROUND LIFECYCLE
 // ───────────────────────────────────────────────────────────────
 function startRound() {
-  G.round++; G.phase = 'select';
+  G.round++; G.phase = 'select'; G.brokersDeal = false;
   document.getElementById('round-label').textContent = `Round ${G.round}`;
   hideAllPhases();
   hide('tray-result');
@@ -629,8 +645,23 @@ document.getElementById('roll-btn').addEventListener('click', ()=>{
     log('Select at least one die!', 'loss');
     return;
   }
+  G.brokersDeal = false;
   hide('tray-hint');
   hideAllPhases();
+  executeRound();
+});
+
+document.getElementById('deal-btn').addEventListener('click', ()=>{
+  const human = G.players[0];
+  // Broker's Deal forces all dice
+  human.selectedDice = [...human.dice];
+  document.querySelectorAll('.rack-die-wrap').forEach(w=>w.classList.add('selected'));
+  updateSelectedSummary();
+  G.brokersDeal = true;
+  hide('tray-hint');
+  hideAllPhases();
+  const target = DIFF[G.difficulty].target;
+  log(`☠ You call the Broker's Deal — going for ${target}+!`, 'win');
   executeRound();
 });
 
@@ -672,13 +703,14 @@ function resolveRound(active) {
   renderLeaderboard(winner, active);
   flashLeaderboard(winner, active.filter(p=>p!==winner));
 
-  // Losers lose dice
+  // Losers lose half the dice they bet (min 1)
   active.filter(p=>p!==winner).forEach(p=>{
-    const lost = p.loseRandomDie();
-    if (lost !== null) {
-      G.pool.push(lost);
-      log(`${p.name} lost a D${lost} to the pool.`, 'loss');
-    }
+    const numToLose = Math.max(1, Math.floor(p.selectedDice.length / 2));
+    const lost = p.loseDice(numToLose);
+    lost.forEach(d=>{
+      G.pool.push(d);
+      log(`${p.name} lost a D${d} to the pool.`, 'loss');
+    });
     if (p.dice.length === 0) {
       p.eliminated = true;
       log(`${p.name} has been eliminated!`, 'loss');
@@ -688,7 +720,19 @@ function resolveRound(active) {
   renderLeaderboard(winner, active);
 
   // Handle winner
+  const winTarget = DIFF[G.difficulty].target;
   setTimeout(()=>{
+    // Score-based win: auto-win on lucky roll, or declared Broker's Deal
+    if (winner.roundScore >= winTarget) {
+      if (G.brokersDeal && winner.isHuman) {
+        log(`☠ BROKER'S DEAL! You scored ${winner.roundScore} — the house falls!`, 'win');
+      } else {
+        log(`🎲 ${winner.name} scored ${winner.roundScore} — hits the mark!`, 'win');
+      }
+      endGame(winner);
+      return;
+    }
+
     if (winner.isHuman) {
       showHumanChoice(winner);
     } else {
@@ -752,19 +796,55 @@ function applyHumanChoice(choice, die) {
 }
 
 // ───────────────────────────────────────────────────────────────
+//  ESCAPE OFFER — Broker whispers when player is outgunned
+// ───────────────────────────────────────────────────────────────
+function shouldOfferEscape() {
+  if (G.round < 2) return false;
+  if (G.escapeOffered) return false;
+  const human = G.players[0];
+  if (human.eliminated) return false;
+  const rivals = G.players.filter(p => !p.isHuman && !p.eliminated);
+  if (!rivals.length) return false;
+
+  const humanPotential  = human.dice.reduce((s, d) => s + d, 0);
+  const bestRivalPotential = Math.max(...rivals.map(p => p.dice.reduce((s, d) => s + d, 0)));
+  // Offer if player can score at most 25% of what the best rival can
+  return humanPotential > 0 && humanPotential < bestRivalPotential * 0.25;
+}
+
+function checkEscapeOffer() {
+  if (!shouldOfferEscape()) return false;
+  G.escapeOffered = true;
+  hideAllPhases();
+  show('phase-escape');
+  G.phase = 'escape';
+  log('☠ The Broker leans in and whispers an offer…', 'info');
+  return true;
+}
+
+// ───────────────────────────────────────────────────────────────
 //  WIN CHECK
 // ───────────────────────────────────────────────────────────────
 function checkWin(roundWinner) {
-  const t = DIFF[G.difficulty].t;
-  for (const p of G.players) {
-    if (p.d100Count >= t) { endGame(p); return; }
-  }
   const alive = G.players.filter(p=>!p.eliminated);
   if (alive.length === 1) { endGame(alive[0]); return; }
   if (G.players[0].eliminated) { endGame(null); return; }
 
-  show('phase-continue');
-  G.phase = 'continue';
+  // AI won — auto-advance after a pause (unless escape offer fires)
+  if (roundWinner && !roundWinner.isHuman) {
+    G.phase = 'continue';
+    setTimeout(()=>{
+      hide('tray-result');
+      show('tray-hint');
+      hideAllPhases();
+      if (checkEscapeOffer()) return;
+      startRound();
+    }, 2000);
+  } else {
+    if (checkEscapeOffer()) return;
+    show('phase-continue');
+    G.phase = 'continue';
+  }
 }
 
 document.getElementById('continue-btn').addEventListener('click', ()=>{
@@ -774,13 +854,30 @@ document.getElementById('continue-btn').addEventListener('click', ()=>{
   startRound();
 });
 
+document.getElementById('escape-walk').addEventListener('click', ()=>{
+  const human = G.players[0];
+  human.dice.forEach(d => G.pool.push(d));
+  human.dice = [];
+  human.eliminated = true;
+  G.walkedAway = true;
+  log('You push back from the table. Your dice remain as tribute to the Broker.', 'loss');
+  endGame(null);
+});
+
+document.getElementById('escape-stay').addEventListener('click', ()=>{
+  hideAllPhases();
+  log('You stare down the Broker and spit. The bones are cast!', 'info');
+  hide('tray-result');
+  show('tray-hint');
+  startRound();
+});
+
 // ───────────────────────────────────────────────────────────────
 //  RENDER LEADERBOARD STRIP
 // ───────────────────────────────────────────────────────────────
 function renderLeaderboard(winner=null, active=null) {
   const strip = document.getElementById('leader-strip');
   strip.innerHTML = '';
-  const t = DIFF[G.difficulty].t;
 
   G.players.forEach(p=>{
     const card = document.createElement('div');
@@ -819,18 +916,6 @@ function renderLeaderboard(winner=null, active=null) {
       card.appendChild(sc);
     }
 
-    // D100 progress dots
-    if (t > 1) {
-      const dots = document.createElement('div');
-      dots.className = 'lc-d100';
-      for (let i=0; i<t; i++) {
-        const d = document.createElement('div');
-        d.className = `lc-dot ${i<p.d100Count?'filled':''}`;
-        dots.appendChild(d);
-      }
-      card.appendChild(dots);
-    }
-
     strip.appendChild(card);
   });
 }
@@ -851,20 +936,32 @@ function flashLeaderboard(winner, losers) {
 // ───────────────────────────────────────────────────────────────
 function endGame(winner) {
   G.phase = 'over';
-  const t = DIFF[G.difficulty].t;
+  const winTarget = DIFF[G.difficulty].target;
 
   if (winner) {
+    const hitScore = winner.roundScore >= winTarget;
     document.getElementById('win-icon').textContent = winner.isHuman ? '🏆' : '💀';
     document.getElementById('win-headline').textContent = winner.isHuman ? 'Victory!' : `${winner.name} Wins`;
     document.getElementById('win-headline').className = winner.isHuman ? 'win' : 'lose';
     document.getElementById('win-sub').textContent = winner.isHuman
-      ? `You reached ${t}× D100 — the tavern bows to you.`
-      : `${winner.name} collected ${t}× D100 first.`;
+      ? (hitScore
+          ? (G.brokersDeal
+              ? `Broker's Deal sealed — ${winner.roundScore} scored. The house is yours.`
+              : `Lucky roll of ${winner.roundScore} — the bones favoured you.`)
+          : 'Last one standing. The tavern is yours.')
+      : (hitScore
+          ? `${winner.name} rolled ${winner.roundScore} — hit the mark.`
+          : `${winner.name} was the last rival standing.`);
   } else {
     document.getElementById('win-icon').textContent = '☠️';
-    document.getElementById('win-headline').textContent = 'Eliminated';
     document.getElementById('win-headline').className = 'lose';
-    document.getElementById('win-sub').textContent = 'Your dice ran dry. The bones do not lie.';
+    if (G.walkedAway) {
+      document.getElementById('win-headline').textContent = 'You Walked Away';
+      document.getElementById('win-sub').textContent = 'A wise retreat. The Broker tips his hat and collects your bones.';
+    } else {
+      document.getElementById('win-headline').textContent = 'Eliminated';
+      document.getElementById('win-sub').textContent = 'Your dice ran dry. The bones do not lie.';
+    }
   }
 
   document.getElementById('win-stats').innerHTML =

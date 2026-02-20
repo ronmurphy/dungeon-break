@@ -16,34 +16,44 @@
 ## ✅ Phase 2: First Contact (Complete)
 
 ### Wandering Enemies
-- Enemies spawn on the map (`skeleton-web.glb`, `male_evil-web.glb`, `female_evil-web.glb`, `ironjaw-web.glb`, `Gwark-web.glb`, `gremlinn.glb`*, `Stolem.glb`*, `SkeletalViking-web.glb`).
-- *Note: `gremlinn.glb` and `Stolem.glb` still need web compression (`-web` suffix pipeline).*
+Current roster (spawned randomly from `WANDERER_MODELS`):
+- `skeleton-web.glb`
+- `female_evil-web.glb`, `female_evil-true-web.glb`
+- `male_evil-web.glb`, `male_evil-true-web.glb`
+- `male-web.glb`, `female-web.glb`
+- `ironjaw-web.glb`
+- `Gwark-web.glb`, `SkeletalViking-web.glb`
+- `a-sand-assassin-web.glb`, `a-sorcoress-web.glb`, `a-skeleton-king-web.glb`
+
+**Boss-only (not in random pool):** `a-female_twin-web.glb`, `a_male_twin-web.glb` — reserved for final encounter.
+
 - **Patrol AI:** Pick random point on `globalFloorMesh`, walk to it, repeat.
 - **Cone of Vision:** 120° FOV, 4.0 unit range. Enemies chase player on sight, resume patrol on losing LOS.
 - **Combat Trigger:** Distance < 1.2 units fires `startCombat()`.
-- **Enemy Database:** `enemy-database.js` — named stat blocks per model type. `enemyDisplayName()` helper ensures proper names everywhere (no filename leaking into UI).
+- **Enemy Database:** `enemy-database.js` — named stat blocks per model type. `enemyDisplayName()` helper ensures proper names everywhere.
+- **AI Throttle:** Patrol AI runs every 3rd frame; chase AI every frame for smooth movement. Dead wanderer mixers skipped entirely. Distant mixers (>20 units) tick every other frame.
 
-### Battle Island & Camera
-- `CombatManager` teleports player + enemy to a separate `BattleIsland` at (2000, 2000, 2000).
-- Camera tweens to FFT-style fixed isometric view. Restores on combat end.
-- `createBattleIsland()` generates a themed arena floor based on current dungeon floor level.
+### On-Map Turn-Based Combat
+Combat happens in place on the main 3D map — no teleport, no Battle Island.
 
-### Turn-Based Combat System
-- **Turn order:** Player goes first (initiative system can be added later).
-- **Combat Tracker UI:** Per-enemy HP bars with color-coded indicators, combat log (last 3 messages), bleed status display.
+- Player and enemies stay in their world positions.
+- `isCombatView = true` during combat; `inBattleIsland` is never set.
+- Any wanderer within range can join an active fight (`startCombat` during `isCombatView` pushes to roster).
+- **Combat Tracker UI:** Fixed panel (bottom-right) with per-enemy HP bars, color-coded glow, bleed indicators, and last 3 log messages at the bottom. Tracker rows are clickable for targeting (3rd fallback after raycaster + ray proximity).
 - **Multi-enemy combat:** `combatState.enemies[]` roster; each enemy takes a turn in sequence.
+- **Targeting:** (1) Raycaster hit on mesh, (2) ray-to-point distance < 1.5 units, (3) click tracker row.
 
 #### Player Actions (Combat Menu — 3×3 grid)
 | Action | Status | Notes |
 |---|---|---|
-| Attack | ✅ | `resolveClash()` with 3D dice animations. Range check — throws rock if out of melee range. Flanking bonus (1.5×). Ranger uses crossbow at range (DEX-based, 6.0 unit max). |
-| Skill | ✅ | Shows actual skill name. All 9 classes have unique combat skills (see below). |
-| Item | ⬜ | Stubbed. Needs wiring to hotbar. |
+| Attack | ✅ | `resolveClash()` with 3D dice animations. Range check — throws rock if out of melee range. Flanking bonus (1.5×). |
+| Skill | ✅ | Shows actual skill name. All 9 classes have unique combat skills. |
+| Item | ⬜ | Sub-menu planned — shows hotbar as sprites, wires to potion/consumable use. |
 | Defend | ✅ | +4 AC stance for the enemy's turn. |
 | Equip | ⬜ | Stubbed. |
-| Analyze | ⬜ | Stubbed. |
+| Analyze | ⬜ | Stubbed — planned to expand tracker row with enemy stats on click. |
 | Wait | ✅ | Passes turn to enemy. |
-| Flee | ✅ | Calls `exitBattleIsland()`. |
+| Flee | ✅ | Calls `exitBattleIsland()` (exits combat view, no teleport). |
 | Tactics | ✅ | Sub-menu: Dash, Shove, Guts, Feint. |
 
 #### Tactics Sub-Menu
@@ -51,7 +61,7 @@
 |---|---|---|
 | Dash | ✅ | Doubles movement, disables attack for the turn. |
 | Shove | ✅ | STR clash — pushes enemy 1.5m on success. |
-| Guts | ✅ | Charge up a burst strike. Stacks up to ×2. Always causes bleed. |
+| Guts | ✅ | Charge up a burst strike. Stacks up to ×2. Always causes bleed + screen shake. |
 | Feint | ✅ | DEX vs WIS clash — next attack gains flank bonus on success. |
 
 #### Class Skills ✅ (all 9 classes implemented)
@@ -62,90 +72,107 @@
 | Occultist | Eldritch Blast | 1d8 magic damage, ignores armor. |
 | Priest | Smite | 2 damage + 2 HP heal. |
 | Paladin | Holy Bash | Weapon damage + 2 AP restore. |
-| Bard | Distract | Throws rock in random direction; enemies investigate for 1 round, then realise the trick. No targeting needed. |
-| Ranger | Snipe | Precision crossbow shot, 1.5× damage, crits on top 30% of die range. Must be at range (> 1.5 units). |
-| Artificer | Flashbang | Blinds enemies within 5 units for 1 round. Must be in close range (≤ 3 units). No targeting needed. |
-| Necromancer | Siphon Life | 3-attack drain buff. Melee/Guts: heal 35% of damage dealt. Rock: cap 1 HP. Purple `✦ SIPHON LIFE ×N` badge shows remaining charges. |
+| Bard | Distract | Throws rock in random direction; enemies investigate, then realise the trick. |
+| Ranger | Snipe | Precision shot, 1.5× damage, crits on top 30% of die range. Must be at range (> 1.5 units). |
+| Artificer | Flashbang | Blinds enemies within 5 units for 1 round. No targeting needed. |
+| Necromancer | Siphon Life | 3-attack drain buff. Melee/Guts: heal 35% of damage dealt. Purple `✦ SIPHON LIFE ×N` badge. |
 
 #### Bleed Mechanics ✅
 - Edged weapons: crits always inflict bleed (2 dmg × 3 turns), regular hits 15% chance (1 dmg × 2 turns).
 - Blunt weapons (hammer, mace): cannot cause bleed.
 - Guts strike always inflicts bleed (3 dmg × 3 turns) regardless of weapon type.
 - Bleed ticks at the start of the enemy's turn. Enemy can bleed out before acting.
-- Combat tracker shows 🩸 icon with turns remaining.
+- Combat tracker shows 🩸×N icon with turns remaining.
+
+#### Screen Shake ✅
+- Crits: `triggerShake(20, 30)`
+- Guts strikes: `triggerShake(18, 25)`
+- Boss hits, bonfire rumble, trap impacts: various intensities.
+
+#### Corpse Loot ✅
+- On death, enemy GLB hides and a bobbing `corpse.png` sprite spawns at death position.
+- Player walks within 1.5 units after combat to auto-loot.
+- Torch not full → adds fuel (scales with enemy STR). Torch full → converts to soul coins (1.5× rate).
 
 #### Enemy AI
 - Moves toward player if out of attack range (2.0 units).
-- Attacks with `resolveClash()` — player takes damage on enemy win, clash on tie.
-- **Guts AI:** 30% chance to charge Guts if far + healthy. Unleashes on next attack turn.
-- **Flee AI:** Flees at <15% HP (disabled in True Dungeon). Removed from fight if it gets >15 units away.
+- Attacks with `resolveClash()` — player takes damage on enemy win.
+- **Guts AI:** 30% chance to charge Guts if far + healthy.
+- **Flee AI:** Flees at <15% HP (disabled in True Dungeon). Removed from fight if >15 units away.
 
 #### Combat End
-- **Victory:** Enemy added to `slainStack` as trophy. Multi-enemy: continues until all dead.
+- **Victory:** Enemy added to `slainStack` as trophy. Multi-enemy: continues until all dead or fled.
 - **Death:** `gameOver()`.
-- **Flee/End:** `exitBattleIsland()` — camera tweens back, battle island removed after delay.
+- **Flee/End:** `exitBattleIsland()` — restores fog, clears tracker, strips emissive from survivors.
 
 ---
 
-## ✅ Phase 3: Polish & Visual Systems (In Progress — substantial work done)
+## ✅ Phase 3: Polish & Visual Systems (Complete)
 
 ### Skill Visual FX ✅
-- `spawnGroundFlash(color, opts)` — DOM radial-gradient bloom at floor level. Zero GPU cost, fully potato-friendly.
-- `spawnSkillFX(skillId)` — per-class texture particle combos using existing `/assets/images/textures/` sprites.
-- Single call site at top of skill `setTimeout` block — all 9 classes covered automatically.
+- `spawnGroundFlash(color, opts)` — DOM radial-gradient bloom at floor level.
+- `spawnSkillFX(skillId)` — per-class texture particle combos.
 - Each class has a distinct visual signature (knight = orange slash, priest = holy white bloom, necromancer = slow purple fade, flashbang = full-screen white, etc.)
 
 ### Ground Torch Glow ✅
-- Two flat `PlaneGeometry` decals, `AdditiveBlending`, `depthWrite: false` — no dynamic lights, runs fine on potato.
-- **Outer** (`light_01.png`, 3.5×3.5 units): warm ambient pool, opacity 0.04–0.60 tied to `torchCharge`.
-- **Inner** (`light_02.png`, 1.5×1.5 units, white): bright hotspot, fades out below 10% fuel.
-- Colour shifts warm amber → red-orange as fuel depletes. Dual-frequency sine flicker for organic feel.
-- Hidden in waypoints, attract mode, and battle island.
+- Two flat `PlaneGeometry` decals, `AdditiveBlending` — no dynamic lights.
+- Colour shifts warm amber → red-orange as fuel depletes. Dual-frequency sine flicker.
 
 ### Torch Fuel System ✅
-- **Fuel meter fixed:** `maxFuel` corrected from 30 → 100 (was clipping the bar at 30% of real scale).
-- **Graduated bar colour:** amber → orange → dark orange → red as fuel drains (4 thresholds).
-- **No fuel burn in combat:** both movement paths (`moveTo` free movement + tile-step) guarded by `!isCombatView`. D&D turns are ~6 seconds — a torch doesn't deplete mid-fight.
+- Graduated bar colour: amber → orange → dark orange → red.
+- No fuel burn during combat (turns are ~6 seconds).
 
 ### Azure Flame ✅
-- **Trigger radius:** 1.5 → 3.0 units (was too tight to reliably trigger on approach).
-- **`currentRoomIdx !== 0` check removed** — this was silently blocking the prompt every time the player returned to the start room after exploring.
-- **Leave pushback:** 2.2 → 3.5 units, ensuring the player exits the 3.0 trigger zone cleanly.
+- Always present at room 0 (world origin 0,0). Never cleared.
+- 3.0 unit trigger radius. 4-second spawn grace timer prevents immediate trigger on floor entry.
+- Race condition fixed: if combat starts while modal is open, dismissing the flame no longer tears down combat state.
+- Torch full during refuel → leaves prompt open (no double-refuel exploit).
+
+### Performance ✅
+- `torchLight.castShadow = false` — removing moving shadow-casting PointLight recovered ~40 FPS on R9 200.
+- Stats.js (mrdoob) toggled via F2.
+- Benchmark modal: tests potato/low/medium/high/ultra profiles, applies appropriate settings.
+- LOD uses player distance (not camera distance) — fixes isometric camera making distant wanderers show placeholder boxes.
+- Patrol AI throttled to every 3rd frame; chase AI every frame.
+- Dead wanderer mixers skipped. Distant mixers (>20 units) at half rate.
 
 ### 3D Dice Numbers ✅
-- Fixed number visibility: `depthTest: false` + `renderOrder: 999` on the number sprite — was being buried inside the opaque dice geometry.
-- Canvas resolution: 64×64 → 128×128 for crisp rendering.
-- Font: Cinzel → Arial (Cinzel is a CSS web font; not guaranteed available on canvas at fight start).
+- `depthTest: false` + `renderOrder: 999` — numbers no longer buried inside dice geometry.
+- 128×128 canvas, Arial font for crisp rendering at runtime.
 
 ### Bug Fixes ✅
-- **Enemy names:** `enemyDisplayName()` helper added — all combat messages, dice labels, tracker, bleed/guts/flee log now use `stats.name` first (e.g. "Stone Golem", "Gwark") instead of raw filename munging. `Stolem.glb` was showing as "Stolem.Glb".
-- **Options button:** Moved from bottom-right to top-left (`top:20px; left:20px`) in both HTML and `updateMapHUD`.
-- **Minstrel sell bonus:** `sellRate` = 0.65 for bard (vs 0.50 default).
-- **Combat skill button:** Shows actual skill name instead of generic "Skill".
+- Enemy names: `enemyDisplayName()` — no filename leaking into UI.
+- Options button: top-left.
+- Minstrel sell bonus: `sellRate` = 0.65.
+- Combat skill button shows actual skill name.
 
 ---
 
 ## 🎯 Phase 4: Content & Progression (Next Focus)
 
 ### High Priority
-- [ ] **Item use in combat** — Wire the Item button to hotbar potions/consumables.
-- [ ] **Loot drops** — Enemies should drop items/coins on death, not just add to trophy stack.
-- [ ] **Initiative roll** — Roll d20 on combat start to determine who goes first (player or enemy).
-- [ ] **Skill selection UI** — Auto-selects first skill. Need a sub-menu when a class has multiple skills.
+- [ ] **Item use in combat** — Sub-menu showing hotbar as sprites. Potions/consumables usable mid-combat.
+- [ ] **Initiative roll** — d20 on combat start; enemy wins = they go first.
+- [ ] **Analyze command** — Expand tracker row on click to show enemy HP/AC/STR.
+- [ ] **Necromancer passive** — "Exact kills heal 1 HP" not yet wired.
 
 ### Medium Priority
-- [ ] **Analyze command** — Show enemy stats (HP, AC, STR) in the combat tracker.
-- [ ] **Equip command** — Allow quick-swapping gear during combat (limited to 1/battle?).
-- [ ] **More enemy variety** — Different stat blocks per enemy type already in DB; need visual variety.
-- [ ] **Enemy-specific skills** — Some enemies could have their own special moves.
-- [ ] **Necromancer passive** — "Exact kills heal 1 HP" not yet wired.
+- [ ] **Equip command** — Quick-swap gear during combat (1/battle).
 - [ ] **Other class passives** — Priest waypoint heals, Paladin +AP on kills, Ranger waypoint reveal, Artificer consumable save chance.
+- [ ] **Enemy-specific skills** — Boss enemies (twins) have unique movesets.
+- [ ] **XP / Leveling** — Gain stat points on level-up.
+- [ ] **Floor progression** — Boss encounter at end of each floor, staircase to next.
+
+### Twin Boss Encounter
+- Final encounter: both twins spawn simultaneously as a 2-enemy combat.
+- Multi-enemy combat system already supports this natively.
+- Each twin has independent HP, AI, and turn in the roster.
+- Boss-specific skills planned (one tanky, one aggressive).
 
 ### Polish / Future
 - [ ] **Sound effects** — Attack, hit, bleed, victory stings.
-- [ ] **XP / Leveling** — Gain stat points on level-up.
-- [ ] **Floor progression** — Boss encounter at end of each floor, staircase to next floor.
-- [ ] **Asset compression** — `gremlinn.glb` and `Stolem.glb` need web compression pipeline (`-web` rename).
+- [ ] **Height map** — Terrain elevation variation, new file, doesn't touch existing systems.
+- [ ] **Asset compression** — Any remaining GLBs without `-web` suffix need compression pipeline.
 
 ### Distribution (Post-Completion)
-- **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets. Best choice for players who want a downloadable version.
+- **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets.
