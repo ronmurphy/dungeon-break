@@ -6,28 +6,35 @@
  */
 
 export const PROFILES = {
-    low: {
-        name: "Low (Classic)",
+    potato: {
+        name: "Potato (Minimum)",
         settings: {
             shadows: false,
             bloom: false,
             tiltShift: false,
-            cel: false,
-            celOutline: false,
-            graphics: false, // Use 2D sprites
-            lod: { near: 15, far: 30 }, // Aggressive LOD
+            graphics: true,
+            lod: { near: 6, far: 12 }, // Very aggressive LOD
+            pixelRatio: 0.75
+        },
+    },
+    low: {
+        name: "Low",
+        settings: {
+            shadows: false,
+            bloom: false,
+            tiltShift: false,
+            graphics: true,
+            lod: { near: 15, far: 30 },
             pixelRatio: 1.0
         },
     },
     medium: {
-        name: "Medium (Classic + FX)",
+        name: "Medium",
         settings: {
             shadows: 'low', // 512px
             bloom: true,
             tiltShift: true,
-            cel: false,
-            celOutline: false,
-            graphics: false,
+            graphics: true,
             lod: { near: 25, far: 50 },
             pixelRatio: 1.25
         },
@@ -38,9 +45,7 @@ export const PROFILES = {
             shadows: 'medium', // 1024px
             bloom: false,
             tiltShift: true,
-            cel: false,
-            celOutline: true,
-            graphics: true, // Use 3D models
+            graphics: true,
             lod: { near: 40, far: 80 },
             pixelRatio: 1.5
         },
@@ -51,8 +56,6 @@ export const PROFILES = {
             shadows: 'high', // 2048px
             bloom: true,
             tiltShift: true,
-            cel: false,
-            celOutline: true,
             graphics: true,
             lod: { near: 60, far: 120 }, // Very far LOD
             pixelRatio: Math.min(window.devicePixelRatio, 2.0) // Capped at 2x
@@ -68,9 +71,13 @@ export const PROFILES = {
 export async function runSmartBenchmark(testProfile) {
     console.log("🚀 Starting Smart Benchmark...");
 
+    const potatoFps = await testProfile('potato');
+    console.log(`  -> Potato Profile FPS: ${potatoFps}`);
+    if (potatoFps < 30) return { profile: 'potato', fps: potatoFps };
+
     const lowFps = await testProfile('low');
     console.log(`  -> Low Profile FPS: ${lowFps}`);
-    if (lowFps < 30) return { profile: 'low', fps: lowFps };
+    if (lowFps < 30) return { profile: 'potato', fps: potatoFps };
 
     const medFps = await testProfile('medium');
     console.log(`  -> Medium Profile FPS: ${medFps}`);

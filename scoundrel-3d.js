@@ -10,7 +10,7 @@ import { HorizontalTiltShiftShader } from 'three/addons/shaders/HorizontalTiltSh
 import { VerticalTiltShiftShader } from 'three/addons/shaders/VerticalTiltShiftShader.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { runSmartBenchmark, PROFILES } from './benchmark.js';
-import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
+
 import { generateHouse } from './house-generator.js';
 import { SoundManager } from './sound-manager.js';
 import { MagicCircleFX } from './magic-circle.js';
@@ -21,7 +21,7 @@ import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, spawnHudFloatingText, showManorPrompt } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -35,7 +35,7 @@ const INTRO_STORY_DEFAULTS = [
 // --- 3D RENDERING (Three.js Tableau) ---
 let scene, camera, renderer, composer, renderPass, controls, raycaster, mouse;
 let perspectiveCamera; // New camera for Immersive mode
-let hTilt, vTilt, bloomPass, outlineEffect;
+let hTilt, vTilt, bloomPass;
 let playerMarker; // Crystal marker
 let enemyRangeIndicator; // Red circle for enemy movement
 let movementRangeIndicator; // Green circle for combat movement
@@ -202,15 +202,9 @@ function preloadCardImages() {
 let ghosts = []; // Active ghost sprites
 let viewMode = 1; // 0: 2D, 1: 3D Iso (Default), 2: 3D Free/FPS
 let isAttractMode = false; // Title screen mode
-let use3dModel = true; // Default to 3D models
-let playerSprite;
 let playerMesh; // 3D Model
 let mixer; // Animation Mixer
 let actions = {}; // Animation Actions (Idle, Walk)
-let walkAnims = {
-    m: { up: null, down: null },
-    f: { up: null, down: null }
-};
 const clock = new THREE.Clock();
 let globalAnimSpeed = 1.0; // Default to real-time, tune individual actions via timeScale
 let isEditMode = false;
@@ -457,7 +451,7 @@ function spawnDOMParticles(name, x, y, count = 10, opts = {}) {
 // DOM-based projectile animation to be used when modal is open so projectiles appear above UI
 function spawnDOMProjectile(name, fromX, fromY, toX, toY, count = 6, opts = {}) {
     // console.debug('spawnDOMProjectile', { name, fromX, fromY, toX, toY, count, opts, uiCanvasPresent: !!uiFxCanvas }); // DEBUG (commented out)
-    if (use3dModel) return Promise.resolve(); // Disable in Enhanced Mode
+    return Promise.resolve(); // Disabled (2D Classic mode removed)
     return new Promise(resolve => {
         const container = document.createElement('div');
         container.className = 'ui-fx ui-projectile';
@@ -562,7 +556,7 @@ class ImageParticle extends Particle {
 }
 
 function spawnTextureParticles(name, x, y, count = 12, opts = {}) {
-    if (use3dModel) return; // Disable in Enhanced Mode
+    return; // Disabled (2D Classic mode removed)
     const img = loadFXImage(name);
     // Make space if we're near cap
     while (particles.length + count > MAX_PARTICLES) {
@@ -635,7 +629,7 @@ function spawnAboveModalTexture(name, x, y, count = 12, opts = {}) {
 
 function spawnUIProjectile(name, fromX, fromY, toX, toY, count = 8, opts = {}) {
     // console.debug('spawnUIProjectile', { name, fromX, fromY, toX, toY, count, opts, uiCanvasPresent: !!uiFxCanvas, uiParticlesCount: uiParticles.length }); // DEBUG (commented out)
-    if (use3dModel) return Promise.resolve(); // Disable in Enhanced Mode
+    return Promise.resolve(); // Disabled (2D Classic mode removed)
     const img = loadFXImage(name);
     const duration = opts.duration || 420; // ms
     const frames = Math.max(1, Math.round(duration / 16));
@@ -670,7 +664,7 @@ function spawnUIProjectile(name, fromX, fromY, toX, toY, count = 8, opts = {}) {
 
 // Spawn projectiles that travel from point A to B and call onHit when they arrive
 function spawnProjectile(name, fromX, fromY, toX, toY, count = 8, opts = {}) {
-    if (use3dModel) return Promise.resolve(); // Disable in Enhanced Mode
+    return Promise.resolve(); // Disabled (2D Classic mode removed)
     const img = loadFXImage(name);
     const duration = opts.duration || 450; // ms
     const frames = Math.max(1, Math.round(duration / 16));
@@ -707,7 +701,7 @@ function spawnUIHitFlash(x, y, duration = 280) {
     // Disabled by default to avoid overpowering HP corner particles.
     // Re-enable at runtime by setting `window.HIT_FLASH_ENABLED = true` in console.
     if (window.HIT_FLASH_ENABLED === undefined) window.HIT_FLASH_ENABLED = false;
-    if (use3dModel) return; // Disable in Enhanced Mode
+    return; // Disabled (2D Classic mode removed)
     if (!window.HIT_FLASH_ENABLED) return;
 
     const el = document.createElement('div');
@@ -1077,35 +1071,10 @@ function handleWindowResize() {
             composer.setSize(container.clientWidth, container.clientHeight);
             updateTiltShiftUniforms();
         }
-        if (outlineEffect) outlineEffect.setSize(container.clientWidth, container.clientHeight);
     }
 }
 window.addEventListener('resize', handleWindowResize);
 
-const ColorBandShader = {
-    uniforms: {
-        'tDiffuse': { value: null }
-    },
-    vertexShader: `
-        varying vec2 vUv;
-        void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 ); }
-    `,
-    fragmentShader: `
-        uniform sampler2D tDiffuse;
-        varying vec2 vUv;
-        void main() {
-            vec4 tex = texture2D( tDiffuse, vUv );
-            vec3 c = tex.rgb;
-            // Quantize colors to create toon bands
-            float levels = 6.0;
-            c = floor(c * levels) / levels;
-            // Slight saturation boost
-            vec3 gray = vec3(dot(c, vec3(0.2126, 0.7152, 0.0722)));
-            c = mix(gray, c, 1.2);
-            gl_FragColor = vec4( c, tex.a );
-        }
-    `
-};
 
 function init3D() {
     // Cancel any existing animation loop to prevent multiple loops from running
@@ -1134,13 +1103,6 @@ function init3D() {
         container.appendChild(renderer.domElement);
     }
 
-    // Outline Effect (Cel Shading Replacement)
-    outlineEffect = new OutlineEffect(renderer, {
-        defaultThickness: 0.0025,
-        defaultColor: [0, 0, 0],
-        defaultAlpha: 0.8,
-        defaultKeepAlive: true
-    });
 
     // Post-Processing Setup
     composer = new EffectComposer(renderer);
@@ -1201,28 +1163,8 @@ function init3D() {
     // Fog of War
     scene.fog = new THREE.FogExp2(0x000000, 0.05);
 
-    if (use3dModel) {
-        // Load 3D Player Model
-        loadPlayerModel();
-    } else {
-        // Check for True Ending Unlock (Evil Mode)
-        const wins = JSON.parse(localStorage.getItem('scoundrelWins') || '{"m":false, "f":false}');
-        const isTrueEndingUnlocked = (wins.m && wins.f);
-        const prefix = isTrueEndingUnlocked ? '_evil_' : '_';
-
-        // Load Walking Textures
-        walkAnims.m.up = loadTexture(`assets/images/animations/m${prefix}walk_up.png`);
-        walkAnims.m.down = loadTexture(`assets/images/animations/m${prefix}walk_down.png`);
-        walkAnims.f.up = loadTexture(`assets/images/animations/f${prefix}walk_up.png`);
-        walkAnims.f.down = loadTexture(`assets/images/animations/f${prefix}walk_down.png`);
-
-        // Player Billboard
-        const spriteMat = new THREE.SpriteMaterial({ map: walkAnims.m.up, transparent: true });
-        playerSprite = new THREE.Sprite(spriteMat);
-        playerSprite.scale.set(1.5, 1.5, 1.5);
-        playerSprite.position.set(0, 0.75, 0); // initial pos
-        scene.add(playerSprite);
-    }
+    // Load 3D Player Model
+    loadPlayerModel();
 
     // Player Marker (Floating Diamond)
     const markerGeo = new THREE.OctahedronGeometry(0.3, 0);
@@ -1284,34 +1226,8 @@ function rebuildComposer() {
     if (!composer) return;
     composer.passes = [];
 
-    // 1. Render Pass (Standard or Cel/Outline)
-    if (gameSettings.celShadingEnabled && gameSettings.celOutlineEnabled && outlineEffect) {
-        // Custom Pass that uses OutlineEffect
-        const celPass = new RenderPass(scene, camera);
-        celPass.render = function (renderer, writeBuffer, readBuffer) {
-            // Mimic standard RenderPass logic but use outlineEffect.render
-            const oldAutoClear = renderer.autoClear;
-            renderer.autoClear = false;
-
-            let target = this.renderToScreen ? null : readBuffer;
-            renderer.setRenderTarget(target);
-
-            if (this.clear) renderer.clear(renderer.autoClearColor, renderer.autoClearDepth, renderer.autoClearStencil);
-
-            outlineEffect.render(this.scene, this.camera);
-
-            renderer.autoClear = oldAutoClear;
-        };
-        composer.addPass(celPass);
-    } else {
-        composer.addPass(renderPass);
-    }
-
-    // 2. Color Banding (Toon Look)
-    if (gameSettings.celShadingEnabled) {
-        const bandPass = new ShaderPass(ColorBandShader);
-        composer.addPass(bandPass);
-    }
+    // 1. Render Pass
+    composer.addPass(renderPass);
 
     // 2. Bloom
     if (bloomPass) composer.addPass(bloomPass);
@@ -1840,7 +1756,7 @@ function on3DClick(event, isRightClick = false) {
                     logMsg("Not your turn!");
                     return;
                 }
-                const dist = (use3dModel ? playerMesh : playerSprite).position.distanceTo(point);
+                const dist = (playerMesh).position.distanceTo(point);
                 if (dist > combatState.currentMove) {
                     logMsg("Too far! (Movement limited)");
                     return;
@@ -1860,7 +1776,7 @@ function update3DScene() {
     if (!scene) return;
     const currentRoom = game.rooms.find(room => room.id === game.currentRoomIdx);
 
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     if (playerObj && torchLight) {
         // --- Attract Mode Overrides ---
         if (isAttractMode) {
@@ -1934,10 +1850,8 @@ function update3DScene() {
                             geo = new THREE.DodecahedronGeometry(0.4, 0);
                             mat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 });
                         } else {
-                            if (use3dModel) {
-                                customModelPath = 'assets/images/glb/waypoint-web.glb';
-                                customScale = 0.5; // Adjust based on your model size
-                            }
+                            customModelPath = 'assets/images/glb/waypoint-web.glb';
+                            customScale = 0.5;
                             geo = new THREE.SphereGeometry(0.2, 16, 16);
                             mat = new THREE.MeshStandardMaterial({ color: 0x555555, emissive: 0x222222, visible: !customModelPath });
                         }
@@ -2010,7 +1924,7 @@ function update3DScene() {
                     // Tower/Deep Pit
                     // Use Gothic Tower GLB if available
                     // Randomize between Gothic Tower and Dreadspire Citadel
-                    if (use3dModel) customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/gothic_tower-web.glb' : 'assets/images/glb/Dreadspire_Citadel-web.glb';
+                    customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/gothic_tower-web.glb' : 'assets/images/glb/Dreadspire_Citadel-web.glb';
                     customScale = 2.5; // Increased size
                     // Fallback geometry while loading or if fails
                     geo = new THREE.BoxGeometry(rw, 10, rh);
@@ -2019,84 +1933,66 @@ function update3DScene() {
                     // Use a Cylinder. radius ~ min(w,h)/2.
                     // Use Campfire Tower GLB
                     // Randomize between Campfire Tower and Emberwatch Tower
-                    if (use3dModel) customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/campfire_tower-web.glb' : 'assets/images/glb/Emberwatch_Tower-web.glb';
+                    customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/campfire_tower-web.glb' : 'assets/images/glb/Emberwatch_Tower-web.glb';
                     customScale = 2.0; // Increased size
                     const rad = Math.min(rw, rh) * 0.4;
                     geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
                 } else if (r.isSecret) {
                     // Secret Room: Large Boulder/Mound or Custom GLB
                     geo = new THREE.DodecahedronGeometry(Math.min(rw, rh) * 0.9, 1);
-                    if (use3dModel) {
-                        // Randomize between Secret Rock and Whispering Obelisk
-                        customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/room_secret-web.glb' : 'assets/images/glb/Whispering_Obelisk-marker-web.glb';
-                        customScale = 0.5;
-                    }
+                    // Randomize between Secret Rock and Whispering Obelisk
+                    customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/room_secret-web.glb' : 'assets/images/glb/Whispering_Obelisk-marker-web.glb';
+                    customScale = 0.5;
                 } else if (r.isSpecial) {
                     // Merchant / Special Room -> Whispering Manor
                     geo = new THREE.BoxGeometry(rw, rDepth, rh);
-                    if (use3dModel) {
-                        customModelPath = 'assets/images/glb/Whispering_Manor-web.glb';
-                        customScale = 1.5;
-                    }
+                    customModelPath = 'assets/images/glb/Whispering_Manor-web.glb';
+                    customScale = 1.5;
                 } else if (r.isAlchemy) {
                     // Alchemy Lab -> Arcane Altar
                     geo = new THREE.CylinderGeometry(Math.min(rw, rh) * 0.4, Math.min(rw, rh) * 0.4, rDepth, 6);
-                    if (use3dModel) {
-                        customModelPath = 'assets/images/glb/Arcane_Altar-marker-web.glb';
-                        customScale = 1.2;
-                    }
+                    customModelPath = 'assets/images/glb/Arcane_Altar-marker-web.glb';
+                    customScale = 1.2;
                 } else if (r.isTrap) {
                     // Trap Room -> Warden Cube or Eldritch Hex Cube
                     geo = new THREE.BoxGeometry(rw, rDepth, rh);
-                    if (use3dModel) {
-                        customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/Warden_Cube-marker-web.glb' : 'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb';
-                        customScale = 1.0;
-                    }
+                    customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/Warden_Cube-marker-web.glb' : 'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb';
+                    customScale = 1.0;
                 } else if (r.isLocked) {
                     // Locked Room -> Cursed Treasure Chest Marker
                     geo = new THREE.BoxGeometry(rw, rDepth, rh);
-                    if (use3dModel) {
-                        customModelPath = 'assets/images/glb/Cursed_Treasure_Chest-marker-web.glb';
-                        customScale = 1.0;
-                    }
+                    customModelPath = 'assets/images/glb/Cursed_Treasure_Chest-marker-web.glb';
+                    customScale = 1.0;
                 } else {
                     // Varied Shapes
                     if (r.shape === 'round') {
                         const rad = Math.min(rw, rh) * 0.45;
                         geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
-                        if (use3dModel) {
-                            customModelPath = 'assets/images/glb/room_round-web.glb';
-                            customScale = 0.5;
-                        }
+                        customModelPath = 'assets/images/glb/room_round-web.glb';
+                        customScale = 0.5;
                     } else if (r.shape === 'dome') {
                         const rad = Math.min(rw, rh) * 0.65;
                         geo = new THREE.SphereGeometry(rad, 16, 12); // Full sphere
-                        if (use3dModel) {
-                            customModelPath = 'assets/images/glb/room_dome-web.glb';
-                            customScale = 0.5;
-                        }
+                        customModelPath = 'assets/images/glb/room_dome-web.glb';
+                        customScale = 0.5;
                     } else if (r.shape === 'spire') {
                         geo = new THREE.ConeGeometry(Math.min(rw, rh) * 0.6, rDepth, 4);
-                        if (use3dModel) {
-                            // Randomize between Spire and Spiralwood Tower
-                            customModelPath = (r.id % 3 === 0) ? 'assets/images/glb/Spiralwood_Tower-web.glb' : 'assets/images/glb/room_spire-web.glb';
-                            customScale = 0.5;
-                        }
+                        // Randomize between Spire and Spiralwood Tower
+                        customModelPath = (r.id % 3 === 0) ? 'assets/images/glb/Spiralwood_Tower-web.glb' : 'assets/images/glb/room_spire-web.glb';
+                        customScale = 0.5;
                     } else {
                         geo = new THREE.BoxGeometry(rw, rDepth, rh);
-                        if (use3dModel) {
-                            // Start Room (ID 0) gets Azure Flame Obelisk
-                            if (r.id === 0) {
-                                customModelPath = 'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb';
-                                customScale = 1.0;
-                            } else if (r.isShrine) {
-                                customModelPath = 'assets/images/glb/Stone_Wat-web.glb';
-                                customScale = 1.0;
-                            } else {
-                                customModelPath = 'assets/images/glb/room_rect-web.glb';
-                            }
-                            customScale = 0.5;
+                        // Start Room (ID 0) gets Azure Flame Obelisk
+                        if (r.id === 0) {
+                            customModelPath = 'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb';
+                            customScale = 1.0;
+                        } else if (r.isShrine) {
+                            customModelPath = 'assets/images/glb/Stone_Wat-web.glb';
+                            customScale = 1.0;
+                        } else {
+                            customModelPath = 'assets/images/glb/room_rect-web.glb';
                         }
+                        customScale = 0.5;
                     }
                 }
 
@@ -2138,7 +2034,7 @@ function update3DScene() {
                 if (r.isFinal) {
                     // Extend downwards for the pit/tower
                     mesh.position.set(r.gx, 0, r.gy); // Sit on ground
-                } else if (r.shape === 'dome' || r.isSecret || (use3dModel && customModelPath)) {
+                } else if (r.shape === 'dome' || r.isSecret || customModelPath) {
                     // If using 3D models, always sit on ground (y=0) to ensure config offsets are consistent
                     // regardless of random rDepth generation.
                     mesh.position.set(r.gx, 0, r.gy); // Sit on ground (half buried)
@@ -2275,7 +2171,7 @@ function update3DScene() {
                         audio.startLoop(`bonfire_${r.id}`, 'bonfire_loop', { volume: 0 });
 
                     // Force Idle Animation inside Bonfire Room (since it's visible)
-                    if (currentRoom && currentRoom.id === r.id && use3dModel && actions.idle && actions.walk) {
+                    if (currentRoom && currentRoom.id === r.id && actions.idle && actions.walk) {
                         if (actions.walk.isRunning()) {
                             actions.walk.stop();
                             actions.idle.play();
@@ -2316,7 +2212,6 @@ function update3DScene() {
                 else if (r.isBonfire) { eCol = 0xff8800; eInt = (isVisible ? 2.5 : 0.5); }
                 else if (r.isSpecial) {
                     // Only tint if NOT using 3D models (let the model texture show)
-                    if (!use3dModel) { eCol = 0x8800ff; eInt = (isVisible ? 1.5 : 0.3); }
                 }
                 else if (r.isAlchemy) { eCol = 0x00ff88; eInt = (isVisible ? 1.5 : 0.3); }
             }
@@ -2430,7 +2325,7 @@ function animate3D() {
     updateSpatialAudio();
 
     // Animate Player Marker
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
 
     // --- COMBAT TRIGGER ---
     /* Redundant trigger removed to allow AI logic (stealth/flanking) to handle combat start
@@ -2480,6 +2375,20 @@ function animate3D() {
         }
     }
 
+    // Azure Flame proximity (Start Room — always present, never cleared)
+    if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
+        const azureRoom = game.rooms.find(r => r.id === 0);
+        const modal = document.getElementById('combatModal');
+        const modalOpen = modal && modal.style.display === 'flex';
+        if (azureRoom && game.currentRoomIdx !== 0 && !modalOpen) {
+            const dist = Math.hypot(azureRoom.gx - playerObj.position.x, azureRoom.gy - playerObj.position.z);
+            if (dist < 1.5) {
+                game.activeRoom = azureRoom;
+                showAzureFlamePrompt();
+            }
+        }
+    }
+
     // Duck Collection Logic
     if (game.inDuckDungeon && playerObj) {
         for (const r of game.rooms) {
@@ -2506,7 +2415,7 @@ function animate3D() {
 
     // Room Entry via Proximity (Free Movement support)
     if (!isCombatView && !isAttractMode && !isEditMode) {
-        const playerObj = use3dModel ? playerMesh : playerSprite;
+        const playerObj = playerMesh;
         if (playerObj) {
             // Find which room we are physically in
             const physicalRoom = game.rooms.find(r => 
@@ -2642,7 +2551,7 @@ function animate3D() {
 
     // Proximity Combat Trigger
     if (!isEngagingCombat && !isCombatView && wanderers.length > 0) {
-        const playerObj = use3dModel ? playerMesh : playerSprite;
+        const playerObj = playerMesh;
         if (playerObj) {
             for (const wanderer of wanderers) {
                 if (wanderer.mesh) {
@@ -2728,7 +2637,7 @@ function animate3D() {
                                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
                                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                                     if (hits.length > 0) {
-                                        wanderer.mesh.position.y = hits[0].point.y + (use3dModel ? 0 : 0.75); // Offset for sprites if needed
+                                        wanderer.mesh.position.y = hits[0].point.y;
                                     }
                                 }
                             }
@@ -2770,7 +2679,7 @@ function animate3D() {
         const lockpickActive = document.getElementById('lockpickUI') && document.getElementById('lockpickUI').style.display !== 'none';
 
         // Determine if we need post-processing (Bloom OR Tilt-Shift OR Cel)
-        const usePostProcessing = (gameSettings.tiltShiftMode === 'threejs' || gameSettings.bloomEnabled || gameSettings.celShadingEnabled) && composer;
+        const usePostProcessing = (gameSettings.tiltShiftMode === 'threejs' || gameSettings.bloomEnabled) && composer;
 
         if (usePostProcessing) {
             // Dynamic Tilt-Shift: Disable in combat/puzzle for clarity
@@ -2781,7 +2690,7 @@ function animate3D() {
 
                 // Dynamic Focus: Follow Player
                 if (tiltActive) {
-                    const p = use3dModel ? playerMesh : playerSprite;
+                    const p = playerMesh;
                     if (p) {
                         const vec = p.position.clone();
                         vec.project(activeCam); // Get NDC (-1 to 1)
@@ -2804,7 +2713,7 @@ function animate3D() {
     if (window.TWEEN) TWEEN.update();
 
     // Update Animation Mixer
-    if (use3dModel && mixer) {
+    if (mixer) {
         const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches
         mixer.update(delta * globalAnimSpeed);
         wanderers.forEach(w => {
@@ -2818,8 +2727,6 @@ function animate3D() {
                 w.mixer.update(delta * globalAnimSpeed);
             }
         });
-    } else if (!use3dModel) {
-        animatePlayerSprite();
     }
 }
 
@@ -2852,7 +2759,7 @@ function exitHouseBattle() {
     if (!isInHouse) return;
     isInHouse = false;
 
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     if (playerObj && playerReturnPos) {
         // Place player at the return position
         playerObj.position.copy(playerReturnPos);
@@ -2905,34 +2812,14 @@ window.exitHouse = exitHouseBattle;
 
 
 
-function animatePlayerSprite() {
-    if (!playerSprite) return;
-
-    let frame = 0; // Default to frame 0 (idle)
-    if (playerMoveTween) { // If there is a movement tween, animate.
-        const time = Date.now() * 0.001;
-        frame = Math.floor((time * 12) % 25);
-    }
-
-    playerSprite.material.map.repeat.set(1 / 25, 1);
-    playerSprite.material.map.offset.set(frame / 25, 0);
-    if (viewMode === 0) { // 2D
-        playerSprite.rotation.x = Math.PI / 2;
-        playerSprite.material.map = walkAnims[game.sex].up;
-    } else { // 3D Iso or Free
-        playerSprite.rotation.x = 0;
-        const isFace = camera.position.z > playerSprite.position.z;
-        playerSprite.material.map = isFace ? walkAnims[game.sex].down : walkAnims[game.sex].up;
-    }
-}
 
 function movePlayerTo(targetVec, isRunning = false) {
-    if (!playerMesh && !playerSprite) return;
+    if (!playerMesh) return;
 
     // Stop existing tween if any
     if (playerMoveTween) playerMoveTween.stop();
 
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     const startPos = playerObj.position.clone();
 
     // Calculate distance to determine duration (speed)
@@ -2965,7 +2852,7 @@ function movePlayerTo(targetVec, isRunning = false) {
     // For now, rooms are the main blockers.
 
     // Face target
-    if (use3dModel && playerMesh) {
+    if (playerMesh) {
         playerMesh.lookAt(targetVec.x, playerMesh.position.y, targetVec.z);
 
         // Start Walk Animation
@@ -2990,7 +2877,7 @@ function movePlayerTo(targetVec, isRunning = false) {
             const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
 
             if (targetMesh) {
-                const offset = use3dModel ? 0.1 : 0.75;
+                const offset = 0.1;
                 const down = new THREE.Vector3(0, -1, 0);
                 const rayOriginHeight = playerObj.position.y + 3.0; // Cast from above head
 
@@ -3035,8 +2922,8 @@ function movePlayerTo(targetVec, isRunning = false) {
                     if (playerMoveTween) playerMoveTween.stop();
                     playerMoveTween = null;
                     // Force stop animation immediately
-                    if (use3dModel && actions.walk) actions.walk.stop();
-                    if (use3dModel && actions.idle) actions.idle.play();
+                    if (actions.walk) actions.walk.stop();
+                    if (actions.idle) actions.idle.play();
                 }
             }
         })
@@ -3044,7 +2931,7 @@ function movePlayerTo(targetVec, isRunning = false) {
             playerMoveTween = null;
 
             // Return to Idle
-            if (use3dModel && actions.walk) {
+            if (actions.walk) {
                 if (actions.idle) {
                     actions.walk.crossFadeTo(actions.idle, 0.2, true).play();
                 } else {
@@ -3058,13 +2945,13 @@ function movePlayerTo(targetVec, isRunning = false) {
 function stopMovement() {
     if (playerMoveTween) playerMoveTween.stop();
     playerMoveTween = null;
-    if (use3dModel && actions.walk) actions.walk.stop();
-    if (use3dModel && actions.idle) actions.idle.play();
+    if (actions.walk) actions.walk.stop();
+    if (actions.idle) actions.idle.play();
 }
 
 function updatePlayerMovement(dt) {
     // Camera Follow Logic
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     if (playerObj && !isAttractMode && !isCombatView) {
         // Smoothly lerp camera target to player position
         controls.target.lerp(playerObj.position, 0.1);
@@ -3087,7 +2974,7 @@ function movePlayerSprite(oldId, newId) {
     updateUI();
 
     // Rotate to face target
-    if (use3dModel && playerMesh) {
+    if (playerMesh) {
         playerMesh.lookAt(r2.gx, playerMesh.position.y, r2.gy);
         // Trigger Walk Animation
         if (actions.walk && actions.idle) {
@@ -3103,16 +2990,10 @@ function movePlayerSprite(oldId, newId) {
             }
             playerMoveTween = null;
         }).start();
-    } else if (playerSprite) {
-        playerSprite.material.map = (r2.gy > r1.gy) ? walkAnims[game.sex].up : walkAnims[game.sex].down;
-        playerMoveTween = new TWEEN.Tween(playerSprite.position).to({ x: r2.gx, z: r2.gy }, 600).easing(TWEEN.Easing.Quadratic.Out).onComplete(() => {
-            playerMoveTween = null;
-        }).start();
     }
 }
 
 function addDoorsToRoom(room, mesh) {
-    const tex = loadTexture('assets/images/door.png');
     room.connections.forEach(cid => {
         const target = game.rooms.find(rm => rm.id === cid);
         if (!target) return;
@@ -3120,7 +3001,7 @@ function addDoorsToRoom(room, mesh) {
 
         const dx = target.gx - room.gx; const dy = target.gy - room.gy;
         const rw = room.w / 2; const rh = room.h / 2; const margin = 0.075;
-        let posX = 0, posY = -(room.rDepth / 2) + 1, posZ = 0;
+        let posX = 0, posZ = 0;
         let rotY = 0;
 
         if (Math.abs(dx) > Math.abs(dy)) {
@@ -3131,26 +3012,16 @@ function addDoorsToRoom(room, mesh) {
             rotY = dy > 0 ? 0 : Math.PI;
         }
 
-        if (use3dModel) {
-            const path = 'assets/images/glb/door-web.glb';
-            const configKey = path.split('/').pop();
-            loadGLB(path, (model) => {
-                // Enforce dynamic wall position (X/Z) and facing (Rot Y)
-                // But respect configured height (Y) and other rotations (X/Z) if present
-                model.position.set(posX, model.position.y, posZ);
-                model.rotation.y = rotY;
-                mesh.add(model);
-                doorMeshes.set(`door_${room.id}_${cid}`, model);
-            }, 1.0, configKey);
-        } else {
-            const door = new THREE.Mesh(new THREE.PlaneGeometry(1, 2), new THREE.MeshStandardMaterial({ map: tex, transparent: true, side: THREE.FrontSide }));
-            door.matrixAutoUpdate = false;
-            door.position.set(posX, posY, posZ);
-            door.rotation.y = rotY;
-            door.updateMatrix();
-            mesh.add(door);
-            doorMeshes.set(`door_${room.id}_${cid}`, door);
-        }
+        const path = 'assets/images/glb/door-web.glb';
+        const configKey = path.split('/').pop();
+        loadGLB(path, (model) => {
+            // Enforce dynamic wall position (X/Z) and facing (Rot Y)
+            // But respect configured height (Y) and other rotations (X/Z) if present
+            model.position.set(posX, model.position.y, posZ);
+            model.rotation.y = rotY;
+            mesh.add(model);
+            doorMeshes.set(`door_${room.id}_${cid}`, model);
+        }, 1.0, configKey);
     });
     updateRoomVisuals();
 }
@@ -3305,7 +3176,7 @@ function takeDamage(amount) {
     updateUI(); // Ensure HUD updates immediately
 
     // Trigger 3D Hit Animation
-    if (use3dModel && actions.hit && actions.idle && amount > 0) {
+    if (actions.hit && actions.idle && amount > 0) {
         actions.idle.stop();
         if (actions.walk) actions.walk.stop();
         if (actions.attack) actions.attack.stop();
@@ -3402,7 +3273,6 @@ function clear3DScene() {
     ghosts.forEach(g => scene.remove(g));
     ghosts = [];
 
-    playerSprite = null;
     if (playerMesh) {
         scene.remove(playerMesh);
         playerMesh = null;
@@ -3896,7 +3766,7 @@ function enterRoom(id) {
         logMsg("The Bloodthirst Blade drinks your vitality... (-1 HP)");
 
         // Visual FX for Life Drain
-        if (use3dModel && playerMesh) {
+        if (playerMesh) {
             spawn3DDrainFX(playerMesh.position);
         } else {
             spawnAboveModalTexture('circle_03.png', window.innerWidth / 2, window.innerHeight / 2, 1, { tint: '#880000', blend: 'multiply', size: 300, decay: 0.02 });
@@ -4009,9 +3879,7 @@ function sinkManor(room) {
             const r = 3 + Math.random() * 3;
             const x = room.gx + Math.cos(angle) * r;
             const z = room.gy + Math.sin(angle) * r;
-            if (use3dModel) {
-                spawn3DImpact(new THREE.Vector3(x, 0, z), 0x887766, 'smoke_05.png');
-            }
+            spawn3DImpact(new THREE.Vector3(x, 0, z), 0x887766, 'smoke_05.png');
         }, i * 100);
     }
 
@@ -4040,7 +3908,7 @@ window.handleManorChoice = function(choice) {
              sinkManor(game.activeRoom);
         } else {
             // Player left without interacting. Push them out and reset collision.
-            const playerObj = use3dModel ? playerMesh : playerSprite;
+            const playerObj = playerMesh;
             const r = game.activeRoom;
             if (playerObj && r) {
                 // Calculate push direction (from center to player)
@@ -4101,6 +3969,33 @@ window.handleManorChoice = function(choice) {
     }
     if (choice === 'shop') {
         showBrokerShop();
+    }
+};
+
+window.handleAzureFlameChoice = function(choice) {
+    if (choice === 'refuel') {
+        game.torchCharge = 100;
+        logMsg("The Azure Flame restores your torch. The darkness retreats.");
+        spawnFloatingText("TORCH REFUELED!", window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 36);
+        updateUI();
+        closeCombat();
+        return;
+    }
+    if (choice === 'leave') {
+        closeCombat();
+        // Push player just outside the 1.5-unit proximity threshold
+        const playerObj = playerMesh;
+        const r = game.activeRoom;
+        if (playerObj && r) {
+            const dx = playerObj.position.x - r.gx;
+            const dz = playerObj.position.z - r.gy;
+            const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            new TWEEN.Tween(playerObj.position)
+                .to({ x: r.gx + (dx / len) * 2.2, z: r.gy + (dz / len) * 2.2 }, 400)
+                .easing(TWEEN.Easing.Quadratic.Out)
+                .start();
+        }
+        // Azure Flame marker is NEVER sunk/cleared — always present
     }
 };
 
@@ -4367,9 +4262,7 @@ function showCombat() {
     enemyArea.innerHTML = '';
     enemyArea.style.pointerEvents = 'none'; // Ensure container doesn't block 3D controls
 
-    if (!use3dModel) {
-        overlay.style.background = 'rgba(0,0,0,0.85)';
-    }
+
 
     // Hide Player Combat Area (Hero Plate / Loot Locker container)
     const combatDocks = document.querySelectorAll('.player-combat-area');
@@ -4453,7 +4346,7 @@ function showCombat() {
     document.getElementById('bonfireNotNowBtn').style.display = (game.activeRoom && (game.activeRoom.isBonfire || (game.activeRoom.isSpecial && isMerchant)) && game.activeRoom.state !== 'cleared') ? 'inline-block' : 'none';
 
     // Ensure controls are set to the correct camera for Battle Island
-    if (use3dModel && controls) {
+    if (controls) {
         controls.object = camera; // Use Main Ortho Camera
         controls.enableRotate = true;
         controls.enablePan = true; // Allow panning on Battle Island
@@ -4528,7 +4421,7 @@ function triggerPlayerAttackAnim(x, y, weapon) {
         const val = weapon.val;
 
         // 3D Magic Circle Logic (Targeted)
-        if (use3dModel && playerMesh) {
+        if (playerMesh) {
             // Calculate target position (approximate forward from player)
             const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(playerMesh.quaternion);
             const targetPos = playerMesh.position.clone().add(forward.multiplyScalar(4));
@@ -4623,7 +4516,7 @@ function triggerPlayerAttackAnim(x, y, weapon) {
     // Standard Physical Attacks
     if (weapon) {
         // 3D Physical FX
-        if (use3dModel && playerMesh) {
+        if (playerMesh) {
             spawn3DPhysicalFX(playerMesh.position, new THREE.Vector3(x, 0.5, y));
         }
 
@@ -4818,7 +4711,6 @@ function pickCard(idx, event) {
             } else {
                 spawnFloatingText("Backpack Full!", centerX, centerY, '#ff0000');
                 // Revert animation
-                if (!use3dModel) cardEl.style.pointerEvents = 'auto';
                 cardEl.style.transform = 'none';
                 cardEl.style.opacity = '1';
                 return;
@@ -4870,7 +4762,7 @@ function pickCard(idx, event) {
                     logMsg(`Merchant's Blessing: Looted ${gift.name}.`);
                 } else {
                     spawnFloatingText("Backpack Full!", centerX, centerY, '#ff0000');
-                    if (!use3dModel) cardEl.style.pointerEvents = 'auto'; cardEl.style.transform = 'none'; cardEl.style.opacity = '1';
+                    cardEl.style.transform = 'none'; cardEl.style.opacity = '1';
                     return;
                 }
                 game.merchantUsed = true;
@@ -4900,7 +4792,7 @@ function pickCard(idx, event) {
             } else if (gift.type === 'armor') {
                 if (!addToBackpack(gift)) {
                     spawnFloatingText("Backpack Full!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
-                    if (!use3dModel) cardEl.style.pointerEvents = 'auto'; cardEl.style.transform = 'none'; cardEl.style.opacity = '1';
+                    cardEl.style.transform = 'none'; cardEl.style.opacity = '1';
                     return;
                 }
                 logMsg(`Merchant's Blessing: Looted ${gift.name}.`);
@@ -5152,9 +5044,7 @@ function closeCombat() {
 
     document.getElementById('combatModal').style.pointerEvents = 'auto'; // Reset
 
-    if (use3dModel) {
-        exitCombatView();
-    }
+    exitCombatView();
     updateUI(); // Ensure HUD reappears
 }
 window.closeCombat = closeCombat; // Expose for onClick events
@@ -5640,12 +5530,10 @@ let gameSettings = {
     musicMuted: false,
     sfxMuted: false,
     graphicsProfile: 'high', // low, medium, high, ultra, custom
-    enhancedGraphics: true, // Controlled by profile
+
     tiltShiftMode: 'threejs', // 'off', 'css', 'threejs'
     bloomEnabled: true,      // Controlled by profile
     shadowsEnabled: 'medium', // false, 'low', 'medium', 'high'
-    celShadingEnabled: false,
-    celOutlineEnabled: true,
     lod: { near: 40, far: 80 },
     pixelRatio: 1.5,
     benchmarkFPS: 30 // Default safe value
@@ -5666,8 +5554,8 @@ function loadSettings() {
             delete gameSettings.tiltShift;
         }
 
-        // Apply graphics setting if present
-        if (gameSettings.enhancedGraphics !== undefined) use3dModel = gameSettings.enhancedGraphics;
+        // Migrate old enhancedGraphics setting (no longer used)
+        if (gameSettings.enhancedGraphics !== undefined) delete gameSettings.enhancedGraphics;
         applyTiltShiftMode(gameSettings.tiltShiftMode);
         if (bloomPass) bloomPass.enabled = (gameSettings.bloomEnabled !== false);
         rebuildComposer();
@@ -5695,12 +5583,6 @@ window.showOptionsModal = function () {
         document.body.appendChild(modal);
     }
 
-    const graphicsOption = `
-        <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px; border-top: 1px solid #444; padding-top: 15px;">
-            <input type="checkbox" id="enhancedGfx" ${gameSettings.enhancedGraphics ? 'checked' : ''} onchange="updateSetting('graphics', this.checked)">
-            <label for="enhancedGfx" style="color:var(--gold);">Enhanced Graphics</label>
-        </div>
-    `;
 
     modal.innerHTML = `
         <div style="background:rgba(0,0,0,0.9); border:2px solid var(--gold); padding:30px; width:300px; text-align:center; color:#fff; font-family:'Cinzel'; position:relative;">
@@ -5744,16 +5626,6 @@ window.showOptionsModal = function () {
                 <label for="bloomFX">Bloom FX</label>
             </div>
 
-            <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
-                <input type="checkbox" id="celShading" ${gameSettings.celShadingEnabled ? 'checked' : ''} onchange="updateSetting('cel', this.checked)">
-                <label for="celShading">Cel Shading (Toon)</label>
-            </div>
-            
-            <div id="celOutlineDiv" style="margin:5px 0 15px 25px; text-align:left; display:${gameSettings.celShadingEnabled ? 'flex' : 'none'}; align-items:center; gap:10px;">
-                <input type="checkbox" id="celOutline" ${gameSettings.celOutlineEnabled ? 'checked' : ''} onchange="updateSetting('celOutline', this.checked)">
-                <label for="celOutline" style="font-size:0.9rem; color:#aaa;">Use Outlines</label>
-            </div>
-            
             <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px; border-top: 1px solid #444; padding-top: 15px;">
                 <label for="shadowsEnabled" style="flex-grow:1;">Shadow Quality</label>
                 <select id="shadowsEnabled" onchange="updateSetting('shadows', this.value)" style="padding: 5px; background: #111; color: #fff; border: 1px solid #555;">
@@ -5763,8 +5635,6 @@ window.showOptionsModal = function () {
                     <option value="high" ${gameSettings.shadowsEnabled === 'high' ? 'selected' : ''}>High</option>
                 </select>
             </div>
-
-            ${graphicsOption}
 
             <div style="border-top:1px solid #444; margin-top:20px; padding-top:10px;">
                 <div style="display:flex; gap:10px; margin-bottom:10px;">
@@ -5801,10 +5671,6 @@ window.updateSetting = function (type, val) {
     if (type === 'vol') gameSettings.masterVolume = parseFloat(val);
     if (type === 'music') gameSettings.musicMuted = val;
     if (type === 'sfx') gameSettings.sfxMuted = val;
-    if (type === 'graphics') {
-        gameSettings.enhancedGraphics = val;
-        show3dmodels(val);
-    }
     if (type === 'tiltShift') {
         const mode = val ? 'threejs' : 'off';
         gameSettings.tiltShiftMode = mode;
@@ -5813,16 +5679,6 @@ window.updateSetting = function (type, val) {
     if (type === 'bloom') {
         gameSettings.bloomEnabled = val;
         if (bloomPass) bloomPass.enabled = val;
-    }
-    if (type === 'cel') {
-        gameSettings.celShadingEnabled = val;
-        const sub = document.getElementById('celOutlineDiv');
-        if (sub) sub.style.display = val ? 'flex' : 'none';
-        rebuildComposer();
-    }
-    if (type === 'celOutline') {
-        gameSettings.celOutlineEnabled = val;
-        rebuildComposer();
     }
     if (type === 'shadows') {
         // Handle string "false" from select
@@ -5861,7 +5717,7 @@ window.updateSetting = function (type, val) {
     }
 
     // If a graphics-related setting is changed manually, set profile to custom
-    const graphicSettings = ['graphics', 'tiltShift', 'bloom', 'cel', 'celOutline', 'shadows', 'lod', 'pixelRatio'];
+    const graphicSettings = ['graphics', 'tiltShift', 'bloom', 'shadows', 'lod', 'pixelRatio'];
     if (graphicSettings.includes(type)) {
         gameSettings.graphicsProfile = 'custom';
         updateOptionsUI();
@@ -5895,15 +5751,10 @@ function updateOptionsUI() {
 
     const get = (id) => document.getElementById(id);
     if (get('graphicsProfileSelect')) get('graphicsProfileSelect').value = gameSettings.graphicsProfile;
-    if (get('enhancedGfx')) get('enhancedGfx').checked = gameSettings.enhancedGraphics;
+
     if (get('tiltShift')) get('tiltShift').checked = (gameSettings.tiltShiftMode === 'threejs');
     if (get('bloomFX')) get('bloomFX').checked = gameSettings.bloomEnabled;
-    if (get('celShading')) get('celShading').checked = gameSettings.celShadingEnabled;
-    if (get('celOutline')) get('celOutline').checked = gameSettings.celOutlineEnabled;
     if (get('shadowsEnabled')) get('shadowsEnabled').value = String(gameSettings.shadowsEnabled);
-
-    const sub = document.getElementById('celOutlineDiv');
-    if (sub) sub.style.display = gameSettings.celShadingEnabled ? 'flex' : 'none';
 }
 
 // --- BENCHMARK SYSTEM (Glenn's Request) ---
@@ -5973,12 +5824,11 @@ function showBenchmarkModal(fps) {
         document.body.appendChild(modal);
     }
 
-    const canClassic = true;
     const canEnhanced = fps > 40;
     const canTilt = fps > 25;
     const canBloom = fps > 50;
     const canCel = fps > 35;
-    const canLOD = canEnhanced; // LOD is only relevant for 3D models
+    const canLOD = true;
 
     const check = (bool) => bool ? '✅' : '❌';
     const color = (bool) => bool ? '#4f4' : '#f44';
@@ -6002,10 +5852,7 @@ function showBenchmarkModal(fps) {
             
             <div style="text-align:left; background:rgba(255,255,255,0.03); padding:20px; border:1px solid #444; margin-bottom:20px; font-family:'Crimson Text'; font-size:1.1rem;">
                 <div style="${rowStyle}">
-                    <span>Classic Mode (2D)</span> <span style="color:${color(canClassic)}">${check(canClassic)}</span>
-                </div>
-                <div style="${rowStyle}">
-                    <span>Enhanced Models (3D)</span> <span style="color:${color(canEnhanced)}">${check(canEnhanced)}</span>
+                    <span>3D Models</span> <span style="color:${color(canEnhanced)}">${check(canEnhanced)}</span>
                 </div>
                 <div style="${rowStyle}">
                     <span>Tilt-Shift FX</span> <span style="color:${color(canTilt)}">${check(canTilt)}</span>
@@ -6183,8 +6030,7 @@ function initAttractMode() {
     updateAtmosphere(1);
 
     // Center player/torch for lighting
-    if (use3dModel && playerMesh) playerMesh.position.set(0, 0.1, 0);
-    if (!use3dModel && playerSprite) playerSprite.position.set(0, 0.75, 0);
+    if (playerMesh) playerMesh.position.set(0, 0.1, 0);
 
     // Ensure logo is visible
     const logo = document.getElementById('gameLogo');
@@ -6280,8 +6126,7 @@ function loadGame() {
     // Restore Player Position
     const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
     if (currentRoom) {
-        if (use3dModel && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
-        else if (playerSprite) playerSprite.position.set(currentRoom.gx, 0.75, currentRoom.gy);
+        if (playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
 
         // Snap Camera
         camera.position.set(20, 20, 20);
@@ -6794,7 +6639,7 @@ window.enterTrueDungeon = function() {
             }),
             floor: game.floor,
             currentRoomIdx: game.currentRoomIdx,
-            playerPos: (use3dModel ? playerMesh : playerSprite).position.clone(),
+            playerPos: (playerMesh).position.clone(),
             camPos: camera.position.clone(),
             camTarget: controls.target.clone(),
             lockedRoomId: game.activeRoom.id
@@ -6875,7 +6720,7 @@ window.exitTrueDungeon = function() {
     initWanderers();
 
     // 3. Restore Position
-    const p = use3dModel ? playerMesh : playerSprite;
+    const p = playerMesh;
     p.position.copy(savedMapState.playerPos);
     camera.position.copy(savedMapState.camPos);
     controls.target.copy(savedMapState.camTarget);
@@ -7569,7 +7414,7 @@ function startCombat(wanderer, isFlankAttack = false) {
     console.log("   -> Initializing CombatManager with floor theme:", currentTheme);
 
     // Ensure CombatManager has refs
-    CombatManager.init(scene, camera, controls, use3dModel ? playerMesh : playerSprite);
+    CombatManager.init(scene, camera, controls, playerMesh);
 
     console.log("   -> Calling CombatManager.startCombat()...");
     CombatManager.startCombat(wanderer, currentTheme);
@@ -7594,7 +7439,7 @@ function startCombat(wanderer, isFlankAttack = false) {
 }
 
 function enterCombatView() {
-    if (isCombatView || !use3dModel) return;
+    if (isCombatView) return;
     isCombatView = true;
 
     // Stop any active movement so player doesn't drift off Battle Island
@@ -7610,7 +7455,6 @@ function enterCombatView() {
 
     // Save Player Position
     if (playerMesh) savedPlayerPos.copy(playerMesh.position);
-    else if (playerSprite) savedPlayerPos.copy(playerSprite.position);
 
     // Add Combat Group to Scene
     scene.add(combatGroup);
@@ -7938,31 +7782,16 @@ function updateMovementIndicator() {
     if (rangedRangeIndicator) rangedRangeIndicator.visible = isPlayerTurn;
 }
 
-window.use3dmodels = function (bool) {
-    use3dModel = bool;
-    console.log(`3D Models: ${use3dModel}`);
-
-    // Ensure config is loaded before reloading scene
-    const reloadScene = () => {
-        const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
-        clear3DScene();
-        init3D();
-        globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
-
-        updateAtmosphere(game.floor);
-
-        // Restore position
-        if (currentRoom) {
-            if (use3dModel && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
-            else if (playerSprite) playerSprite.position.set(currentRoom.gx, 0.75, currentRoom.gy);
-        }
-    };
+window.reloadScene = function () {
+    const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
+    clear3DScene();
+    init3D();
+    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    updateAtmosphere(game.floor);
+    if (currentRoom && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
 
     if (Object.keys(roomConfig).length === 0) {
-        console.log("Reloading Room Config...");
-        loadRoomConfig().then(reloadScene);
-    } else {
-        reloadScene();
+        loadRoomConfig().then(() => window.reloadScene());
     }
 }
 
@@ -8107,7 +7936,7 @@ function executePlayerSkill(target) {
     logMsg(`Used ${skill.name}!`);
     
     // Animation
-    if (use3dModel && actions.attack) {
+    if (actions.attack) {
         actions.attack.reset().play();
     }
 
@@ -8168,7 +7997,7 @@ function executePlayerSkill(target) {
                 msg = "Shove successful!";
                 spawnFloatingText("SHOVED!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
                 // Push Logic
-                const pushDir = new THREE.Vector3().subVectors(target.mesh.position, (use3dModel ? playerMesh : playerSprite).position).normalize();
+                const pushDir = new THREE.Vector3().subVectors(target.mesh.position, (playerMesh).position).normalize();
                 pushDir.y = 0;
                 const newPos = target.mesh.position.clone().add(pushDir.multiplyScalar(1.5)); // Push 1.5m
                 
@@ -8241,14 +8070,14 @@ function executePlayerAttack(target) {
         return; // Skip the rest of the function
     }
 
-    if (use3dModel && actions.attack) {
+    if (actions.attack) {
         actions.attack.reset().play();
         // Play sound
         if (audio.initialized) audio.play('attack_slash', { volume: 0.5 });
     }
 
     // 1.5 Range Check & Throw Rock Logic
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     const dist = playerObj.position.distanceTo(target.mesh.position);
     
     const isSpell = game.equipment.weapon && game.equipment.weapon.isSpell;
@@ -8447,7 +8276,7 @@ function startEnemyTurn() {
     }
 
     const enemy = activeWanderer;
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     const dist = enemy.mesh.position.distanceTo(playerObj.position);
     const attackRange = 2.0;
     const moveSpeed = 6.0;
@@ -8673,7 +8502,6 @@ function endEnemyTurn() {
         logCombat("Player turn.");
     }, 1000);
 }
-window.show3dmodels = window.use3dmodels; // Alias
 
 window.setAnimSpeed = function (speed) {
     globalAnimSpeed = speed;
@@ -9030,7 +8858,7 @@ window.showWandererDebug = function(show) {
     console.log("%c--- WANDERER DEBUG ---", "color: #ffaa00; font-weight: bold;");
     
     // Create persistent helpers
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
 
     wanderers.forEach((w, idx) => {
         if (!w.mesh) return;
@@ -9068,7 +8896,7 @@ window.showWandererDebug = function(show) {
 };
 
 function updateWandererDebug() {
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     
     wanderers.forEach((w, idx) => {
         if (!w.mesh) return;
@@ -9098,7 +8926,7 @@ function updateWandererDebug() {
 // --- DEBUG TOOLS ---
 window.debugTriggerZones = function() {
     console.log("%c--- DEBUG TRIGGER ZONES ---", "color: #00ffff; font-weight: bold;");
-    const playerObj = use3dModel ? playerMesh : playerSprite;
+    const playerObj = playerMesh;
     
     game.rooms.forEach(r => {
         // Check markers

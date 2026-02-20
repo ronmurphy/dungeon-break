@@ -64,6 +64,36 @@ export function showManorPrompt() {
     `;
 }
 
+export function showAzureFlamePrompt() {
+    const overlay = document.getElementById('combatModal');
+    overlay.style.display = 'flex';
+    document.getElementById('combatContainer').style.display = 'none';
+    document.getElementById('bonfireUI').style.display = 'none';
+
+    let trapUI = document.getElementById('trapUI');
+    if (!trapUI) {
+        trapUI = document.createElement('div');
+        trapUI.id = 'trapUI';
+        document.body.appendChild(trapUI);
+    }
+    trapUI.style.display = 'flex';
+
+    trapUI.innerHTML = `
+        <h2 style="font-family:'Cinzel'; font-size:3rem; color:#44aaff; text-shadow:0 0 30px #2266ff, 0 0 60px #0044cc; margin-bottom:20px;">AZURE FLAME</h2>
+        <div style="font-style:italic; margin-bottom:40px; color:#aaa; text-align:center; max-width:400px;">
+            The ancient flame burns cold and eternal. It has waited here long before you arrived,<br>and will burn long after you are gone.<br>
+            <span style="color:#88ccff;">Your torch drinks greedily.</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:15px; width:320px;">
+            <button class="v2-btn trap-option-btn" onclick="window.handleAzureFlameChoice('refuel')">
+                <span>Refuel Torch</span>
+                <span style="color:#44aaff;">Restore Fuel</span>
+            </button>
+            <button class="v2-btn" onclick="window.handleAzureFlameChoice('leave')" style="background:#444; margin-top:20px;">Leave</button>
+        </div>
+    `;
+}
+
 export function updateUI() {
     // Update Sidebar
     const hpSide = document.getElementById('hpValueSidebar');
