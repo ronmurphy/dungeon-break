@@ -10,6 +10,7 @@ import { HorizontalTiltShiftShader } from 'three/addons/shaders/HorizontalTiltSh
 import { VerticalTiltShiftShader } from 'three/addons/shaders/VerticalTiltShiftShader.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { runSmartBenchmark, PROFILES } from './benchmark.js';
+import Stats from 'three/addons/libs/stats.module.js';
 
 import { generateHouse } from './house-generator.js';
 import { SoundManager } from './sound-manager.js';
@@ -21,7 +22,7 @@ import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -42,7 +43,8 @@ let movementRangeIndicator; // Green circle for combat movement
 let meleeRangeIndicator; // Red ring for melee range
 let rangedRangeIndicator; // Yellow ring for ranged limit
 let torchLight;
-let hemisphereLight; // Soft global fill light to improve readability under fog
+let hemisphereLight;
+let stats = null; // mrdoob Stats.js — toggle with F2 // Soft global fill light to improve readability under fog
 // let fogRings = []; // Fog ring sprites for atmospheric LOD // DEAD CODE
 let roomMeshes = new Map();
 let animationFrameId = null; // To prevent multiple render loops
@@ -64,41 +66,55 @@ let savedFogDensity = 0.045;
 
 // Expose exit function globally
 window.exitBattleIsland = function () {
-    // Always force menu closed when attempting to exit, regardless of state
+    hideCombatMenu();
+    if (!isCombatView) return;
+
+    removeCombatTracker();
     hideCombatMenu();
 
-    if (CombatManager.isActive) {
-        CombatManager.endCombat(activeWanderer);
+    // Clean up every enemy that was in this combat
+    combatState.enemies.forEach(w => {
+        // Restore LOD distance so the box threshold works normally again
+        if (w.mesh && w.mesh.isLOD) {
+            const levels = w.mesh.levels;
+            if (levels.length > 1) levels[1].distance = (gameSettings.lod && gameSettings.lod.far) || 80;
+        }
+        // Remove the HP bar
+        if (w.healthBar) { w.mesh.remove(w.healthBar); w.healthBar = null; }
 
-        // Reset Global Flags
-        window.inBattleIsland = false;
-        inBattleIsland = false;
-
-        // Remove the enemy from the world so we don't instantly re-trigger combat
-        if (activeWanderer) {
-            const idx = wanderers.indexOf(activeWanderer);
-            if (idx > -1) wanderers.splice(idx, 1);
-            // CombatManager hides the mesh, but we should remove it entirely
-            if (activeWanderer.mesh && activeWanderer.mesh.parent) {
-                activeWanderer.mesh.parent.remove(activeWanderer.mesh);
-            }
-            activeWanderer = null;
+        // Strip emissive glow
+        if (w._combatColor && w.mesh) {
+            const modelRoot = (w.mesh.isLOD && w.mesh.levels.length > 0) ? w.mesh.levels[0].object : w.mesh;
+            modelRoot.traverse(child => {
+                if (child.isMesh && child.material) {
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    mats.forEach(m => { m.emissive.setHex(0x000000); m.emissiveIntensity = 0; });
+                }
+            });
+            w._combatColor = null;
         }
 
-        // Restore controls immediately so we can click, but delay fog/visuals until camera arrives
-        exitCombatView();
+        if (w.stats && w.stats.hp <= 0) {
+            // Dead enemies: remove mesh from scene entirely
+            const idx = wanderers.indexOf(w);
+            if (idx > -1) wanderers.splice(idx, 1);
+            if (w.mesh && w.mesh.parent) w.mesh.parent.remove(w.mesh);
+        } else {
+            // Survivors: back off and return to patrol
+            w.state = 'cooldown';
+            setTimeout(() => { if (w.state === 'cooldown') { w.state = 'patrol'; pickWandererTarget(w); } }, 3000);
+        }
+    });
 
-        // FIX: Ensure combat modal and menu are closed so they don't block movement raycasts
-        document.getElementById('combatModal').style.display = 'none';
+    combatState.enemies = [];
+    combatState.activeEnemyIdx = 0;
+    activeWanderer = null;
 
-        // Restore Player Combat Area (Dock) - DISABLED (Replaced by new UI)
-        // const combatDocks = document.querySelectorAll('.player-combat-area');
-        // combatDocks.forEach(el => el.style.display = 'flex');
+    document.getElementById('combatModal').style.display = 'none';
+    setTimeout(() => { if (scene.fog) scene.fog.density = savedFogDensity; }, 200);
+    spawnFloatingText("ESCAPED!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00', 40);
 
-        // Restore Fog AFTER camera flies back (800ms tween in CombatManager)
-        setTimeout(() => { if (scene.fog) scene.fog.density = savedFogDensity; }, 850);
-        spawnFloatingText("ESCAPED!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00', 40);
-    }
+    exitCombatView();
 };
 
 // Store player pos before teleporting to Battle Island
@@ -112,12 +128,14 @@ let playerReturnPos = null;
 let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
 let wanderers = [];
+let corpses = []; // { mesh, name, fuelReward } — skull sprites left after on-map kills
+let _aiFrameCount = 0; // Incremented each animate3D frame; used to throttle wanderer AI + mixers
 const WANDERER_MODELS = [
     'skeleton-web.glb',
     'female_evil-web.glb', 'female_evil-true-web.glb',
     'male_evil-web.glb', 'male_evil-true-web.glb',
     'ironjaw-web.glb',
-    'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb'
+    'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb', 'SkeletalViking-web.glb'
 ];
 
 // List of models to display in Gallery Mode (editmap)
@@ -232,7 +250,9 @@ let combatState = {
     canAttack: true, // Can the player use attack/skill actions?
     isDashing: false, // Has the player dashed this turn?
     gutsCharge: 0, // Stored damage for Guts tactic
-    gutsStacks: 0 // Number of times Guts has been used
+    gutsStacks: 0, // Number of times Guts has been used
+    enemies: [], // All active combatants (on-map multi-enemy support)
+    activeEnemyIdx: 0 // Which enemy in the list is currently taking their turn
 };
 
 let savedMapState = null; // For True Dungeon recursion
@@ -1155,9 +1175,7 @@ function init3D() {
     scene.add(hemisphereLight);
     // Initial Torch
     torchLight = new THREE.PointLight(0xffaa44, 300, 40);
-    torchLight.castShadow = true;
-    torchLight.shadow.mapSize.width = 512; // Optimize shadow map size
-    torchLight.shadow.mapSize.height = 512;
+    torchLight.castShadow = false; // Shadows owned by DirectionalLight — PointLight shadow = 6 cubemap passes/frame
     scene.add(torchLight);
 
     // Fog of War
@@ -1291,9 +1309,9 @@ function loadPlayerModel() {
                 return null;
             };
 
-            if (!idleClip) idleClip = findAnim(['idle', 'stand', 'wait']) || animations[0];
+            if (!idleClip) idleClip = findAnim(['idle', 'stand', 'wait','stance']) || animations[0];
             if (!walkClip) walkClip = findAnim(['walk', 'run', 'move']) || animations.find(a => a !== idleClip) || animations[0];
-            if (!attackClip) attackClip = findAnim(['attack', 'slash', 'punch', 'kick']);
+            if (!attackClip) attackClip = findAnim(['attack', 'slash', 'punch', 'kick','spin','throw']) || animations.find(a => a !== idleClip && a !== walkClip) || animations[0];
             if (!hitClip) hitClip = findAnim(['hit', 'damage', 'reaction', 'death']);
 
             if (walkClip) {
@@ -1662,21 +1680,39 @@ function on3DClick(event, isRightClick = false) {
     // console.log(`[on3DClick] Intersects: ${intersects.length}`, intersects.length > 0 ? intersects[0].object : 'None');
 
     // --- COMBAT TARGETING ---
-    if (isCombatView && combatState.isTargeting && activeWanderer && activeWanderer.mesh) {
-        // Check if we clicked the enemy
-        const enemyHits = raycaster.intersectObject(activeWanderer.mesh, true);
-        if (enemyHits.length > 0) {
-            executePlayerAttack(activeWanderer);
+    if (isCombatView && combatState.isTargeting) {
+        const aliveEnemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
+
+        // 1. Direct raycaster hit against any enemy mesh
+        let hitTarget = null;
+        for (const enemy of aliveEnemies) {
+            if (raycaster.intersectObject(enemy.mesh, true).length > 0) {
+                hitTarget = enemy;
+                break;
+            }
+        }
+
+        // 2. Fallback: closest enemy whose world position is within 1.5 units of the click ray
+        //    Handles isometric view where pixel-perfect clicks on small models are hard
+        if (!hitTarget) {
+            let closestDist = Infinity;
+            const ray = raycaster.ray;
+            for (const enemy of aliveEnemies) {
+                const d = ray.distanceToPoint(enemy.mesh.position);
+                if (d < 1.5 && d < closestDist) { closestDist = d; hitTarget = enemy; }
+            }
+        }
+
+        if (hitTarget) {
+            activeWanderer = hitTarget; // Make sure attacks reference the chosen target
+            if (combatState.activeSkill) {
+                executePlayerSkill(hitTarget);
+            } else {
+                executePlayerAttack(hitTarget);
+            }
             return;
         }
-        // Check if using a skill
-        if (combatState.activeSkill) {
-            // If we have a skill active, clicking the enemy executes it
-            executePlayerSkill(activeWanderer);
-            return;
-        }
-        // If we clicked elsewhere, maybe cancel targeting?
-        // For now, just return to prevent moving while trying to attack
+
         logMsg("Select a valid target.");
         return;
     }
@@ -2025,7 +2061,6 @@ function update3DScene() {
                         if (r.isBonfire) {
                             const fireLight = new THREE.PointLight(0xff6600, 500, 15);
                             fireLight.position.set(0, 2, 0); // Inside the tower
-                            fireLight.castShadow = true;
                             model.add(fireLight);
                         }
                     }, customScale, configKey);
@@ -2375,6 +2410,36 @@ function animate3D() {
         }
     }
 
+    // Corpse loot proximity — auto-collect skull remains after combat
+    if (!isCombatView && !isAttractMode && !isEditMode && playerObj && corpses.length > 0) {
+        const modal = document.getElementById('combatModal');
+        const modalOpen = modal && modal.style.display === 'flex';
+        if (!modalOpen) {
+            for (let i = corpses.length - 1; i >= 0; i--) {
+                const c = corpses[i];
+                if (!c.mesh) { corpses.splice(i, 1); continue; }
+                const dist = c.mesh.position.distanceTo(playerObj.position);
+                if (dist < 1.5) {
+                    scene.remove(c.mesh);
+                    corpses.splice(i, 1);
+                    if (game.torchCharge < 100) {
+                        const gained = Math.min(c.fuelReward, 100 - game.torchCharge);
+                        game.torchCharge = Math.min(100, game.torchCharge + c.fuelReward);
+                        spawnFloatingText(`+${gained}% TORCH`, window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 28);
+                        logMsg(`Looted ${c.name}'s remains. (+${gained}% torch fuel)`);
+                    } else {
+                        const coins = Math.floor(c.fuelReward * 1.5);
+                        game.soulCoins = (game.soulCoins || 0) + coins;
+                        spawnFloatingText(`+${coins} SOUL COINS`, window.innerWidth / 2, window.innerHeight / 2, '#ffd700', 28);
+                        logMsg(`Looted ${c.name}'s remains. Torch full — +${coins} soul coins.`);
+                    }
+                    updateUI();
+                    break; // one corpse at a time per frame
+                }
+            }
+        }
+    }
+
     // Azure Flame proximity (Start Room — always present, never cleared)
     if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
         const azureRoom = game.rooms.find(r => r.id === 0);
@@ -2550,10 +2615,16 @@ function animate3D() {
     }
 
     // Proximity Combat Trigger
-    if (!isEngagingCombat && !isCombatView && wanderers.length > 0) {
+    // NOTE: We still run during isCombatView so wanderers can chase and JOIN an active fight.
+    // Wanderers already in 'combat' state are skipped below.
+    _aiFrameCount++;
+    if (!isEngagingCombat && wanderers.length > 0) {
         const playerObj = playerMesh;
         if (playerObj) {
             for (const wanderer of wanderers) {
+                if (wanderer.state === 'combat') continue; // Already fighting, skip AI
+                // Patrol AI runs every 3rd frame — chase runs every frame for smooth movement
+                if (wanderer.state !== 'chase' && (_aiFrameCount % 3 !== 0)) continue;
                 if (wanderer.mesh) {
                     const wandererPos = wanderer.mesh.position;
                     const playerPos = playerObj.position;
@@ -2716,18 +2787,42 @@ function animate3D() {
     if (mixer) {
         const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches
         mixer.update(delta * globalAnimSpeed);
+        // Use player distance (not camera distance) for LOD.
+        // Camera-based LOD breaks in isometric view: the overhead camera is already
+        // 34+ units from any ground object, and camera.zoom division makes it worse.
+        const _lodPlayerPos = playerMesh ? playerMesh.position : null;
+        const _lodFar = (gameSettings.lod && gameSettings.lod.far) || 80;
         wanderers.forEach(w => {
+            // Dead wanderers (mesh hidden by spawnCorpse) — no point animating
+            if (w.mesh && !w.mesh.visible) return;
+
             if (w.mesh && w.mesh.isLOD) {
-                w.mesh.update(camera);
-                // Only animate skeleton when the high-poly model is visible (LOD level 0)
-                if (w.mixer && w.mesh.getCurrentLevel() === 0) {
-                    w.mixer.update(delta * globalAnimSpeed);
+                const levels = w.mesh.levels;
+                if (_lodPlayerPos && levels.length >= 2) {
+                    const pd = _lodPlayerPos.distanceTo(w.mesh.position);
+                    const useBox = pd >= _lodFar;
+                    levels[0].object.visible = !useBox; // high-poly model
+                    levels[1].object.visible = useBox;  // placeholder box
+                    if (w.mixer && !useBox) {
+                        // Beyond 20 units: animate every other frame only
+                        if (pd < 20 || (_aiFrameCount % 2 === 0)) {
+                            w.mixer.update(delta * globalAnimSpeed);
+                        }
+                    }
+                } else {
+                    // Fallback: camera-based
+                    w.mesh.update(camera);
+                    if (w.mixer && w.mesh.getCurrentLevel() === 0) {
+                        w.mixer.update(delta * globalAnimSpeed);
+                    }
                 }
             } else if (w.mixer) {
                 w.mixer.update(delta * globalAnimSpeed);
             }
         });
     }
+
+    if (stats) stats.update();
 }
 
 /* 
@@ -3973,16 +4068,32 @@ window.handleManorChoice = function(choice) {
 };
 
 window.handleAzureFlameChoice = function(choice) {
+    // Race condition: combat may have started while the flame modal was open.
+    // If wanderer combat is already active, just dismiss the overlay — don't
+    // call closeCombat() which would tear down isCombatView and the enemy roster.
+    const inWandererCombat = isCombatView && combatState.enemies.length > 0;
+
     if (choice === 'refuel') {
         game.torchCharge = 100;
         logMsg("The Azure Flame restores your torch. The darkness retreats.");
         spawnFloatingText("TORCH REFUELED!", window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 36);
         updateUI();
-        closeCombat();
+    }
+
+    if (inWandererCombat) {
+        // Minimal dismiss: hide the overlay, leave combat state intact
+        const modal = document.getElementById('combatModal');
+        if (modal) modal.style.display = 'none';
+        const trapUI = document.getElementById('trapUI');
+        if (trapUI) trapUI.style.display = 'none';
+        audio.setMusicMuffled(false);
         return;
     }
+
+    // Normal (non-combat) path
+    closeCombat();
+
     if (choice === 'leave') {
-        closeCombat();
         // Push player just outside the 1.5-unit proximity threshold
         const playerObj = playerMesh;
         const r = game.activeRoom;
@@ -3995,7 +4106,26 @@ window.handleAzureFlameChoice = function(choice) {
                 .easing(TWEEN.Easing.Quadratic.Out)
                 .start();
         }
-        // Azure Flame marker is NEVER sunk/cleared — always present
+    }
+    // Azure Flame marker is NEVER sunk/cleared — always present
+};
+
+// Tracker-row click targeting (3rd fallback after raycaster + proximity ray)
+window.selectCombatTarget = function(idx) {
+    if (!isCombatView || !combatState.isTargeting) {
+        logMsg("No action awaiting a target.");
+        return;
+    }
+    const target = combatState.enemies[idx];
+    if (!target || !target.stats || target.stats.hp <= 0) {
+        logMsg("That target is already down.");
+        return;
+    }
+    activeWanderer = target;
+    if (combatState.activeSkill) {
+        executePlayerSkill(target);
+    } else {
+        executePlayerAttack(target);
     }
 };
 
@@ -4268,15 +4398,17 @@ function showCombat() {
     const combatDocks = document.querySelectorAll('.player-combat-area');
     combatDocks.forEach(el => el.style.setProperty('display', 'none', 'important'));
 
-    // Create Combat Log if not exists
-    let combatLog = document.getElementById('combatLogOverlay');
-    if (!combatLog) {
-        combatLog = document.createElement('div');
-        combatLog.id = 'combatLogOverlay';
-        combatLog.style.cssText = "position:absolute; top:20px; right:20px; width:320px; max-height:350px; overflow-y:hidden; background:rgba(12, 12, 12, 0.9); border:1px solid #d4af37; border-left: 4px solid #d4af37; padding:15px; font-family:'Crimson Text', serif; font-size:1.1rem; color:#e0e0e0; pointer-events:none; display:flex; flex-direction:column-reverse; box-shadow: 0 5px 25px rgba(0,0,0,0.8); border-radius: 2px;";
-        enemyArea.appendChild(combatLog);
+    // Create Combat Log only for card-based combat (wanderer combat uses the tracker panel)
+    if (combatState.enemies.length === 0) {
+        let combatLog = document.getElementById('combatLogOverlay');
+        if (!combatLog) {
+            combatLog = document.createElement('div');
+            combatLog.id = 'combatLogOverlay';
+            combatLog.style.cssText = "position:absolute; top:20px; right:20px; width:320px; max-height:350px; overflow-y:hidden; background:rgba(12, 12, 12, 0.9); border:1px solid #d4af37; border-left: 4px solid #d4af37; padding:15px; font-family:'Crimson Text', serif; font-size:1.1rem; color:#e0e0e0; pointer-events:none; display:flex; flex-direction:column-reverse; box-shadow: 0 5px 25px rgba(0,0,0,0.8); border-radius: 2px;";
+            enemyArea.appendChild(combatLog);
+        }
+        combatLog.innerHTML = ''; // Clear log
     }
-    combatLog.innerHTML = ''; // Clear log
 
     // If room is cleared, we show the Exit button, otherwise the Avoid button
     const msgEl = document.getElementById('combatMessage');
@@ -5824,10 +5956,9 @@ function showBenchmarkModal(fps) {
         document.body.appendChild(modal);
     }
 
-    const canEnhanced = fps > 40;
     const canTilt = fps > 25;
     const canBloom = fps > 50;
-    const canCel = fps > 35;
+    const canShadows = fps > 40;
     const canLOD = true;
 
     const check = (bool) => bool ? '✅' : '❌';
@@ -5852,19 +5983,16 @@ function showBenchmarkModal(fps) {
             
             <div style="text-align:left; background:rgba(255,255,255,0.03); padding:20px; border:1px solid #444; margin-bottom:20px; font-family:'Crimson Text'; font-size:1.1rem;">
                 <div style="${rowStyle}">
-                    <span>3D Models</span> <span style="color:${color(canEnhanced)}">${check(canEnhanced)}</span>
-                </div>
-                <div style="${rowStyle}">
                     <span>Tilt-Shift FX</span> <span style="color:${color(canTilt)}">${check(canTilt)}</span>
                 </div>
-                <div style="display:flex; justify-content:space-between;">
+                <div style="${rowStyle}">
                     <span>Bloom Lighting</span> <span style="color:${color(canBloom)}">${check(canBloom)}</span>
                 </div>
                 <div style="${rowStyle}">
-                    <span>Level of Detail (LOD)</span> <span style="color:${color(canLOD)}">${check(canLOD)}</span>
+                    <span>Shadow Quality</span> <span style="color:${color(canShadows)}">${check(canShadows)}</span>
                 </div>
                 <div style="display:flex; justify-content:space-between;">
-                    <span>Cel Shading</span> <span style="color:${color(canCel)}">${check(canCel)}</span>
+                    <span>Level of Detail (LOD)</span> <span style="color:${color(canLOD)}">${check(canLOD)}</span>
                 </div>
             </div>
 
@@ -7325,102 +7453,110 @@ function restoreDecorations() {
     hiddenDecorationIndices.clear();
 }
 
-function startCombat(wanderer, isFlankAttack = false) {
-    console.log("🔥 [scoundrel-3d.js] startCombat() function entered.");
-    console.log("   -> Triggered by wanderer:", wanderer);
+// Prepares a wanderer for combat: stats, HP bar, LOD lock, stops patrol.
+// Safe to call on a wanderer that is already in combat (idempotent).
+function initWandererForCombat(wanderer) {
+    // Stats (scaled by floor)
+    if (!wanderer.stats) {
+        const baseStats = getEnemyStats(wanderer.filename);
+        wanderer.stats = { ...baseStats };
+        const effectiveFloor = game.inTrueDungeon ? 12 : game.floor;
+        wanderer.stats.hp += effectiveFloor * 4;
+        wanderer.stats.maxHp = wanderer.stats.hp;
+        wanderer.stats.ac += Math.floor(effectiveFloor / 2);
+        wanderer.stats.str += Math.floor(effectiveFloor / 3);
+    }
 
+    // HP bar (billboard, always face camera)
+    if (!wanderer.healthBar) {
+        const barGeo = new THREE.PlaneGeometry(1.5, 0.15);
+        const barMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+        const healthBarMesh = new THREE.Mesh(barGeo, barMat);
+        healthBarMesh.position.y = 2.2;
+        healthBarMesh.onBeforeRender = function(_r, _s, cam) { this.quaternion.copy(cam.quaternion); };
+        wanderer.mesh.add(healthBarMesh);
+        wanderer.healthBar = healthBarMesh;
+    }
+
+    // Force LOD to show full model (not placeholder box) during combat
+    if (wanderer.mesh && wanderer.mesh.isLOD) {
+        const levels = wanderer.mesh.levels;
+        if (levels.length > 1) levels[1].distance = Infinity;
+    }
+
+    // Assign a combat color and apply emissive glow to the model
+    if (!wanderer._combatColor) {
+        const colorIdx = combatState.enemies.indexOf(wanderer);
+        const color = COMBAT_COLORS[colorIdx >= 0 ? colorIdx % COMBAT_COLORS.length : 0];
+        wanderer._combatColor = color;
+        const modelRoot = (wanderer.mesh.isLOD && wanderer.mesh.levels.length > 0)
+            ? wanderer.mesh.levels[0].object : wanderer.mesh;
+        modelRoot.traverse(child => {
+            if (!child.isMesh || !child.material) return;
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            const cloned = mats.map(m => {
+                const c = m.clone();
+                c.emissive.setHex(color.hex);
+                c.emissiveIntensity = 0.35;
+                return c;
+            });
+            child.material = Array.isArray(child.material) ? cloned : cloned[0];
+        });
+    }
+
+    // Freeze patrol movement
+    if (wanderer.tween) { wanderer.tween.stop(); wanderer.tween = null; }
+    wanderer.state = 'combat';
+}
+
+function startCombat(wanderer, isFlankAttack = false) {
     if (isCombatView) {
-        console.warn("⚠️ Already in combat view! Aborting.");
+        // Combat already active: let the wanderer join the fight
+        if (!combatState.enemies.includes(wanderer)) {
+            combatState.enemies.push(wanderer);
+            initWandererForCombat(wanderer);
+            const name = wanderer.filename.replace(/-web\.glb$/, '').replace(/-true/, '');
+            logMsg(`A ${name} joins the fight!`);
+            spawnFloatingText("REINFORCEMENT!", window.innerWidth / 2, window.innerHeight / 2 - 120, '#ff4400', 28);
+            showCombatTracker(combatState.enemies); // Refresh tracker with new enemy
+        }
         return;
     }
+
     activeWanderer = wanderer;
-
     combatState.isPlayerFlank = isFlankAttack;
-    // --- FIX LOD FOR COMBAT ---
-    // The combat camera is ~70 units away, which might trigger the low-poly box 
-    // if the LOD setting is "Medium" (50) or "Low". We force the box distance to Infinity here.
-    if (activeWanderer.mesh && activeWanderer.mesh.isLOD) {
-        const levels = activeWanderer.mesh.levels;
-        if (levels.length > 1) {
-            levels[1].distance = Infinity; // Never switch to box during combat
-        }
-    }
 
-    // Initialize Enemy Stats (Simple D&D-lite stats)
-    if (!activeWanderer.stats) {
-        const baseStats = getEnemyStats(activeWanderer.filename);
-        activeWanderer.stats = { ...baseStats };
-        // Scale with Floor
-        let effectiveFloor = game.floor;
-        if (game.inTrueDungeon) effectiveFloor = 12; // Cap difficulty for True Dungeon so it's playable
+    // Enemy roster
+    combatState.enemies = [wanderer];
+    combatState.activeEnemyIdx = 0;
+    initWandererForCombat(wanderer);
 
-        activeWanderer.stats.hp += (effectiveFloor * 4);
-        activeWanderer.stats.maxHp = activeWanderer.stats.hp;
-        activeWanderer.stats.ac += Math.floor(effectiveFloor / 2);
-        activeWanderer.stats.str += Math.floor(effectiveFloor / 3);
-    }
-
-    // Add HP Bar to enemy
-    const barGeo = new THREE.PlaneGeometry(1.5, 0.15);
-    const barMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
-    const healthBarMesh = new THREE.Mesh(barGeo, barMat);
-    healthBarMesh.position.y = 2.2; // Position above head
-    // Make it a billboard (always face camera)
-    healthBarMesh.onBeforeRender = function (renderer, scene, camera) {
-        this.quaternion.copy(camera.quaternion);
-    };
-    activeWanderer.mesh.add(healthBarMesh);
-    activeWanderer.healthBar = healthBarMesh;
-
-    // Initialize Movement Budget (1 unit = 5ft)
-    // Base 30ft (6.0), Strider/Scoundrel +10ft (+2.0)
+    // Movement budget
     const isFast = (game.classId === 'ranger' || game.classId === 'rogue');
     combatState.maxMove = isFast ? 8.0 : 6.0;
     combatState.currentMove = combatState.maxMove;
 
-    // Set global flags
-    inBattleIsland = true;
-    window.inBattleIsland = true;
-
-    // Set Combat View flag EARLY so UI updates work correctly
+    // On-map combat: no Battle Island teleport
+    inBattleIsland = false;
+    window.inBattleIsland = false;
     isCombatView = true;
+
+    // Save player position (for flee)
+    if (playerMesh) savedPlayerPos.copy(playerMesh.position);
 
     // Ensure combatGroup is in scene for loot/fx and clear old items
     if (combatGroup.parent !== scene) scene.add(combatGroup);
-    while (combatGroup.children.length > 0) {
-        combatGroup.remove(combatGroup.children[0]);
-    }
+    while (combatGroup.children.length > 0) combatGroup.remove(combatGroup.children[0]);
 
-    // Clear fog for combat clarity
+    // Reduce fog slightly for combat visibility
     if (scene.fog) {
         savedFogDensity = scene.fog.density;
-        scene.fog.density = 0.012; // Reduced fog for Battle Island (Dark but visible)
+        scene.fog.density = 0.02;
     }
 
-    // Enable Orbit Controls for Combat
-    if (controls) {
-        controls.enableRotate = true;
-        controls.enabled = true; // Ensure controls are active
-    }
+    if (controls) { controls.enableRotate = true; controls.enabled = true; }
+    if (playerMoveTween) { playerMoveTween.stop(); playerMoveTween = null; }
 
-    // Stop movement immediately
-    if (playerMoveTween) {
-        playerMoveTween.stop();
-        playerMoveTween = null;
-    }
-
-    // --- NEW COMBAT MANAGER (FFT STYLE) ---
-    const currentTheme = getThemeForFloor(game.floor);
-    console.log("   -> Initializing CombatManager with floor theme:", currentTheme);
-
-    // Ensure CombatManager has refs
-    CombatManager.init(scene, camera, controls, playerMesh);
-
-    console.log("   -> Calling CombatManager.startCombat()...");
-    CombatManager.startCombat(wanderer, currentTheme);
-
-    // Show the UI Overlay (Command Menu)
-    // Update state properties instead of overwriting the object (preserves maxMove/currentMove)
     combatState.active = true;
     combatState.turn = 'player';
     combatState.isTargeting = false;
@@ -7435,7 +7571,16 @@ function startCombat(wanderer, isFlankAttack = false) {
 
     updateMovementIndicator();
     showCombat();
-    console.log("✅ Combat view active.");
+    showCombatMenu();
+    showCombatTracker(combatState.enemies);
+
+    // Flanked: enemy gets a free opening attack
+    if (isFlankAttack) {
+        spawnFloatingText("AMBUSH!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000', 40);
+        logCombat("Flanked! Enemy strikes first.", '#ff0000');
+        combatState.turn = 'busy';
+        setTimeout(startEnemyTurn, 500);
+    }
 }
 
 function enterCombatView() {
@@ -7504,12 +7649,11 @@ function exitCombatView() {
     controls.target.copy(savedCamState.target);
     controls.update();
 
-    // Restore Player Position from Battle Island
-    if (playerMesh) {
-        // Always return to the exact spot we left from (savedPlayerPos)
-        // This supports free movement better than snapping to room center
+    // Only snap the player back if we actually teleported to the Battle Island.
+    // On-map combat leaves inBattleIsland = false, so we skip this.
+    if (inBattleIsland && playerMesh) {
         playerMesh.position.copy(savedPlayerPos);
-        playerMesh.rotation.set(0, 0, 0); // Reset rotation if needed, or keep lookAt
+        playerMesh.rotation.set(0, 0, 0);
     }
 
     // Optional: Tween Ortho camera back if we moved it, but we mostly moved Perspective camera.
@@ -7518,6 +7662,16 @@ function exitCombatView() {
 
 // --- CINEMATIC MODE (For Trailer/Screenshots) ---
 window.addEventListener('keydown', (e) => {
+    if (e.key === 'F2') {
+        e.preventDefault();
+        if (!stats) {
+            stats = new Stats();
+            stats.dom.style.cssText = 'position:fixed;top:0;left:0;z-index:99999;';
+            document.body.appendChild(stats.dom);
+        } else {
+            stats.dom.style.display = stats.dom.style.display === 'none' ? 'block' : 'none';
+        }
+    }
     if (e.key === 'h' || e.key === 'H') {
         const sidebar = document.querySelector('.sidebar');
         const controls = document.querySelector('.control-box');
@@ -7674,62 +7828,45 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
         .start();
 }
 
-function spawnLootDrop(pos) {
-    // Hide UI to focus on loot
-    hideCombatMenu();
 
-    // Generate Random Loot (Weapon or Potion)
-    const isWeapon = Math.random() > 0.5;
-    const val = 1 + Math.floor(Math.random() * (game.floor + 1)); // Scale with floor
-    const suit = isWeapon ? SUITS.DIAMONDS : SUITS.HEARTS;
-    const type = isWeapon ? 'weapon' : 'potion';
-    const soulCoins = 5 + Math.floor(Math.random() * (game.floor * 3));
+function spawnCorpse(target) {
+    // Derive a readable display name from filename if .name isn't set
+    const displayName = target.name ||
+        (target.filename || 'Wanderer')
+            .replace(/-web\.glb$/, '').replace(/-true/, '').replace(/\.glb$/, '')
+            .replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-    // Get Asset Data
-    const asset = getAssetData(type, val, suit);
-    const tex = getClonedTexture(`assets/images/${asset.file}`);
+    const fuelReward = Math.max(10, Math.min(30, ((target.stats && target.stats.str) || 2) * 5));
 
-    // Handle Spritesheet
-    if (asset.sheetCount > 1) {
-        tex.wrapS = THREE.RepeatWrapping;
-        tex.repeat.set(1 / asset.sheetCount, 1);
-        tex.offset.set(asset.uv.u, 0);
-    }
+    // Save position before hiding the GLB mesh
+    const deathPos = (target.mesh && target.mesh.position)
+        ? target.mesh.position.clone()
+        : new THREE.Vector3();
+
+    // Hide the GLB model — exitBattleIsland will remove it fully
+    if (target.mesh) target.mesh.visible = false;
+    if (target.healthBar) target.healthBar.visible = false;
+
+    // Single 128×128 corpse icon (assets/images/corpse.png)
+    const tex = getClonedTexture('assets/images/corpse.png');
 
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
     const sprite = new THREE.Sprite(mat);
+    sprite.position.copy(deathPos);
+    sprite.position.y = 0.5;
+    sprite.scale.set(1.2, 1.2, 1.2);
+    scene.add(sprite);
 
-    sprite.position.copy(pos);
-    sprite.position.y += 1.5; // Float above ground (Relative to Battle Island floor)
-    sprite.scale.set(1.5, 1.5, 1.5);
-
-    // Store item data in userData for pickup
-    sprite.userData = {
-        isLoot: true,
-        item: {
-            type, val, suit,
-            name: isWeapon ? `Looted Weapon (${val})` : `Looted Potion (${val})`,
-            coins: soulCoins,
-            asset: asset // For logging
-        }
-    };
-
-    combatGroup.add(sprite);
-
-    // Bobbing Animation
-    const targetY = sprite.position.y + 0.5;
+    // Gentle bob
+    const baseY = sprite.position.y;
     new TWEEN.Tween(sprite.position)
-        .to({ y: targetY }, 1000)
-        .yoyo(true)
-        .repeat(Infinity)
-        .easing(TWEEN.Easing.Quadratic.InOut)
+        .to({ y: baseY + 0.15 }, 2000)
+        .yoyo(true).repeat(Infinity)
+        .easing(TWEEN.Easing.Sinusoidal.InOut)
         .start();
 
-    spawnFloatingText("LOOT DROPPED!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
-    
-    // Log with icon
-    const iconHtml = `<div style="display:inline-block; width:24px; height:24px; vertical-align:middle; margin-right:8px; background:url('assets/images/${asset.file}'); background-size:${asset.sheetCount * 100}% 100%; background-position:${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%;"></div>`;
-    logCombat(`${iconHtml} Dropped ${sprite.userData.item.name} & ${soulCoins} Coins!`, '#ffd700');
+    corpses.push({ mesh: sprite, name: displayName, fuelReward });
+    logMsg(`${displayName} has fallen. Walk over their remains to loot.`);
 }
 
 function claimLoot(sprite) {
@@ -7760,10 +7897,14 @@ function logCombat(msg, color = '#ccc') {
         entry.style.cssText = "margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px solid rgba(212, 175, 55, 0.15); text-shadow: 0 1px 2px #000; line-height: 1.3;";
         entry.innerHTML = `<span style="color:${color}; font-weight: 500;">${msg}</span>`;
         log.prepend(entry);
-        
+
         if (log.children.length > 8) {
             log.removeChild(log.lastChild);
         }
+    }
+    // Mirror to tracker panel during wanderer combat
+    if (isCombatView && combatState.enemies.length > 0) {
+        logToTracker(msg, color);
     }
 }
 
@@ -8232,22 +8373,28 @@ function executePlayerAttack(target) {
 }
 
 function checkCombatEnd(target) {
+    updateCombatTracker(combatState.enemies);
+
     if (target.stats.hp <= 0) {
         logCombat("Enemy defeated!", '#ffd700');
-        
-        // Add Trophy (Power = Str + 4)
+
         const power = (target.stats.str || 1) + 4;
         game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: target.name });
-        
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
-        setTimeout(() => spawnLootDrop(target.mesh.position), 1000);
+        spawnCorpse(target);
+
+        // Multi-enemy: are there still living enemies?
+        const aliveEnemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
+        if (aliveEnemies.length > 0) {
+            logCombat(`${aliveEnemies.length} enem${aliveEnemies.length > 1 ? 'ies remain' : 'y remains'}!`, '#ff8800');
+            setTimeout(startEnemyTurn, 1500);
+        } else {
+            setTimeout(() => window.exitBattleIsland(), 1500);
+        }
     } else if (game.hp <= 0) {
         gameOver();
     } else {
-        // 6. End Turn -> Enemy Turn
-        setTimeout(() => {
-            startEnemyTurn();
-        }, 1000);
+        setTimeout(startEnemyTurn, 1000);
     }
 }
 
@@ -8268,9 +8415,16 @@ window.commandDefend = function () {
 function startEnemyTurn() {
     combatState.turn = 'enemy';
     updateMovementIndicator(); // Hide player indicator
-    logCombat("Enemy turn...");
 
-    if (!activeWanderer || !activeWanderer.mesh) {
+    // Pick the current enemy from the alive roster
+    const aliveEnemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
+    if (aliveEnemies.length === 0) { endEnemyTurn(); return; }
+    const idx = Math.min(combatState.activeEnemyIdx, aliveEnemies.length - 1);
+    activeWanderer = aliveEnemies[idx];
+
+    logCombat(`${(activeWanderer.filename || 'Enemy').replace(/-web\.glb$/, '').replace(/-true/, '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} acts...`);
+
+    if (!activeWanderer.mesh) {
         endEnemyTurn();
         return;
     }
@@ -8317,41 +8471,38 @@ function startEnemyTurn() {
         logMsg(`${enemy.name} is trying to escape!`);
         spawnFloatingText("FLEEING!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
         
-        // Calculate flee target (away from center)
-        const center = new THREE.Vector3(2000, 2000, 2000);
-        const dirFromCenter = new THREE.Vector3().subVectors(enemy.mesh.position, center).normalize();
-        dirFromCenter.y = 0;
-        
-        // Target edge (radius ~25)
-        const fleeTarget = center.clone().add(dirFromCenter.multiplyScalar(25));
-        
-        // Dash speed for enemy (Double standard 6.0)
-        const dashSpeed = 12.0; 
-        
-        enemy.mesh.lookAt(fleeTarget);
+        // Flee directly away from the player (works on main map and any arena)
+        const fleeDir = new THREE.Vector3()
+            .subVectors(enemy.mesh.position, playerObj.position)
+            .normalize();
+        fleeDir.y = 0;
+
+        const dashSpeed = 12.0;
+        const targetPos = enemy.mesh.position.clone().add(fleeDir.multiplyScalar(dashSpeed));
+
+        enemy.mesh.lookAt(targetPos);
         if (enemy.actions.walk) enemy.actions.walk.play();
         if (enemy.actions.idle) enemy.actions.idle.stop();
-        
-        const distToEdge = enemy.mesh.position.distanceTo(fleeTarget);
-        const moveDist = Math.min(distToEdge, dashSpeed);
-        
-        const targetPos = enemy.mesh.position.clone().add(dirFromCenter.multiplyScalar(moveDist));
 
         new TWEEN.Tween(enemy.mesh.position)
             .to({ x: targetPos.x, z: targetPos.z }, 1000)
             .easing(TWEEN.Easing.Quadratic.Out)
-            .onUpdate(() => {
-                 // Snap Y logic handled by existing raycaster if needed, or assume flat for flee
-            })
             .onComplete(() => {
-                const dist = enemy.mesh.position.distanceTo(center);
-                if (dist > 20) {
-                    logMsg(`${enemy.name} escaped!`);
-                    spawnFloatingText("ESCAPED", window.innerWidth/2, window.innerHeight/2, '#ff0000');
-                    window.exitBattleIsland(); // End combat without loot
-                } else {
-                    endEnemyTurn();
+                const distFromPlayer = enemy.mesh.position.distanceTo(playerObj.position);
+                if (distFromPlayer > 15) {
+                    // Far enough — remove this enemy from the fight
+                    const idx = combatState.enemies.indexOf(enemy);
+                    if (idx > -1) combatState.enemies.splice(idx, 1);
+                    const wIdx = wanderers.indexOf(enemy);
+                    if (wIdx > -1) wanderers.splice(wIdx, 1);
+                    if (enemy.mesh.parent) enemy.mesh.parent.remove(enemy.mesh);
+                    logMsg(`${enemy.filename.replace(/-web\.glb$/, '')} escaped!`);
+                    spawnFloatingText("FLED!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+                    // If no enemies left, end combat
+                    const remaining = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
+                    if (remaining.length === 0) { window.exitBattleIsland(); return; }
                 }
+                endEnemyTurn();
             })
             .start();
         return;
@@ -8482,7 +8633,7 @@ function executeEnemyAttack(enemy) {
             } else if (enemy.stats.hp <= 0) {
                 logCombat("Enemy defeated by counter!", '#ffd700');
                 spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
-                setTimeout(() => spawnLootDrop(enemy.mesh.position), 1000);
+                spawnCorpse(enemy);
             } else {
                 endEnemyTurn();
             }
@@ -8492,14 +8643,25 @@ function executeEnemyAttack(enemy) {
 
 function endEnemyTurn() {
     setTimeout(() => {
-        combatState.turn = 'player';
-        combatState.currentMove = combatState.maxMove;
-        combatState.canAttack = true;
-        combatState.isDashing = false;
-        combatState.isDefending = false; // Reset defense
-        // Guts state persists until used
-        updateMovementIndicator();
-        logCombat("Player turn.");
+        // Advance to the next living enemy in the roster
+        const aliveEnemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
+        combatState.activeEnemyIdx++;
+
+        if (combatState.activeEnemyIdx < aliveEnemies.length) {
+            // More enemies still need their turn
+            activeWanderer = aliveEnemies[combatState.activeEnemyIdx];
+            startEnemyTurn();
+        } else {
+            // All enemies done — reset index and return to player
+            combatState.activeEnemyIdx = 0;
+            combatState.turn = 'player';
+            combatState.currentMove = combatState.maxMove;
+            combatState.canAttack = true;
+            combatState.isDashing = false;
+            combatState.isDefending = false;
+            updateMovementIndicator();
+            logCombat("Player turn.");
+        }
     }, 1000);
 }
 

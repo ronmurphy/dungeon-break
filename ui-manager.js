@@ -1046,6 +1046,134 @@ export function hideCombatMenu() {
     if (menu) menu.style.left = '-350px';
 }
 
+export function showCombatMenu() {
+    let menu = document.getElementById('combatMenuGrid');
+    if (!menu) {
+        createCombatMenu();
+        menu = document.getElementById('combatMenuGrid');
+    }
+    updateCombatMenu('main');
+    // Small delay so the DOM settles before the CSS transition fires
+    requestAnimationFrame(() => { menu.style.left = '20px'; });
+}
+
+// Color palette — each enemy in a fight gets one of these
+export const COMBAT_COLORS = [
+    { hex: 0xff4444, css: '#ff4444' }, // red
+    { hex: 0x44aaff, css: '#44aaff' }, // blue
+    { hex: 0xff8800, css: '#ff8800' }, // orange
+    { hex: 0xaa44ff, css: '#aa44ff' }, // purple
+    { hex: 0x00ff88, css: '#00ff88' }, // green
+    { hex: 0xffdd00, css: '#ffdd00' }, // yellow
+    { hex: 0xff44aa, css: '#ff44aa' }, // pink
+    { hex: 0x00ffff, css: '#00ffff' }, // cyan
+];
+
+export function showCombatTracker(enemies) {
+    removeCombatTracker();
+
+    const panel = document.createElement('div');
+    panel.id = 'combatTracker';
+    panel.style.cssText = `
+        position: fixed; bottom: 20px; right: 20px;
+        display: flex; flex-direction: column; gap: 6px;
+        z-index: 6001; pointer-events: none;
+        font-family: 'Cinzel', serif; min-width: 240px;
+    `;
+
+    // --- Enemy rows ---
+    enemies.forEach((w, i) => {
+        const color = COMBAT_COLORS[i % COMBAT_COLORS.length];
+        w._combatColor = color;
+
+        const name = (w.filename || 'Enemy')
+            .replace(/-web\.glb$/, '').replace(/-true/, '')
+            .replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+        const hp = w.stats ? w.stats.hp : '?';
+        const maxHp = w.stats ? (w.stats.maxHp || w.stats.hp) : '?';
+        const pct = w.stats ? Math.max(0, (w.stats.hp / w.stats.maxHp) * 100) : 100;
+        const barColor = pct > 50 ? '#00cc44' : pct > 25 ? '#ffaa00' : '#ff3300';
+
+        const row = document.createElement('div');
+        row.id = `tracker_enemy_${i}`;
+        row.style.cssText = `
+            display: flex; align-items: center; gap: 8px;
+            background: rgba(10,10,10,0.92);
+            border: 1px solid ${color.css}; border-left: 4px solid ${color.css};
+            padding: 6px 10px;
+            box-shadow: 0 0 12px ${color.css}44;
+            cursor: pointer; pointer-events: auto;
+            transition: background 0.15s;
+        `;
+        row.onmouseenter = () => { row.style.background = `rgba(30,30,30,0.98)`; row.style.boxShadow = `0 0 18px ${color.css}88`; };
+        row.onmouseleave = () => { row.style.background = `rgba(10,10,10,0.92)`; row.style.boxShadow = `0 0 12px ${color.css}44`; };
+        row.onclick = () => { if (window.selectCombatTarget) window.selectCombatTarget(i); };
+
+        row.innerHTML = `
+            <div style="width:12px;height:12px;border-radius:50%;background:${color.css};flex-shrink:0;box-shadow:0 0 6px ${color.css};"></div>
+            <div style="flex:1;">
+                <div style="font-size:0.7rem; color:#ddd; margin-bottom:3px; letter-spacing:0.05em;">${name}</div>
+                <div style="background:#1a1a1a; height:7px; border-radius:3px; overflow:hidden;">
+                    <div id="tracker_hp_${i}" style="height:100%; width:${pct}%; background:${barColor}; transition:width 0.4s, background 0.4s;"></div>
+                </div>
+                <div id="tracker_hpval_${i}" style="font-size:0.6rem; color:#777; margin-top:2px;">${hp} / ${maxHp} HP</div>
+            </div>
+        `;
+        panel.appendChild(row);
+    });
+
+    // --- Separator ---
+    const sep = document.createElement('div');
+    sep.style.cssText = `height:1px; background:rgba(212,175,55,0.3); margin:2px 0;`;
+    panel.appendChild(sep);
+
+    // --- Log section (last 3 messages) ---
+    const logSection = document.createElement('div');
+    logSection.id = 'trackerLog';
+    logSection.style.cssText = `
+        background: rgba(8,8,8,0.92);
+        border: 1px solid rgba(212,175,55,0.4); border-left: 3px solid rgba(212,175,55,0.6);
+        padding: 6px 10px;
+        font-family: 'Crimson Text', serif; font-size: 0.9rem;
+        min-height: 48px;
+        display: flex; flex-direction: column-reverse; gap: 2px;
+        pointer-events: none;
+    `;
+    panel.appendChild(logSection);
+
+    document.body.appendChild(panel);
+}
+
+export function updateCombatTracker(enemies) {
+    if (!enemies) return;
+    enemies.forEach((w, i) => {
+        const bar = document.getElementById(`tracker_hp_${i}`);
+        const val = document.getElementById(`tracker_hpval_${i}`);
+        if (!w.stats || !bar) return;
+        const pct = Math.max(0, (w.stats.hp / w.stats.maxHp) * 100);
+        const barColor = pct > 50 ? '#00cc44' : pct > 25 ? '#ffaa00' : '#ff3300';
+        bar.style.width = pct + '%';
+        bar.style.background = barColor;
+        if (val) val.textContent = `${Math.max(0, w.stats.hp)} / ${w.stats.maxHp} HP`;
+    });
+}
+
+export function logToTracker(msg, color = '#ccc') {
+    const log = document.getElementById('trackerLog');
+    if (!log) return;
+    const entry = document.createElement('div');
+    entry.style.cssText = `color:${color}; line-height:1.3; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
+    entry.textContent = msg;
+    log.prepend(entry);
+    while (log.children.length > 3) log.removeChild(log.lastChild);
+}
+
+export function removeCombatTracker() {
+    const el = document.getElementById('combatTracker');
+    if (el) el.remove();
+}
+
 const COMBAT_PAGES = {
     main: [
         { name: 'Attack', icon: 'icon_attack.png', fn: "window.commandAttack()" },
