@@ -7851,25 +7851,30 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
 
     // Add text label to dice (Billboard)
     const canvas = document.createElement('canvas');
-    canvas.width = 64; canvas.height = 64;
+    canvas.width = 128; canvas.height = 128;
     const ctx = canvas.getContext('2d');
-    
+
     const drawNum = (n) => {
-        ctx.clearRect(0, 0, 64, 64);
+        ctx.clearRect(0, 0, 128, 128);
         ctx.fillStyle = 'white';
-        ctx.font = 'bold 40px Cinzel, sans-serif';
+        ctx.font = 'bold 72px Arial, sans-serif'; // Arial guaranteed to load; Cinzel may not be ready on canvas
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.strokeStyle = 'black';
-        ctx.lineWidth = 4;
-        ctx.strokeText(n, 32, 32);
-        ctx.fillText(n, 32, 32);
+        ctx.lineWidth = 8;
+        ctx.strokeText(n, 64, 64);
+        ctx.fillText(n, 64, 64);
     };
     drawNum(sides); // Start showing max value
 
     const tex = new THREE.CanvasTexture(canvas);
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
-    label.scale.set(0.5, 0.5, 0.5);
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex,
+        transparent: true,
+        depthTest: false   // Don't let the dice geometry occlude its own number
+    }));
+    label.scale.set(0.65, 0.65, 0.65);
+    label.renderOrder = 999; // Draw after everything else so it's never buried
     dice.add(label);
 
     // Add Name Label (Above Die)
