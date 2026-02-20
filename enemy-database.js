@@ -8,7 +8,15 @@ export const ENEMY_DATA = {
     'skeleton-viking': { name: "Skeletal Viking", hp: 12, ac: 2, str: 2, xp: 15 },
     'ironjaw': { name: "Ironjaw", hp: 15, ac: 2, str: 3, xp: 20 },
     'human': { name: "Bandit", hp: 20, ac: 1, str: 2, xp: 25 },
-    'evil': { name: "Cultist", hp: 30, ac: 3, str: 4, xp: 40 }
+    'evil': { name: "Cultist", hp: 30, ac: 3, str: 4, xp: 40 },
+    'king': { name: "King", hp: 50, ac: 5, str: 5, xp: 100 },
+    'queen': { name: "Queen", hp: 45, ac: 4, str: 4, xp: 80 },
+    'sorceress': { name: "Sorceress", hp: 35, ac: 3, str: 3, xp: 60 },
+    'assassin': { name: "Assassin", hp: 25, ac: 2, str: 4, xp: 50 },
+    'female_twin': { name: "F. Twin", hp: 30, ac: 3, str: 3, xp: 60 },
+    'male_twin': { name: "M. Twin", hp: 30, ac: 3, str: 3, xp: 60 }
+
+
 };
 
 export function getEnemyStats(filename) {
@@ -17,6 +25,12 @@ export function getEnemyStats(filename) {
     const lower = filename.toLowerCase();
     if (lower.includes('skeleton')) return { ...ENEMY_DATA['skeleton'] };
     if (lower.includes('viking')) return { ...ENEMY_DATA['skeleton-viking'] };
+    if (lower.includes('king')) return { ...ENEMY_DATA['king'] };
+    if (lower.includes('queen')) return { ...ENEMY_DATA['queen'] };
+    if (lower.includes('sorceress')) return { ...ENEMY_DATA['sorceress'] };
+    if (lower.includes('assassin')) return { ...ENEMY_DATA['assassin'] };
+    if (lower.includes('female_twin')) return { ...ENEMY_DATA['female_twin'] };
+    if (lower.includes('male_twin')) return { ...ENEMY_DATA['male_twin'] };
     if (lower.includes('ironjaw')) return { ...ENEMY_DATA['ironjaw'] };
     if (lower.includes('evil')) return { ...ENEMY_DATA['evil'] };
     if (lower.includes('male') || lower.includes('female')) return { ...ENEMY_DATA['human'] };

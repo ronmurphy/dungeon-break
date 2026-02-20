@@ -139,7 +139,8 @@ const WANDERER_MODELS = [
     'female_evil-web.glb', 'female_evil-true-web.glb',
     'male_evil-web.glb', 'male_evil-true-web.glb',
     'ironjaw-web.glb',
-    'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb', 'SkeletalViking-web.glb'
+    'Gwark-web.glb', 'gremlinn.glb', 'Stolem.glb', 'SkeletalViking-web.glb',
+    'king-web.glb', 'queen-web.glb', 'sorceress-web.glb', 'assassin-web.glb'
 ];
 
 // List of models to display in Gallery Mode (editmap)
@@ -155,10 +156,10 @@ const GALLERY_MODELS = [
     'Emberwatch_Tower-web.glb',
     'gothic_tower-web.glb',
     'openchest-web.glb',
-    'room_dome-web.glb',
+    // 'room_dome-web.glb',
     'room_rect-web.glb',
     'room_round-web.glb',
-    'room_secret-web.glb',
+    // 'room_secret-web.glb',
     'room_spire-web.glb',
     'Spiralwood_Tower-web.glb',
     'Stone_Wat-web.glb',
@@ -166,7 +167,8 @@ const GALLERY_MODELS = [
     'waypoint-web.glb',
     'Whispering_Manor-web.glb',
     'Whispering_Obelisk-marker-web.glb',
-    'duck-web.glb'
+    'duck-web.glb',
+    'Stone_Wat-web.glb'
 ];
 
 const terrainRaycaster = new THREE.Raycaster();

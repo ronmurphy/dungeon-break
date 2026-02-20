@@ -512,7 +512,7 @@ function updateMapHUD() {
                     crossbowBadge = document.createElement('div');
                     crossbowBadge.className = 'ranger-crossbow-badge';
                     crossbowBadge.title = 'Crossbow (Permanent — Ranger)';
-                    crossbowBadge.style.cssText = 'position:absolute; bottom:0; right:0; width:22px; height:22px; background:rgba(0,0,0,0.75); border:1px solid #00cc44; border-radius:2px; pointer-events:none;';
+                    crossbowBadge.style.cssText = 'position:absolute; bottom:-24px; right:-20px; width:44px; height:44px; background:rgba(0,0,0,0.75); border:1px solid #00cc44; border-radius:2px; pointer-events:none;';
                     crossbowBadge.innerHTML = '<img src="assets/images/crossbow.png" style="width:100%; height:100%; object-fit:contain;">';
                     mapWepBtn.appendChild(crossbowBadge);
                 }

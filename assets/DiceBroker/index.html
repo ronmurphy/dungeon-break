@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Dice Broker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@400;600;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="ember-layer"></div>
+
+  <!-- SETUP SCREEN -->
+  <div id="setup-screen" class="screen active">
+    <div class="setup-bg"></div>
+    <div class="setup-inner">
+      <div class="title-block">
+        <div class="candle-row">
+          <div class="candle"><div class="flame"></div></div>
+          <div class="title-fence">⸻✦✦✦⸻</div>
+          <div class="candle"><div class="flame"></div></div>
+        </div>
+        <h1 class="main-title">DICE<br>BROKER</h1>
+        <p class="title-sub">Where Fortunes Are Cast in Shadow</p>
+        <div class="title-divider"></div>
+      </div>
+
+      <div class="setup-card">
+        <div class="opt-group">
+          <div class="opt-label">⚔ STAKE</div>
+          <div class="opt-row" id="diff-group">
+            <button class="s-btn active" data-v="easy"><span class="s-title">Brawl</span><span class="s-sub">1× D100</span></button>
+            <button class="s-btn" data-v="medium"><span class="s-title">Outlaw</span><span class="s-sub">3× D100</span></button>
+            <button class="s-btn" data-v="hard"><span class="s-title">Long Night</span><span class="s-sub">5× D100</span></button>
+          </div>
+        </div>
+        <div class="opt-group">
+          <div class="opt-label">🍺 RIVALS</div>
+          <div class="opt-row" id="opp-group">
+            <button class="s-btn" data-v="1">1</button>
+            <button class="s-btn active" data-v="2">2</button>
+            <button class="s-btn" data-v="3">3</button>
+            <button class="s-btn" data-v="4">4</button>
+          </div>
+        </div>
+        <div class="rules-box">
+          <div class="rules-title">House Rules</div>
+          <ul class="rules-ul">
+            <li>All start with a <b>D4</b>, protected until first win</li>
+            <li>Tap dice in your rack to select them for rolling</li>
+            <li>Roll <b>all</b> your dice for max power — but risk losing any</li>
+            <li>Winner: <b>Duplicate</b> a die or <b>Upgrade</b> to next rank</li>
+            <li>Losers drop a die into the pool. Run dry — eliminated!</li>
+            <li>First to collect the target D100s wins everything!</li>
+          </ul>
+          <div class="upgrade-chain">
+            <span style="color:#e84040">D4</span><span class="ch-arr">›</span>
+            <span style="color:#e87820">D6</span><span class="ch-arr">›</span>
+            <span style="color:#d4b800">D8</span><span class="ch-arr">›</span>
+            <span style="color:#28c8e8">D10</span><span class="ch-arr">›</span>
+            <span style="color:#28d890">D12</span><span class="ch-arr">›</span>
+            <span style="color:#8870f8">D20</span><span class="ch-arr">›</span>
+            <span style="color:#e850a8">D100</span>
+          </div>
+        </div>
+        <button id="start-btn" class="roll-btn">Roll the Bones!</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GAME SCREEN -->
+  <div id="game-screen" class="screen">
+    <div class="game-bg"></div>
+
+    <!-- TOP BAR -->
+    <div id="top-bar">
+      <div class="top-logo">DICE BROKER</div>
+      <div id="round-label" class="round-pill">Round 1</div>
+      <div class="top-right-info">
+        <span id="diff-pill" class="diff-pill"></span>
+        <span id="target-pill"></span>
+      </div>
+    </div>
+
+    <!-- LEADERBOARD -->
+    <div id="leader-strip"></div>
+
+    <!-- MAIN PLAY AREA -->
+    <div id="mid-area">
+
+      <!-- Rolling Tray (center/left) -->
+      <div id="tray-wrap">
+        <div class="zone-label">ROLLING TRAY</div>
+        <canvas id="tray-canvas"></canvas>
+        <div id="tray-overlay">
+          <div id="tray-hint" class="tray-hint">Tap dice from rack to select →</div>
+          <div id="tray-result" class="tray-result hidden"></div>
+        </div>
+      </div>
+
+      <!-- Dice Rack (right) -->
+      <div id="rack-wrap">
+        <div class="zone-label">YOUR RACK</div>
+        <div id="rack-slots"></div>
+      </div>
+
+    </div>
+
+    <!-- BOTTOM ACTION BAR -->
+    <div id="bottom-bar">
+      <div id="selected-row">
+        <span class="sel-label">Selected:</span>
+        <div id="sel-chips"></div>
+        <span id="sel-none">tap dice above</span>
+      </div>
+
+      <div id="phase-roll" class="phase-block hidden">
+        <button id="roll-btn" class="roll-btn">ROLL</button>
+      </div>
+      <div id="phase-choice" class="phase-block hidden">
+        <div class="choice-title">⚔ Victory! Choose reward:</div>
+        <div id="choice-btns"></div>
+      </div>
+      <div id="phase-continue" class="phase-block hidden">
+        <button id="continue-btn" class="roll-btn roll-btn-secondary">Next Round →</button>
+      </div>
+    </div>
+
+    <!-- LOG -->
+    <div id="log-panel">
+      <div id="log-header-row">
+        <span class="log-title-text">📜 Chronicle</span>
+        <button id="log-toggle" class="log-toggle-btn">▲</button>
+      </div>
+      <div id="log-body"></div>
+    </div>
+  </div>
+
+  <!-- WIN SCREEN -->
+  <div id="win-screen" class="screen">
+    <div class="game-bg"></div>
+    <div id="win-shower"></div>
+    <div class="win-wrap">
+      <div id="win-icon"></div>
+      <h1 id="win-headline"></h1>
+      <p id="win-sub"></p>
+      <div id="win-stats"></div>
+      <div id="pool-claim" class="pool-claim hidden">
+        <div class="pc-title">⚜ You Claimed the Pool ⚜</div>
+        <div id="pc-dice"></div>
+      </div>
+      <button id="play-again" class="roll-btn">Return to Tavern</button>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
