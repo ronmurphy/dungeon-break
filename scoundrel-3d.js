@@ -8065,6 +8065,25 @@ window.commandDash = function() {
     if (window.openMainMenu) window.openMainMenu(); // Return to main menu
 };
 
+// Returns true if the equipped weapon is blunt (no cutting edge — can't cause bleed)
+function isBluntWeapon() {
+    const w = game.equipment.weapon;
+    return w && (w.id === 'hammer' || w.id === 'mace');
+}
+
+// Apply or refresh a bleed effect on a wanderer target
+function inflictBleed(target, dmgPerTurn = 2, turns = 3) {
+    if (!target || !target.stats) return;
+    // Refresh if already bleeding (take the stronger of the two)
+    const existing = target.stats.bleed;
+    if (existing && existing.dmgPerTurn >= dmgPerTurn && existing.turnsLeft >= turns) return;
+    target.stats.bleed = { dmgPerTurn, turnsLeft: turns };
+    const name = target.name || 'Enemy';
+    logCombat(`${name} is bleeding! (${dmgPerTurn} dmg × ${turns} turns)`, '#ff4444');
+    spawnFloatingText('BLEED!', window.innerWidth / 2 + 100, window.innerHeight / 2 - 60, '#ff4444', 22);
+    updateCombatTracker(combatState.enemies);
+}
+
 function executePlayerSkill(target) {
     if (!combatState.activeSkill) return;
     
@@ -8196,7 +8215,11 @@ function executePlayerAttack(target) {
         spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ffaa00');
         
         target.stats.hp -= damage;
-        
+
+        // Guts strike always shakes the world and causes bleed (regardless of weapon type)
+        triggerShake(18, 25);
+        inflictBleed(target, 3, 3);
+
         // Reset Guts state
         combatState.gutsCharge = 0;
         combatState.gutsStacks = 0;
@@ -8329,16 +8352,21 @@ function executePlayerAttack(target) {
             if (isCrit) {
                 spawnFloatingText("CRITICAL!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
                 triggerShake(20, 30); // Intense shake
+                // Crits cause bleed unless weapon is blunt
+                if (!isBluntWeapon()) inflictBleed(target, 2, 3);
                 // Spawn extra particles
-                spawnAboveModalTexture('spark_01.png', window.innerWidth/2, window.innerHeight/2, 30, { 
-                    tint: '#ffd700', blend: 'lighter', sizeRange: [20, 60], spread: 80, decay: 0.03 
+                spawnAboveModalTexture('spark_01.png', window.innerWidth/2, window.innerHeight/2, 30, {
+                    tint: '#ffd700', blend: 'lighter', sizeRange: [20, 60], spread: 80, decay: 0.03
                 });
+            } else if (!isBluntWeapon() && Math.random() < 0.15) {
+                // Regular hits: 15% chance of a light bleed on edged weapons
+                inflictBleed(target, 1, 2);
             }
 
             // Player Hits
-            spawnFloatingText("HIT!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for hit
+            spawnFloatingText("HIT!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00');
             target.stats.hp -= result.damage;
-            spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
+            spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
             logCombat(`Player hits! (Roll ${result.attacker.total} vs ${result.defender.total})`, '#0f0');
             logCombat(`> Dealt ${result.damage} dmg`, '#fff');
 
@@ -8431,6 +8459,26 @@ function startEnemyTurn() {
 
     const enemy = activeWanderer;
     const playerObj = playerMesh;
+
+    // --- BLEED TICK ---
+    if (enemy.stats.bleed && enemy.stats.bleed.turnsLeft > 0) {
+        const bd = enemy.stats.bleed.dmgPerTurn;
+        enemy.stats.hp -= bd;
+        enemy.stats.bleed.turnsLeft--;
+        const turnsLeft = enemy.stats.bleed.turnsLeft;
+        logCombat(`${enemy.name || 'Enemy'} bleeds for ${bd} dmg! (${turnsLeft} turn${turnsLeft !== 1 ? 's' : ''} left)`, '#ff4444');
+        spawnFloatingText(`BLEED -${bd}`, window.innerWidth / 2 + 100, window.innerHeight / 2 - 40, '#ff4444', 22);
+        if (enemy.healthBar) enemy.healthBar.scale.x = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
+        if (turnsLeft <= 0) delete enemy.stats.bleed;
+        updateCombatTracker(combatState.enemies);
+        // Bleed may finish them before they even act
+        if (enemy.stats.hp <= 0) {
+            logCombat(`${enemy.name || 'Enemy'} bled out!`, '#ff4444');
+            checkCombatEnd(enemy);
+            return;
+        }
+    }
+
     const dist = enemy.mesh.position.distanceTo(playerObj.position);
     const attackRange = 2.0;
     const moveSpeed = 6.0;

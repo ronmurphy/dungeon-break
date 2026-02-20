@@ -1155,7 +1155,11 @@ export function updateCombatTracker(enemies) {
         const barColor = pct > 50 ? '#00cc44' : pct > 25 ? '#ffaa00' : '#ff3300';
         bar.style.width = pct + '%';
         bar.style.background = barColor;
-        if (val) val.textContent = `${Math.max(0, w.stats.hp)} / ${w.stats.maxHp} HP`;
+        if (val) {
+            const bleed = w.stats.bleed && w.stats.bleed.turnsLeft > 0;
+            val.innerHTML = `${Math.max(0, w.stats.hp)} / ${w.stats.maxHp} HP`
+                + (bleed ? ` <span style="color:#ff4444;">🩸×${w.stats.bleed.turnsLeft}</span>` : '');
+        }
     });
 }
 
