@@ -38,6 +38,8 @@ let scene, camera, renderer, composer, renderPass, controls, raycaster, mouse;
 let perspectiveCamera; // New camera for Immersive mode
 let hTilt, vTilt, bloomPass;
 let playerMarker; // Crystal marker
+let torchGlowOuter; // Ground light decal — 3.5-unit pool, dims with fuel
+let torchGlowInner; // Ground light decal — 1.5-unit bright centre
 let enemyRangeIndicator; // Red circle for enemy movement
 let movementRangeIndicator; // Green circle for combat movement
 let meleeRangeIndicator; // Red ring for melee range
@@ -1201,6 +1203,41 @@ function init3D() {
     playerMarker.add(markerLight.target);
 
     scene.add(playerMarker);
+
+    // Ground Torch Glow — flat additive texture decal sitting just above the floor.
+    // Follows the player and dims/shifts colour as torchCharge depletes.
+    // Uses AdditiveBlending so it brightens whatever is under it; no dynamic lights needed.
+    const _glowLoader = new THREE.TextureLoader();
+
+    // Outer pool — 3.5 × 3.5 units, warm soft blob
+    const glowOuterGeo = new THREE.PlaneGeometry(3.5, 3.5);
+    const glowOuterMat = new THREE.MeshBasicMaterial({
+        map: _glowLoader.load('assets/images/textures/light_01.png'),
+        transparent: true,
+        opacity: 0.6,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        color: 0xffbb44
+    });
+    torchGlowOuter = new THREE.Mesh(glowOuterGeo, glowOuterMat);
+    torchGlowOuter.rotation.x = -Math.PI / 2;
+    torchGlowOuter.renderOrder = 1;
+    scene.add(torchGlowOuter);
+
+    // Inner hotspot — 1.5 × 1.5 units, brighter white centre
+    const glowInnerGeo = new THREE.PlaneGeometry(1.5, 1.5);
+    const glowInnerMat = new THREE.MeshBasicMaterial({
+        map: _glowLoader.load('assets/images/textures/light_02.png'),
+        transparent: true,
+        opacity: 0.4,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        color: 0xffffff
+    });
+    torchGlowInner = new THREE.Mesh(glowInnerGeo, glowInnerMat);
+    torchGlowInner.rotation.x = -Math.PI / 2;
+    torchGlowInner.renderOrder = 2;
+    scene.add(torchGlowInner);
 
     // Movement Range Indicator (Combat)
     const rangeGeo = new THREE.CircleGeometry(1, 64);
@@ -2445,13 +2482,15 @@ function animate3D() {
     }
 
     // Azure Flame proximity (Start Room — always present, never cleared)
+    // Trigger whenever the player walks close enough; modal's own presence prevents re-firing.
+    // The 'leave' handler already nudges the player outside range, so no extra cooldown needed.
     if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
         const azureRoom = game.rooms.find(r => r.id === 0);
         const modal = document.getElementById('combatModal');
         const modalOpen = modal && modal.style.display === 'flex';
-        if (azureRoom && game.currentRoomIdx !== 0 && !modalOpen) {
+        if (azureRoom && !modalOpen) {
             const dist = Math.hypot(azureRoom.gx - playerObj.position.x, azureRoom.gy - playerObj.position.z);
-            if (dist < 1.5) {
+            if (dist < 3.0) {
                 game.activeRoom = azureRoom;
                 showAzureFlamePrompt();
             }
@@ -2530,6 +2569,35 @@ function animate3D() {
                 light.intensity = 500 + Math.sin(Date.now() * 0.003) * 150;
             }
         }
+    }
+
+    // Ground Torch Glow — follows player, dims & shifts colour with torch fuel
+    if (torchGlowOuter && playerObj) {
+        const fuelPct = Math.max(0, Math.min(1, (game.torchCharge || 0) / 100));
+
+        // Gentle irregular flicker (slower and subtler than the torchLight flicker)
+        const flicker = 1.0 + Math.sin(Date.now() * 0.0011) * 0.06 + Math.sin(Date.now() * 0.0023) * 0.04;
+
+        // Opacity: full fuel = 0.60, empty = 0.04 (barely a ghost)
+        torchGlowOuter.material.opacity = (0.04 + fuelPct * 0.56) * flicker;
+        // Inner bright centre vanishes faster — gone before torch runs out
+        torchGlowInner.material.opacity = Math.max(0, (fuelPct - 0.1) * 0.44) * flicker;
+
+        // Colour: warm amber (#ffbb44) at full → dim red-orange at low
+        const g = 0.30 + fuelPct * 0.43; // 0.30 → 0.73
+        const b = fuelPct * 0.12;        // 0    → 0.12
+        torchGlowOuter.material.color.setRGB(1.0, g, b);
+
+        // Position just above the floor — the inner sits one sliver higher to always win z
+        const groundY = playerObj.position.y + 0.05;
+        torchGlowOuter.position.set(playerObj.position.x, groundY,       playerObj.position.z);
+        torchGlowInner.position.set(playerObj.position.x, groundY + 0.01, playerObj.position.z);
+
+        // Visibility: hide in waypoints, attract mode, and during combat (battle island)
+        const _cr = game.rooms ? game.rooms.find(r => r.id === game.currentRoomIdx) : null;
+        const _glowHide = (_cr && _cr.isWaypoint) || isAttractMode || isCombatView;
+        torchGlowOuter.visible = !_glowHide;
+        torchGlowInner.visible = !_glowHide;
     }
 
     // Update Movement Indicator Position
@@ -2927,9 +2995,11 @@ function movePlayerTo(targetVec, isRunning = false) {
     const dist = startPos.distanceTo(targetVec);
     const duration = (dist / speed) * 1000;
 
-    // Consume Torch Fuel based on distance (Free Movement)
-    // Rate: 0.05 per unit (approx 0.5 per room-to-room travel)
-    game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.05));
+    // Consume Torch Fuel based on distance (Free Movement) — not during combat
+    // D&D turns are ~6 seconds; a torch doesn't meaningfully deplete in a fight
+    if (!isCombatView) {
+        game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.05));
+    }
     updateUI();
 
     // Calculate movement direction for the look-ahead raycast
@@ -3067,9 +3137,11 @@ function movePlayerSprite(oldId, newId) {
 
     audio.play('footstep', { volume: 0.4, rate: 0.9 + Math.random() * 0.2 });
 
-    // Consume Torch Fuel
-    game.torchCharge = Math.max(0, game.torchCharge - 0.2); // Reduced consumption for tile movement
-    if (game.torchCharge < 5) logMsg(`Torch is fading... (${game.torchCharge} left)`);
+    // Consume Torch Fuel — not during combat (D&D turns are ~6 seconds each)
+    if (!isCombatView) {
+        game.torchCharge = Math.max(0, game.torchCharge - 0.2);
+        if (game.torchCharge < 5) logMsg(`Torch is fading... (${game.torchCharge.toFixed(1)} left)`);
+    }
     updateUI();
 
     // Rotate to face target
@@ -4111,7 +4183,7 @@ window.handleAzureFlameChoice = function(choice) {
             const dz = playerObj.position.z - r.gy;
             const len = Math.sqrt(dx * dx + dz * dz) || 1;
             new TWEEN.Tween(playerObj.position)
-                .to({ x: r.gx + (dx / len) * 2.2, z: r.gy + (dz / len) * 2.2 }, 400)
+                .to({ x: r.gx + (dx / len) * 3.5, z: r.gy + (dz / len) * 3.5 }, 400)
                 .easing(TWEEN.Easing.Quadratic.Out)
                 .start();
         }
@@ -7464,6 +7536,14 @@ function restoreDecorations() {
 }
 
 // Prepares a wanderer for combat: stats, HP bar, LOD lock, stops patrol.
+/** Returns the display name for an enemy — uses stats.name if set, otherwise cleans up the filename. */
+function enemyDisplayName(w) {
+    if (w && w.stats && w.stats.name) return w.stats.name;
+    return (w && w.filename || 'Enemy')
+        .replace(/-web\.glb$/, '').replace(/\.glb$/, '').replace(/-true/, '')
+        .replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 // Safe to call on a wanderer that is already in combat (idempotent).
 function initWandererForCombat(wanderer) {
     // Stats (scaled by floor)
@@ -7525,8 +7605,7 @@ function startCombat(wanderer, isFlankAttack = false) {
         if (!combatState.enemies.includes(wanderer)) {
             combatState.enemies.push(wanderer);
             initWandererForCombat(wanderer);
-            const name = wanderer.filename.replace(/-web\.glb$/, '').replace(/-true/, '');
-            logMsg(`A ${name} joins the fight!`);
+            logMsg(`A ${enemyDisplayName(wanderer)} joins the fight!`);
             spawnFloatingText("REINFORCEMENT!", window.innerWidth / 2, window.innerHeight / 2 - 120, '#ff4400', 28);
             showCombatTracker(combatState.enemies); // Refresh tracker with new enemy
         }
@@ -7843,11 +7922,7 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
 
 
 function spawnCorpse(target) {
-    // Derive a readable display name from filename if .name isn't set
-    const displayName = target.name ||
-        (target.filename || 'Wanderer')
-            .replace(/-web\.glb$/, '').replace(/-true/, '').replace(/\.glb$/, '')
-            .replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const displayName = enemyDisplayName(target);
 
     const fuelReward = Math.max(10, Math.min(30, ((target.stats && target.stats.str) || 2) * 5));
 
@@ -8099,8 +8174,7 @@ function inflictBleed(target, dmgPerTurn = 2, turns = 3) {
     const existing = target.stats.bleed;
     if (existing && existing.dmgPerTurn >= dmgPerTurn && existing.turnsLeft >= turns) return;
     target.stats.bleed = { dmgPerTurn, turnsLeft: turns };
-    const name = target.name || 'Enemy';
-    logCombat(`${name} is bleeding! (${dmgPerTurn} dmg × ${turns} turns)`, '#ff4444');
+    logCombat(`${enemyDisplayName(target)} is bleeding! (${dmgPerTurn} dmg × ${turns} turns)`, '#ff4444');
     spawnFloatingText('BLEED!', window.innerWidth / 2 + 100, window.innerHeight / 2 - 60, '#ff4444', 22);
     updateCombatTracker(combatState.enemies);
 }
@@ -8554,7 +8628,7 @@ function executePlayerAttack(target) {
 
                 const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC);
                 spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Crossbow", () => {});
-                spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name || "Enemy", () => {
+                spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
                     if (res.winner === 'attacker') {
                         const isCrit = res.attacker.roll === res.attacker.config.sides;
                         if (isCrit) {
@@ -8600,7 +8674,7 @@ function executePlayerAttack(target) {
                 const res = CombatResolver.resolveClash(rockPower, enemyPower, 0, target.stats.ac || 10);
                 
                 spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xaaaaaa, { x: -1.5, y: -0.5 }, "Rock", () => {});
-                spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name, () => {
+                spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
                     
                     if (res.attacker.total > res.defender.total) {
                         // Hit - Fixed 1d4 damage
@@ -8655,7 +8729,7 @@ function executePlayerAttack(target) {
     spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, game.playerName || "You", () => { });
 
     // Enemy Dice (Right, Red) - Label: Enemy Name
-    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, target.name || "Enemy", () => {
+    spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
 
         // 4. Apply Result
         if (result.winner === 'attacker') {
@@ -8737,7 +8811,7 @@ function checkCombatEnd(target) {
         logCombat("Enemy defeated!", '#ffd700');
 
         const power = (target.stats.str || 1) + 4;
-        game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: target.name });
+        game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: enemyDisplayName(target) });
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
         spawnCorpse(target);
 
@@ -8780,7 +8854,7 @@ function startEnemyTurn() {
     const idx = Math.min(combatState.activeEnemyIdx, aliveEnemies.length - 1);
     activeWanderer = aliveEnemies[idx];
 
-    logCombat(`${(activeWanderer.filename || 'Enemy').replace(/-web\.glb$/, '').replace(/-true/, '').replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} acts...`);
+    logCombat(`${enemyDisplayName(activeWanderer)} acts...`);
 
     if (!activeWanderer.mesh) {
         endEnemyTurn();
@@ -8796,14 +8870,14 @@ function startEnemyTurn() {
         enemy.stats.hp -= bd;
         enemy.stats.bleed.turnsLeft--;
         const turnsLeft = enemy.stats.bleed.turnsLeft;
-        logCombat(`${enemy.name || 'Enemy'} bleeds for ${bd} dmg! (${turnsLeft} turn${turnsLeft !== 1 ? 's' : ''} left)`, '#ff4444');
+        logCombat(`${enemyDisplayName(enemy)} bleeds for ${bd} dmg! (${turnsLeft} turn${turnsLeft !== 1 ? 's' : ''} left)`, '#ff4444');
         spawnFloatingText(`BLEED -${bd}`, window.innerWidth / 2 + 100, window.innerHeight / 2 - 40, '#ff4444', 22);
         if (enemy.healthBar) enemy.healthBar.scale.x = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
         if (turnsLeft <= 0) delete enemy.stats.bleed;
         updateCombatTracker(combatState.enemies);
         // Bleed may finish them before they even act
         if (enemy.stats.hp <= 0) {
-            logCombat(`${enemy.name || 'Enemy'} bled out!`, '#ff4444');
+            logCombat(`${enemyDisplayName(enemy)} bled out!`, '#ff4444');
             checkCombatEnd(enemy);
             return;
         }
@@ -8812,7 +8886,7 @@ function startEnemyTurn() {
     // --- BLINDED CHECK (Artificer Flashbang) ---
     if (enemy.stats.blinded) {
         spawnFloatingText("BLINDED!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffff88');
-        logCombat(`${enemy.name || 'Enemy'} is blinded — stumbles helplessly!`, '#ffff88');
+        logCombat(`${enemyDisplayName(enemy)} is blinded — stumbles helplessly!`, '#ffff88');
         endEnemyTurn();
         return;
     }
@@ -8835,8 +8909,8 @@ function startEnemyTurn() {
     const canUseGuts = (enemy.stats.gutsStacks || 0) < 2;
     // 30% chance to use Guts if far away and healthy
     if (canUseGuts && dist > attackRange * 2 && hpPct > 0.5 && Math.random() < 0.3) {
-        spawnFloatingText(`${enemy.name} is charging Guts!`, window.innerWidth/2, window.innerHeight/2 + 50, '#ffaa00');
-        logCombat(`${enemy.name} is gathering power!`, '#ffaa00');
+        spawnFloatingText(`${enemyDisplayName(enemy)} is charging Guts!`, window.innerWidth/2, window.innerHeight/2 + 50, '#ffaa00');
+        logCombat(`${enemyDisplayName(enemy)} is gathering power!`, '#ffaa00');
         spawnFloatingText("GUTS!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
 
         if (!enemy.stats.gutsCharge) enemy.stats.gutsCharge = 0;
@@ -8854,7 +8928,7 @@ function startEnemyTurn() {
     // --- ENEMY FLEE LOGIC (Dash) ---
     // Flee if HP < 15% and NOT in True Dungeon (no escape there)
     if (hpPct <= 0.15 && !game.inTrueDungeon) {
-        logMsg(`${enemy.name} is trying to escape!`);
+        logMsg(`${enemyDisplayName(enemy)} is trying to escape!`);
         spawnFloatingText("FLEEING!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
         
         // Flee directly away from the player (works on main map and any arena)
@@ -8882,7 +8956,7 @@ function startEnemyTurn() {
                     const wIdx = wanderers.indexOf(enemy);
                     if (wIdx > -1) wanderers.splice(wIdx, 1);
                     if (enemy.mesh.parent) enemy.mesh.parent.remove(enemy.mesh);
-                    logMsg(`${enemy.filename.replace(/-web\.glb$/, '')} escaped!`);
+                    logMsg(`${enemyDisplayName(enemy)} escaped!`);
                     spawnFloatingText("FLED!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
                     // If no enemies left, end combat
                     const remaining = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
@@ -8933,7 +9007,7 @@ function startEnemyTurn() {
                 if (newDist <= attackRange) {
                     if (isDistracted) {
                         spawnFloatingText("?!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffaa00');
-                        logCombat(`${enemy.name || 'Enemy'} investigates... nobody there!`, '#aaa');
+                        logCombat(`${enemyDisplayName(enemy)} investigates... nobody there!`, '#aaa');
                         endEnemyTurn();
                     } else {
                         executeEnemyAttack(enemy);
@@ -8947,7 +9021,7 @@ function startEnemyTurn() {
         if (enemyRangeIndicator) enemyRangeIndicator.visible = false;
         if (isDistracted) {
             spawnFloatingText("?!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffaa00');
-            logCombat(`${enemy.name || 'Enemy'} investigates... nobody there!`, '#aaa');
+            logCombat(`${enemyDisplayName(enemy)} investigates... nobody there!`, '#aaa');
             endEnemyTurn();
         } else {
             executeEnemyAttack(enemy);
@@ -8965,7 +9039,7 @@ function executeEnemyAttack(enemy) {
         // --- ENEMY GUTS ATTACK ---
         if (enemy.stats.gutsCharge > 0) {
             const damage = enemy.stats.gutsCharge;
-            logCombat(`${enemy.name} unleashes its power for ${damage} damage!`, '#ff4400');
+            logCombat(`${enemyDisplayName(enemy)} unleashes its power for ${damage} damage!`, '#ff4400');
             spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff4400');
             
             takeDamage(damage);
@@ -8998,7 +9072,7 @@ function executeEnemyAttack(enemy) {
 
         // Spawn Dice
         spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, game.playerName || "You", () => { });
-        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemy.name || "Enemy", () => {
+        spawnDice3D(result.defender.config.sides, result.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(enemy), () => {
 
             if (result.winner === 'defender') { // Defender is Enemy here (Right side)
                 // Enemy Wins Clash (Hits Player)

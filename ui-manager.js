@@ -137,19 +137,25 @@ export function updateUI() {
     // Update Fuel
     const torchBar = document.getElementById('torchFuelBar');
     const mapFuelBar = document.getElementById('mapFuelBar');
-    const maxFuel = 30;
+    const maxFuel = 100; // torchCharge scale is 0–100; was wrongly set to 30
     const currentFuel = game.torchCharge || 0;
     const fuelPct = Math.min(100, (currentFuel / maxFuel) * 100);
 
+    // Smooth color: amber (high) → orange → red (critical)
+    const fuelColor = currentFuel <= 10 ? '#ff2222'
+        : currentFuel <= 25 ? '#ff5500'
+        : currentFuel <= 50 ? '#ff8800'
+        : '#ffaa44';
+
     if (torchBar) {
         torchBar.style.height = `${fuelPct}%`;
-        if (currentFuel <= 5) torchBar.style.background = '#ff4444';
-        else torchBar.style.background = '#ffaa44';
+        torchBar.style.background = fuelColor;
     }
     if (mapFuelBar) {
         mapFuelBar.style.height = `${fuelPct}%`;
-        if (currentFuel <= 5) mapFuelBar.style.background = '#ff4444';
-        else mapFuelBar.style.background = 'linear-gradient(to top, #ff4400, #ffaa44)';
+        mapFuelBar.style.background = currentFuel <= 10
+            ? '#ff2222'
+            : `linear-gradient(to top, ${fuelColor}, #ffcc66)`;
     }
 
     // Update Progress
@@ -326,9 +332,10 @@ function updateMapHUD() {
     const gpOpt = document.getElementById('gameplayOptionsBtn');
     if (gpOpt) {
         gpOpt.style.position = 'fixed';
-        gpOpt.style.right = '20px';
-        gpOpt.style.bottom = '20px';
-        gpOpt.style.left = 'auto'; // Unset left if it was set elsewhere
+        gpOpt.style.top = '20px';
+        gpOpt.style.left = '20px';
+        gpOpt.style.right = 'auto';
+        gpOpt.style.bottom = 'auto';
     }
 
     // Check for Gothic HUD (Once per session)
@@ -1102,9 +1109,12 @@ export function showCombatTracker(enemies) {
         const color = COMBAT_COLORS[i % COMBAT_COLORS.length];
         w._combatColor = color;
 
-        const name = (w.filename || 'Enemy')
-            .replace(/-web\.glb$/, '').replace(/-true/, '')
-            .replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        // Prefer the canonical name from the enemy database; fall back to filename munging
+        const name = (w.stats && w.stats.name)
+            ? w.stats.name
+            : (w.filename || 'Enemy')
+                .replace(/-web\.glb$/, '').replace(/-true/, '')
+                .replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
         const hp = w.stats ? w.stats.hp : '?';
         const maxHp = w.stats ? (w.stats.maxHp || w.stats.hp) : '?';
