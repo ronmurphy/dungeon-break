@@ -201,5 +201,35 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - [ ] **Height map** — Terrain elevation variation, new file, doesn't touch existing systems.
 - [ ] **Asset compression** — Any remaining GLBs without `-web` suffix need compression pipeline.
 
+### Weapon Sprite Sheet Reference (`weaponsfinal.png` — 20 cells, 128×128)
+Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–19 are the new additions.
+
+| Cell | Val | Name | Type | Notes |
+|---|---|---|---|---|
+| 0 | 2 | Knife | Edged | |
+| 1 | 3 | Club | Blunt | Cannot cause bleed. |
+| 2 | 4 | Dagger | Edged | |
+| 3 | 5 | Mace | Blunt | Cannot cause bleed. |
+| 4 | 6 | Scimitar | Edged | |
+| 5 | 7 | Long Sword | Edged | |
+| 6 | 8 | War Hammer | Blunt | Cannot cause bleed. |
+| 7 | 9 | Battle Axe | Edged | |
+| 8 | 10 | Halberd | Edged | |
+| 9 | 11 | Great Sword | Edged | |
+| 10 | 12 | War Scythe | Edged | Long-handled pitted steel blade, skull & vine engravings. |
+| 11 | 13 | Flail | Blunt | Heavy spiked iron ball on rusted chain, hooded-figure pommel. |
+| 12 | 14 | Rapier | Edged | Slender needle-blade, blackened silver thorn-and-rose hilt. |
+| 13 | 15 | Polearm | Edged | Ornate axe head + rune-etched spear point. |
+| 14 | 16 | Morningstar | Blunt | Star-shaped iron head, jagged spikes, gnarled wooden handle. |
+| 15 | 17 | Heavy Crossbow | Ranged | Dark wood & steel, skeletal and gargoyle motifs. |
+| 16 | 18 | War Pick | Edged | Armor-piercing curved point + heavy hammer face. |
+| 17 | 19 | Claymore | Edged | Massive greatsword, bat-wing crossguards, garnet pommel. |
+| 18 | 20 | Ritual Sickles | Edged | Paired serrated bone-handled sickles with glowing ancient runes. |
+| 19 | 21 | Spear | Edged | Leaf-shaped cold iron head, silver raven emblem. |
+
+> **Note:** `WEAPON_SHEET_COUNT` in `game-state.js` needs updating from `10` → `20` when the new weapons are wired into the loot/deck system. Blunt weapons (Flail, Morningstar) cannot cause bleed — add their IDs to `isBluntWeapon()`.
+
+---
+
 ### Distribution (Post-Completion)
 - **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets.

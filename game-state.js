@@ -3,7 +3,7 @@ import { shuffle } from './dungeon-generator.js';
 export const SUITS = { HEARTS: '♥', DIAMONDS: '♦', CLUBS: '♣', SPADES: '♠', SKULLS: '💀', MENACES: '👺' };
 
 export const ITEMS_SHEET_COUNT = 10;
-export const WEAPON_SHEET_COUNT = 10;
+export const WEAPON_SHEET_COUNT = 20;
 
 export const CURSED_ITEMS = [
     { id: 'cursed_blade', name: "Bloodthirst Blade", cost: 66, type: 'weapon', val: 12, suit: '♦', desc: "12 DMG. Drains 1 HP per room.", isCursed: true },
@@ -187,12 +187,12 @@ export function getAssetData(type, value, suit, extra) {
         else file = 'club.png';
     }
     else if (type === 'weapon' || type === 'passive') {
-        if (value === 'cursed_blade') file = 'diamond.png';
+        if (value === 'cursed_blade') file = 'weapons_final.png';
         else if (value === 'cursed_ring') file = 'items.png';
         else {
             const cap = CLASS_DATA[game.classId] ? (CLASS_DATA[game.classId].spellCap || 0) : 0;
             if (type === 'weapon' && value <= cap) file = 'occultist.png';
-            else file = 'diamond.png';
+            else file = 'weapons_final.png';
         }
     }
     else if (type === 'class-icon') file = 'classes.png';
@@ -205,9 +205,9 @@ export function getAssetData(type, value, suit, extra) {
             v = extra.id;
         } else {
             if (extra.type === 'weapon') {
-                if (extra.id === 'cursed_blade') file = 'diamond.png';
+                if (extra.id === 'cursed_blade') file = 'weapons_final.png';
                 else if (extra.val <= (CLASS_DATA[game.classId].spellCap || 0)) file = 'occultist.png';
-                else file = 'diamond.png';
+                else file = 'weapons_final.png';
             } else {
                 file = 'heart.png';
             }
@@ -220,7 +220,7 @@ export function getAssetData(type, value, suit, extra) {
     let cellIdx = 0;
     let sheetCount = 9;
     if (file === 'items.png') sheetCount = ITEMS_SHEET_COUNT;
-    if (file === 'diamond.png') sheetCount = WEAPON_SHEET_COUNT;
+    if (file === 'weapons_final.png') sheetCount = WEAPON_SHEET_COUNT;
 
     if (type === 'block') { cellIdx = value % 9; }
     else if (type === 'bonfire') { cellIdx = 0; }
@@ -252,6 +252,18 @@ export function getAssetData(type, value, suit, extra) {
     }
     const isStrip = !file.includes('rest');
     return { file, uv: getUVForCell(cellIdx, sheetCount), isStrip, sheetCount };
+}
+
+export function getWeaponName(v) {
+    const names = {
+        2: "Knife", 3: "Club", 4: "Dagger", 5: "Mace",
+        6: "Scimitar", 7: "Long Sword", 8: "War Hammer", 9: "Battle Axe",
+        10: "Halberd", 11: "Great Sword",
+        12: "War Scythe", 13: "Flail", 14: "Rapier", 15: "Polearm",
+        16: "Morningstar", 17: "Heavy Crossbow", 18: "War Pick", 19: "Claymore",
+        20: "Ritual Sickles", 21: "Spear"
+    };
+    return names[v] || `Weapon lv.${v}`;
 }
 
 export function getSpellName(v) {
@@ -320,7 +332,7 @@ export function createDeck() {
             if (v <= cap) {
                 deck.push({ suit: SUITS.DIAMONDS, val: v, type: 'weapon', name: getSpellName(v), isSpell: true });
             } else {
-                deck.push({ suit: SUITS.DIAMONDS, val: v, type: 'weapon', name: `Weapon lv.${v}` });
+                deck.push({ suit: SUITS.DIAMONDS, val: v, type: 'weapon', name: getWeaponName(v) });
             }
         }
         for (let v = 2; v <= 10; v++) {

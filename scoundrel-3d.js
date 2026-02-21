@@ -225,7 +225,7 @@ function preloadSounds() {
 
 function preloadCardImages() {
     const images = [
-        'club.png', 'spade.png', 'heart.png', 'diamond.png',
+        'club.png', 'spade.png', 'heart.png', 'weapons_final.png',
         'skull.png', 'menace.png', 'items.png', 'armor.png',
         'cards/card_frame_common.png', 'cards/card_frame_uncommon.png',
         'cards/card_frame_rare.png', 'cards/card_frame_boss.png'
@@ -8371,7 +8371,10 @@ window.commandDash = function() {
 // Returns true if the equipped weapon is blunt (no cutting edge — can't cause bleed)
 function isBluntWeapon() {
     const w = game.equipment.weapon;
-    return w && (w.id === 'hammer' || w.id === 'mace');
+    if (!w) return false;
+    if (w.id === 'hammer' || w.id === 'mace') return true;
+    // Deck weapons identified by val: Club(3), Mace(5), War Hammer(8), Flail(13), Morningstar(16)
+    return [3, 5, 8, 13, 16].includes(w.val);
 }
 
 // Apply or refresh a bleed effect on a wanderer target

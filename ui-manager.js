@@ -531,7 +531,7 @@ function updateMapHUD() {
                 slot.style.cssText = "width:40px; height:40px; border:1px solid #555; background:rgba(0,0,0,0.5); position:relative; cursor:pointer;";
                 if (item) {
                     const img = document.createElement('div');
-                    const asset = getAssetData(item.type, item.val || 0, item.suit);
+                    const asset = getAssetData(item.type, item.val || item.id, item.suit);
                     img.style.width = '100%'; img.style.height = '100%';
                     img.style.backgroundImage = `url('assets/images/${asset.file}')`;
                     img.style.backgroundSize = `${asset.sheetCount * 100}% 100%`;
@@ -696,7 +696,7 @@ export function renderInventoryUI() {
 }
 
 function createTrophyElement(c, idx) {
-    let sheetFile = 'diamond.png';
+    let sheetFile = 'weapons_final.png';
     if (c.suit === '♥') sheetFile = 'heart.png';
     else if (c.suit === '♣') sheetFile = 'club.png';
     else if (c.suit === '♠') sheetFile = 'spade.png';
