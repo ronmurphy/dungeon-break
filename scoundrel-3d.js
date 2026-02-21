@@ -124,6 +124,8 @@ window.exitBattleIsland = function () {
 // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
 let playerTargetPos = null; // Target position for free movement
+let playerJumping = false;  // True while a jump arc is in progress — suppresses terrain Y snap
+let playerJumpTween = null;
 
 let isInHouse = false;
 let currentHouseGroup = null;
@@ -133,6 +135,11 @@ let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
 let wanderers = [];
 const WANDERER_Y_LIFT = 0.08; // Keep enemies just under player height (0.1) so range circles are visible and overlap cleanly
+const JUMP_MAX_GAP = 2.2;         // Max horizontal gap (world units) player/wanderer can jump across
+const JUMP_MAX_HEIGHT_DIFF = 2.0; // Max up/down height change on a jump
+const JUMP_ARC = 1.3;             // Peak height above start for normal jumps
+const JUMP_ARC_WINGED = 2.2;      // Winged enemies jump higher
+const WINGED_MODELS = ['female_evil-web.glb', 'female_evil-true-web.glb', 'male_evil-web.glb', 'male_evil-true-web.glb'];
 let corpses = []; // { mesh, name, fuelReward } — skull sprites left after on-map kills
 let _aiFrameCount = 0; // Incremented each animate3D frame; used to throttle wanderer AI + mixers
 let _azureFlameReadyAt = 0; // Timestamp after which Azure Flame proximity can fire (spawn grace)
@@ -1581,7 +1588,7 @@ function pickWandererTarget(wanderer) {
                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                     let currentY = wanderer.mesh.position.y;
-                    if (hits.length > 0) {
+                    if (hits.length > 0 && !wanderer.isJumping) {
                         currentY = hits[0].point.y + WANDERER_Y_LIFT;
                         wanderer.mesh.position.y = currentY;
                     }
@@ -1601,18 +1608,53 @@ function pickWandererTarget(wanderer) {
                         stop = true; // Void
                     }
 
-                    if (stop) {
-                        if (wanderer.tween) wanderer.tween.stop();
-                        wanderer.tween = null;
-
-                        // Stop anim
-                        if (wanderer.actions.idle) {
-                            if (wanderer.actions.walk) wanderer.actions.walk.stop();
-                            wanderer.actions.idle.play();
+                    if (stop && !wanderer.isJumping) {
+                        // Check if the void ahead is a jumpable gap
+                        const isWinged = WINGED_MODELS.includes(wanderer.filename);
+                        const maxScan = isWinged ? 3.6 : JUMP_MAX_GAP;
+                        let canJump = false;
+                        let landY = null;
+                        for (let scanD = lookAheadDist + 0.3; scanD <= lookAheadDist + maxScan; scanD += 0.3) {
+                            const farPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(scanD));
+                            terrainRaycaster.set(new THREE.Vector3(farPos.x, rayOriginHeight, farPos.z), down);
+                            const farHits = terrainRaycaster.intersectObject(targetMesh, true);
+                            if (farHits.length > 0) {
+                                if (Math.abs(farHits[0].point.y - currentY) <= JUMP_MAX_HEIGHT_DIFF) {
+                                    canJump = true;
+                                    landY = farHits[0].point.y;
+                                }
+                                break;
+                            }
                         }
 
-                        // Retry sooner
-                        setTimeout(() => pickWandererTarget(wanderer), 500 + Math.random() * 1000);
+                        if (canJump) {
+                            // Launch jump arc — XZ tween continues uninterrupted
+                            wanderer.isJumping = true;
+                            const arcH = isWinged ? JUMP_ARC_WINGED : JUMP_ARC;
+                            const peakY = Math.max(currentY, landY) + arcH;
+                            const downDur = isWinged ? 900 : 480; // Winged float down slower
+                            const downEase = isWinged ? TWEEN.Easing.Sinusoidal.Out : TWEEN.Easing.Quadratic.In;
+                            const up = new TWEEN.Tween({ y: currentY })
+                                .to({ y: peakY }, 400)
+                                .easing(TWEEN.Easing.Quadratic.Out)
+                                .onUpdate(o => { if (wanderer.mesh) wanderer.mesh.position.y = o.y; });
+                            const dn = new TWEEN.Tween({ y: peakY })
+                                .to({ y: landY + WANDERER_Y_LIFT }, downDur)
+                                .easing(downEase)
+                                .onUpdate(o => { if (wanderer.mesh) wanderer.mesh.position.y = o.y; })
+                                .onComplete(() => { wanderer.isJumping = false; });
+                            up.chain(dn);
+                            up.start();
+                        } else {
+                            // Not jumpable — stop and re-patrol
+                            if (wanderer.tween) wanderer.tween.stop();
+                            wanderer.tween = null;
+                            if (wanderer.actions.idle) {
+                                if (wanderer.actions.walk) wanderer.actions.walk.stop();
+                                wanderer.actions.idle.play();
+                            }
+                            setTimeout(() => pickWandererTarget(wanderer), 500 + Math.random() * 1000);
+                        }
                     }
                 }
             })
@@ -2803,7 +2845,7 @@ function animate3D() {
                                 wanderer.mesh.position.add(dir.multiplyScalar(moveDist));
                                 // Snap to floor to prevent flying/sinking
                                 const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
-                                if (targetMesh) {
+                                if (targetMesh && !wanderer.isJumping) {
                                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
                                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                                     if (hits.length > 0) {
@@ -3017,6 +3059,33 @@ window.exitHouse = exitHouseBattle;
 
 
 
+// Returns { startY, endY } if a jumpable gap lies between startPos and endPos, otherwise null.
+function detectJumpGap(startPos, endPos) {
+    if (!globalFloorMesh) return null;
+    const totalDist = new THREE.Vector3().subVectors(endPos, startPos).setY(0).length();
+    if (totalDist > JUMP_MAX_GAP + 0.3) return null; // Definitely too far
+    const dir = new THREE.Vector3().subVectors(endPos, startPos).setY(0).normalize();
+    const STEPS = 10;
+    let hadGap = false;
+    let startY = null;
+    let endY = null;
+    for (let i = 0; i <= STEPS; i++) {
+        const d = (i / STEPS) * totalDist;
+        const p = startPos.clone().add(dir.clone().multiplyScalar(d));
+        terrainRaycaster.set(new THREE.Vector3(p.x, p.y + 10, p.z), new THREE.Vector3(0, -1, 0));
+        const hits = terrainRaycaster.intersectObject(globalFloorMesh, true);
+        if (hits.length > 0) {
+            if (i === 0) startY = hits[0].point.y;
+            if (hadGap) { endY = hits[0].point.y; break; }
+        } else {
+            if (!hadGap && startY !== null) hadGap = true;
+        }
+    }
+    if (!hadGap || endY === null) return null;
+    if (Math.abs(endY - startY) > JUMP_MAX_HEIGHT_DIFF) return null;
+    return { startY, endY };
+}
+
 function movePlayerTo(targetVec, isRunning = false) {
     if (!playerMesh) return;
 
@@ -3057,6 +3126,27 @@ function movePlayerTo(targetVec, isRunning = false) {
     // Add decorations (trees/rocks) if needed, though they are instanced and might need specific handling
     // For now, rooms are the main blockers.
 
+    // --- JUMP DETECTION ---
+    const jumpInfo = (!isCombatView) ? detectJumpGap(startPos, targetVec) : null;
+    if (jumpInfo !== null) {
+        playerJumping = true;
+        if (playerJumpTween) playerJumpTween.stop();
+        const peakY = Math.max(jumpInfo.startY, jumpInfo.endY) + JUMP_ARC;
+        const landY = jumpInfo.endY + 0.1;
+        const jumpUp = new TWEEN.Tween({ y: startPos.y })
+            .to({ y: peakY }, duration * 0.42)
+            .easing(TWEEN.Easing.Quadratic.Out)
+            .onUpdate(o => { if (playerMesh) playerMesh.position.y = o.y; });
+        const jumpDown = new TWEEN.Tween({ y: peakY })
+            .to({ y: landY }, duration * 0.58)
+            .easing(TWEEN.Easing.Quadratic.In)
+            .onUpdate(o => { if (playerMesh) playerMesh.position.y = o.y; })
+            .onComplete(() => { playerJumping = false; playerJumpTween = null; });
+        jumpUp.chain(jumpDown);
+        playerJumpTween = jumpUp;
+        jumpUp.start();
+    }
+
     // Face target
     if (playerMesh) {
         playerMesh.lookAt(targetVec.x, playerMesh.position.y, targetVec.z);
@@ -3079,6 +3169,9 @@ function movePlayerTo(targetVec, isRunning = false) {
         .to({ x: targetVec.x, z: targetVec.z }, duration)
         .easing(TWEEN.Easing.Linear.None) // Linear for walking
         .onUpdate(() => {
+            // Jump arc handles Y — skip terrain snap and cliff stops while airborne
+            if (playerJumping) return;
+
             // Determine which floor to snap to (Dungeon or Battle Island)
             const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
 
