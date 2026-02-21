@@ -21,7 +21,7 @@ import { CardDesigner } from './card-designer.js';
 import { CombatManager } from './combat-manager.js';
 import BattleIsland from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
-import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
+import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getWeaponName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, updateInitStrip } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 
@@ -49,6 +49,7 @@ let hemisphereLight;
 let stats = null; // mrdoob Stats.js — toggle with F2 // Soft global fill light to improve readability under fog
 // let fogRings = []; // Fog ring sprites for atmospheric LOD // DEAD CODE
 let roomMeshes = new Map();
+let markerRings = new Map(); // Ground ring decals under interactive markers
 let animationFrameId = null; // To prevent multiple render loops
 let terrainMeshes = new Map();
 let debugHelpers = []; // Track debug visuals for toggling
@@ -140,7 +141,8 @@ const JUMP_MAX_HEIGHT_DIFF = 2.0; // Max up/down height change on a jump
 const JUMP_ARC = 1.3;             // Peak height above start for normal jumps
 const JUMP_ARC_WINGED = 2.2;      // Winged enemies jump higher
 const WINGED_MODELS = ['female_evil-web.glb', 'female_evil-true-web.glb', 'male_evil-web.glb', 'male_evil-true-web.glb'];
-let corpses = []; // { mesh, name, fuelReward } — skull sprites left after on-map kills
+let corpses = []; // { mesh, name, fuelReward, loot } — skull sprites left after on-map kills
+let soulcoinSprites = []; // { mesh, tex, coins } — animated coin pickups on the map
 let _aiFrameCount = 0; // Incremented each animate3D frame; used to throttle wanderer AI + mixers
 let _azureFlameReadyAt = 0; // Timestamp after which Azure Flame proximity can fire (spawn grace)
 const WANDERER_MODELS = [
@@ -1729,8 +1731,8 @@ function on3DClick(event, isRightClick = false) {
     if (isAttractMode) return;
 
     // Check if mouse moved significantly (drag/rotate) > 5 pixels
-    // If the click is on any modal overlay, block it.
-    if (event.target.closest('.modal-overlay')) {
+    // If the click is on any modal overlay or the trapUI (azure flame, manor, etc.), block it.
+    if (event.target.closest('.modal-overlay') || event.target.closest('#trapUI')) {
         // This prevents clicks on the options/benchmark/etc modals from passing through to the game world.
         return;
     }
@@ -2321,6 +2323,24 @@ function update3DScene() {
                 else applyTextureToMesh(mesh, 'block', 0);
                 scene.add(mesh);
                 roomMeshes.set(r.id, mesh);
+
+                // Ground activation ring (circle_04.png) for interactive marker rooms
+                const needsRing = (r.isAlchemy || r.isSpecial || r.isTrap || r.isLocked || r.isBonfire || r.isShrine || r.id === 0) && !r.isFinal;
+                if (needsRing && !markerRings.has(r.id)) {
+                    const ringSize = Math.max(r.w, r.h) * 0.85;
+                    const ringGeo = new THREE.PlaneGeometry(ringSize, ringSize);
+                    const ringTex = loadTexture('assets/images/textures/circle_04.png');
+                    const ringMat = new THREE.MeshBasicMaterial({
+                        map: ringTex, transparent: true, depthWrite: false,
+                        blending: THREE.AdditiveBlending, opacity: 0.7
+                    });
+                    const ring = new THREE.Mesh(ringGeo, ringMat);
+                    ring.rotation.x = -Math.PI / 2;
+                    ring.position.set(r.gx, 0.12, r.gy);
+                    scene.add(ring);
+                    markerRings.set(r.id, ring);
+                }
+
                 // addDoorsToRoom(r, mesh); // Hiding doors to reveal markers per user request
                 addLocalFog(mesh);
             }
@@ -2491,7 +2511,8 @@ function animate3D() {
     */
 
     // Proximity Trigger for Markers (Chest, Altar, etc.)
-    if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
+    const beingChased = wanderers.some(w => w.state === 'chase');
+    if (!isCombatView && !isAttractMode && !isEditMode && !beingChased && playerObj) {
         for (const r of game.rooms) {
             // Only check markers that are not the current room
             if (r.id !== game.currentRoomIdx && (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret || r.isSpecial)) {
@@ -2510,6 +2531,27 @@ function animate3D() {
         }
     }
 
+    // Soul coin sprite animation + proximity pickup
+    if (soulcoinSprites.length > 0) {
+        const coinFrame = Math.floor(Date.now() / 80) % 25;
+        for (let i = soulcoinSprites.length - 1; i >= 0; i--) {
+            const sc = soulcoinSprites[i];
+            if (!sc.mesh) { soulcoinSprites.splice(i, 1); continue; }
+            sc.tex.offset.x = coinFrame / 25; // advance animation frame
+            if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
+                const dist = sc.mesh.position.distanceTo(playerObj.position);
+                if (dist < 1.5) {
+                    scene.remove(sc.mesh);
+                    soulcoinSprites.splice(i, 1);
+                    game.soulCoins = (game.soulCoins || 0) + sc.coins;
+                    spawnFloatingText(`+${sc.coins} SOUL COINS`, window.innerWidth / 2, window.innerHeight / 2 + 30, '#ffd700', 26);
+                    logMsg(`Collected ${sc.coins} soul coins.`);
+                    updateUI();
+                }
+            }
+        }
+    }
+
     // Corpse loot proximity — auto-collect skull remains after combat
     if (!isCombatView && !isAttractMode && !isEditMode && playerObj && corpses.length > 0) {
         const modal = document.getElementById('combatModal');
@@ -2522,16 +2564,28 @@ function animate3D() {
                 if (dist < 1.5) {
                     scene.remove(c.mesh);
                     corpses.splice(i, 1);
+
+                    // Item loot drop (weapon / potion / item)
+                    if (c.loot) {
+                        if (addToBackpack(c.loot)) {
+                            spawnFloatingText(`+ ${c.loot.name}`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#ffcc44', 26);
+                            logMsg(`Found: ${c.loot.name}`);
+                        } else {
+                            const consolation = Math.floor(10 + Math.random() * 15);
+                            game.soulCoins = (game.soulCoins || 0) + consolation;
+                            spawnFloatingText(`BACKPACK FULL (+${consolation} coins)`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#ff8844', 22);
+                            logMsg(`Found ${c.loot.name} — backpack full, sold for ${consolation} soul coins.`);
+                        }
+                    }
+
+                    // Torch fuel (soul coins now drop as a separate sprite pickup)
                     if (game.torchCharge < 100) {
                         const gained = Math.min(c.fuelReward, 100 - game.torchCharge);
                         game.torchCharge = Math.min(100, game.torchCharge + c.fuelReward);
                         spawnFloatingText(`+${gained}% TORCH`, window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 28);
                         logMsg(`Looted ${c.name}'s remains. (+${gained}% torch fuel)`);
                     } else {
-                        const coins = Math.floor(c.fuelReward * 1.5);
-                        game.soulCoins = (game.soulCoins || 0) + coins;
-                        spawnFloatingText(`+${coins} SOUL COINS`, window.innerWidth / 2, window.innerHeight / 2, '#ffd700', 28);
-                        logMsg(`Looted ${c.name}'s remains. Torch full — +${coins} soul coins.`);
+                        logMsg(`Looted ${c.name}'s remains. (Torch full)`);
                     }
                     updateUI();
                     break; // one corpse at a time per frame
@@ -3554,7 +3608,7 @@ function clear3DScene() {
     const amb = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(amb);
 
-    roomMeshes.clear(); waypointMeshes.clear(); corridorMeshes.clear(); doorMeshes.clear();
+    roomMeshes.clear(); waypointMeshes.clear(); corridorMeshes.clear(); doorMeshes.clear(); markerRings.clear();
 
     // Cleanup decorations
     decorationMeshes.forEach(m => {
@@ -4179,16 +4233,16 @@ function sinkManor(room) {
     // Sound (Low pitch rumble)
     if (audio.initialized) audio.play('bonfire_loop', { volume: 0.8, rate: 0.5 });
 
-    // Dust Particles
-    const count = 30;
+    // Dirt Particles — kick up through the whole 3-second sink
+    const count = 45;
     for(let i=0; i<count; i++) {
         setTimeout(() => {
             const angle = Math.random() * Math.PI * 2;
-            const r = 3 + Math.random() * 3;
-            const x = room.gx + Math.cos(angle) * r;
-            const z = room.gy + Math.sin(angle) * r;
-            spawn3DImpact(new THREE.Vector3(x, 0, z), 0x887766, 'smoke_05.png');
-        }, i * 100);
+            const rad = 1 + Math.random() * 4;
+            const x = room.gx + Math.cos(angle) * rad;
+            const z = room.gy + Math.sin(angle) * rad;
+            spawn3DImpact(new THREE.Vector3(x, Math.random() * 0.4, z), 0x7a5230, 'dirt_01.png');
+        }, i * 65);
     }
 
     // Sinking Animation
@@ -4203,7 +4257,44 @@ function sinkManor(room) {
             mesh.visible = false;
             scene.remove(mesh);
             roomMeshes.delete(room.id);
+            const ring = markerRings.get(room.id);
+            if (ring) { scene.remove(ring); markerRings.delete(room.id); }
             saveGame(); // Persist the vanishing
+        })
+        .start();
+}
+
+function sinkAlchemy(room) {
+    const mesh = roomMeshes.get(room.id);
+    if (!mesh) return;
+
+    logMsg("The Arcane Altar crumbles and sinks into the earth...");
+
+    if (audio.initialized) audio.play('bonfire_loop', { volume: 0.6, rate: 0.7 });
+
+    const count = 30;
+    for (let i = 0; i < count; i++) {
+        setTimeout(() => {
+            const angle = Math.random() * Math.PI * 2;
+            const rad = 1 + Math.random() * 3;
+            const x = room.gx + Math.cos(angle) * rad;
+            const z = room.gy + Math.sin(angle) * rad;
+            spawn3DImpact(new THREE.Vector3(x, Math.random() * 0.3, z), 0x7a5230, 'dirt_01.png');
+        }, i * 100);
+    }
+
+    new TWEEN.Tween(mesh.position)
+        .to({ y: -15 }, 3000)
+        .easing(TWEEN.Easing.Cubic.In)
+        .onUpdate(() => { triggerShake(2, 5); })
+        .onComplete(() => {
+            room.isVanished = true;
+            mesh.visible = false;
+            scene.remove(mesh);
+            roomMeshes.delete(room.id);
+            const ring = markerRings.get(room.id);
+            if (ring) { scene.remove(ring); markerRings.delete(room.id); }
+            saveGame();
         })
         .start();
 }
@@ -7251,10 +7342,13 @@ window.checkPotion = function () {
         feedback.innerText = "Perfect Match!";
         feedback.style.color = "#00ff00";
         setTimeout(() => {
+            // Save refs before closePotionGame nulls potionState
+            const brewedName = potionState.target.name;
+            const brewedRoom = potionState.room;
             closePotionGame();
 
             // Reward Logic
-            const potionItem = { type: 'potion', val: 20, name: potionState.target.name, suit: '♥', desc: "A perfectly brewed masterwork potion." };
+            const potionItem = { type: 'potion', val: 20, name: brewedName, suit: '♥', desc: "A perfectly brewed masterwork potion." };
 
             if (addToBackpack(potionItem)) {
                 spawnFloatingText("Potion Brewed!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
@@ -7265,7 +7359,20 @@ window.checkPotion = function () {
                 logMsg(`Brewed ${potionItem.name}. Inventory full, drank immediately.`);
             }
 
-            if (potionState.room) { potionState.room.state = 'cleared'; updateUI(); }
+            if (brewedRoom) {
+                // Decrement use counter (backwards compat: undefined → treat as 1 remaining)
+                if (typeof brewedRoom.potionUsesLeft !== 'number') brewedRoom.potionUsesLeft = 1;
+                else brewedRoom.potionUsesLeft--;
+
+                if (brewedRoom.potionUsesLeft <= 0) {
+                    brewedRoom.state = 'cleared';
+                    sinkAlchemy(brewedRoom);
+                } else {
+                    logMsg(`The altar still shimmers... (${brewedRoom.potionUsesLeft} brew remaining)`);
+                    saveGame();
+                }
+                updateUI();
+            }
         }, 1000);
     } else {
         feedback.innerText = "The mixture is unstable... (Too far)";
@@ -7277,6 +7384,7 @@ window.closePotionGame = function () {
     const modal = document.getElementById('potionUI');
     if (modal) modal.style.display = 'none';
     potionState = null;
+    closeCombat(); // Clear combatModal backdrop that was shown by the dungeon prompt
 };
 
 function renderPotionCanvas() {
@@ -7830,9 +7938,10 @@ function startCombat(wanderer, isFlankAttack = false) {
 function rollInitiative() {
     combatState.turn = 'busy';
 
-    // Player: d20 + DEX bonus
+    // Player: d20 + DEX + floor(LCK/2)
     const playerDex = game.stats.dex || 0;
-    const playerRoll = Math.ceil(Math.random() * 20) + playerDex;
+    const playerLck = Math.floor((game.stats.lck || 0) / 2);
+    const playerRoll = Math.ceil(Math.random() * 20) + playerDex + playerLck;
     combatState.playerInitRoll = playerRoll;
 
     // Each enemy: d20 + floor(STR/2) as a speed proxy
@@ -8128,10 +8237,34 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
 }
 
 
+// Roll for an item drop from a defeated enemy.
+// Drop chance scales with enemy STR and player LCK (lck/2 = bonus %).
+function rollEnemyLoot(str) {
+    const lck = (game.stats && game.stats.lck) || 0;
+    const chance = Math.min(0.75, 0.20 + str * 0.05 + lck * 0.025); // base 20-55% + up to 12.5% from LCK
+    if (Math.random() > chance) return null;
+
+    const roll = Math.random();
+    if (roll < 0.45) {
+        // Potion — small bottle for weak enemies, larger for strong
+        const val = Math.max(2, Math.min(8, 2 + Math.floor(str * 0.7)));
+        return { type: 'potion', val, suit: '♥', name: `HP Incense ${val}` };
+    } else if (roll < 0.80) {
+        // Weapon — val scales with STR, capped at 10 for common drops
+        const val = Math.max(2, Math.min(10, 2 + Math.floor(str * 1.0)));
+        return { type: 'weapon', val, suit: '♦', name: getWeaponName(val) };
+    } else {
+        // Item from ITEM_DATA — random passive or active
+        const item = ITEM_DATA[Math.floor(Math.random() * ITEM_DATA.length)];
+        return { type: item.type, id: item.id, val: 0, name: item.name, desc: item.desc };
+    }
+}
+
 function spawnCorpse(target) {
     const displayName = enemyDisplayName(target);
-
-    const fuelReward = Math.max(10, Math.min(30, ((target.stats && target.stats.str) || 2) * 5));
+    const str = (target.stats && target.stats.str) || 2;
+    const fuelReward = Math.max(10, Math.min(30, str * 5));
+    const loot = rollEnemyLoot(str);
 
     // Save position before hiding the GLB mesh
     const deathPos = (target.mesh && target.mesh.position)
@@ -8148,7 +8281,7 @@ function spawnCorpse(target) {
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
     const sprite = new THREE.Sprite(mat);
     sprite.position.copy(deathPos);
-    sprite.position.y = deathPos.y + 1.5; // Float 1.5 above wherever the enemy actually died
+    sprite.position.y = deathPos.y + 0.5; // Low enough for a good pickup radius vs the 1.5-unit dist check
     sprite.scale.set(1.2, 1.2, 1.2);
     scene.add(sprite);
 
@@ -8160,8 +8293,25 @@ function spawnCorpse(target) {
         .easing(TWEEN.Easing.Sinusoidal.InOut)
         .start();
 
-    corpses.push({ mesh: sprite, name: displayName, fuelReward });
-    logMsg(`${displayName} has fallen. Walk over their remains to loot.`);
+    corpses.push({ mesh: sprite, name: displayName, fuelReward, loot });
+
+    // Soul coin drop — always spawns as a separate animated sprite the player must walk over
+    const coinAmount = Math.max(3, str * 3);
+    const coinTex = getClonedTexture('assets/images/animations/soulcoin.png');
+    coinTex.repeat.set(1 / 25, 1); // 25-cell horizontal sprite sheet
+    coinTex.offset.set(0, 0);
+    const coinMat = new THREE.SpriteMaterial({ map: coinTex, transparent: true });
+    const coinSprite = new THREE.Sprite(coinMat);
+    coinSprite.position.copy(deathPos);
+    coinSprite.position.x += (Math.random() - 0.5) * 0.6; // slight scatter from corpse
+    coinSprite.position.z += (Math.random() - 0.5) * 0.6;
+    coinSprite.position.y = deathPos.y + 0.4;
+    coinSprite.scale.set(0.7, 0.7, 0.7);
+    scene.add(coinSprite);
+    soulcoinSprites.push({ mesh: coinSprite, tex: coinTex, coins: coinAmount });
+
+    const lootHint = loot ? ` [${loot.name}]` : '';
+    logMsg(`${displayName} has fallen. Walk over their remains to loot.${lootHint}`);
 }
 
 function claimLoot(sprite) {
@@ -8441,10 +8591,12 @@ function executePlayerSkill(target) {
         let msg = "";
         let color = '#00ffff';
 
+        const _lck = Math.floor((game.stats.lck || 0) / 2); // Luck to-hit bonus for all skill clashes
+
         if (skill.id === 'power_strike') { // Knight
             // +3 Power
             const str = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1) + 3;
-            const res = CombatResolver.resolveClash(str, 4, 10, target.stats.ac || 10);
+            const res = CombatResolver.resolveClash(str, 4, 10, target.stats.ac || 10, _lck);
             spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Power Strike", () => {});
             if (res.attacker.total > res.defender.total) {
                 damage = res.damage;
@@ -8484,7 +8636,7 @@ function executePlayerSkill(target) {
             // STR vs STR
             const playerStr = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1);
             const enemyStr = (target.stats.str || 1) + 4;
-            const res = CombatResolver.resolveClash(playerStr, enemyStr, 0, 0); // No AC
+            const res = CombatResolver.resolveClash(playerStr, enemyStr, 0, 0, _lck); // No AC
             spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Shove", () => {});
             
             if (res.attacker.total > res.defender.total) {
@@ -8508,7 +8660,7 @@ function executePlayerSkill(target) {
             // DEX vs WIS (Use INT/STR as proxy for WIS)
             const playerDex = (game.stats.dex || 1) + 2;
             const enemyWis = (target.stats.str || 1) + 2;
-            const res = CombatResolver.resolveClash(playerDex, enemyWis, 0, 0);
+            const res = CombatResolver.resolveClash(playerDex, enemyWis, 0, 0, _lck);
             spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Feint", () => {});
             
             if (res.attacker.total > res.defender.total) {
@@ -8525,7 +8677,7 @@ function executePlayerSkill(target) {
             const playerAC = 10 + (game.maxAp || 0);
 
             spawn3DProjectile(playerMesh.position, target.mesh.position, 'rock');
-            const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, target.stats.ac || 10);
+            const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, target.stats.ac || 10, _lck);
             spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Snipe", () => {});
 
             if (res.attacker.total > res.defender.total) {
@@ -8836,7 +8988,7 @@ function executePlayerAttack(target) {
                 const playerAC = 10 + (game.maxAp || 0);
                 const enemyAC = target.stats.ac || 10;
 
-                const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC);
+                const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC, Math.floor((game.stats.lck || 0) / 2));
                 spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Crossbow", () => {});
                 spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
                     if (res.winner === 'attacker') {
@@ -8931,8 +9083,9 @@ function executePlayerAttack(target) {
     const enemyWeapon = 4; // Generic enemy weapon power
     const enemyAC = target.stats.ac || 10;
     const enemyPower = enemyStr + enemyWeapon;
+    const luckBonus = Math.floor((game.stats.lck || 0) / 2);
 
-    const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
+    const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC, luckBonus);
 
     // 3. Spawn Dice Roll Animations (Simultaneous)
     // Player Dice (Left, Blue) - Label: "You" or Player Name
@@ -9338,8 +9491,9 @@ function executeEnemyAttack(enemy) {
         const enemyWeapon = 4;
         const enemyAC = enemy.stats.ac || 10;
         const enemyPower = enemyStr + enemyWeapon;
+        const luckBonus = Math.floor((game.stats.lck || 0) / 2);
 
-        const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC);
+        const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC, luckBonus);
 
         // Spawn Dice
         spawnDice3D(result.attacker.config.sides, result.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, game.playerName || "You", () => { });

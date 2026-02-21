@@ -1,6 +1,6 @@
 # Dungeon Break - Progress & Roadmap
 
-*Last updated: 2026-02-21*
+*Last updated: 2026-02-21 (session 2)*
 
 ---
 
@@ -96,8 +96,10 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - Boss hits, bonfire rumble, trap impacts: various intensities.
 
 #### Corpse Loot ✅
-- On death, enemy GLB hides and a bobbing `corpse.png` sprite spawns at death position (Y = deathPos.y + 1.5, fixed from floor-clipping bug).
+- On death, enemy GLB hides and a bobbing `corpse.png` sprite spawns at death position (`Y = deathPos.y + 0.5` — lowered from 1.5 which made pickup nearly impossible).
 - Player walks within 1.5 units after combat to auto-loot.
+- **Item drops:** `rollEnemyLoot(str)` — 20–75% drop chance (scales with STR + LCK). 45% potion / 35% weapon / 20% item. Item added to backpack; consolation soul coins if full.
+- **Soul coins:** `soulcoin.png` (128×128, 25-frame animation) spawns as a separate map sprite near the corpse. Must be walked over to collect. Cycles at 80ms/frame.
 - Torch not full → adds fuel (scales with enemy STR). Torch full → converts to soul coins (1.5× rate).
 
 #### Enemy AI
@@ -165,11 +167,33 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - Hotbar asset value lookup now includes weapon type for correct pricing.
 - Corpse sprite Y fixed (was spawning at floor level, now at `deathPos.y + 1.5`).
 
+#### Luck Stat Integration ✅
+- `floor(LCK/2)` added as a flat bonus to: player initiative rolls, all player-side `resolveClash()` to-hit totals (not damage), and enemy loot drop chance (`LCK × 0.025` per point).
+- Enemy attacks do NOT receive a luck bonus.
+
 ### Initiative System ✅
 - `rollInitiative()` called at combat start — player rolls d20+DEX, each enemy rolls d20+floor(STR/2).
 - Result determines turn order. Both rolls shown as 3D dice animations simultaneously.
 - `showCombatTracker(enemies, initOrder)` accepts optional initiative order for the strip.
 - `updateInitStrip(currentActor)` exported from `ui-manager.js` — highlights the active actor's pill each turn.
+
+### Themed Tile Sheets ✅
+- Each dungeon theme now has a dedicated sprite sheet (`grass.png` for Dirt/Moss, `mountains.png` for Stone/Ancient/Magma/Ice). Themes without a sheet fall back to `block.png`.
+- All 9 cells in a themed sheet are freely randomised (all tiles are in-theme, no column-bleeding).
+- `dungeon-generator.js`: `sheet` property added to THEMES array; `hasThemedSheet` flag controls tile index logic.
+
+### Interactive Marker Rooms ✅
+- **Potion Altar (isAlchemy):** 2-use system. `potionUsesLeft: 2` set at dungeon gen. Each successful brew decrements the counter. On second brew: `sinkAlchemy()` fires (purple dirt particles, 3s TWEEN sink, `isVanished = true`, `saveGame()`). After first brew: logs "altar still shimmers… (1 brew remaining)" and saves without clearing state so player can return.
+- **Manor (isSpecial):** Already sinks immediately on any transaction (gift/buy). `sinkManor()` sets `isVanished = true` + saves. Leaving without interacting pushes player out, no sink.
+- **Sink animations:** Both use `dirt_01.png` particles (`0x7a5230` earth brown, `AdditiveBlending`), spread low to ground (y 0–0.4), continuous kick-up over full 3-second sink.
+- **`isVanished` guard:** Room mesh generation skips vanished rooms on reload — they never re-spawn.
+- **Ground activation rings:** `circle_04.png` flat decal (`PlaneGeometry`, `y = 0.12`, `AdditiveBlending`, `opacity 0.7`) placed under all interactive markers: Alchemy, Manor, Trap, Locked, Bonfire, Shrine, Azure Flame. Rings tracked in `markerRings` Map; cleared on floor transition and removed when a room sinks.
+
+### Bug Fixes (Session 2) ✅
+- **Potion overlay persisting:** `closePotionGame()` now calls `closeCombat()` to clear the `combatModal` backdrop.
+- **TypeError in checkPotion success:** `brewedName` and `brewedRoom` saved before `closePotionGame()` nulls `potionState`.
+- **Azure Flame clicks passing through:** `on3DClick` guard extended to `|| event.target.closest('#trapUI')`.
+- **Wanderer freezes mid-marker-prompt:** Marker proximity trigger now checks `beingChased = wanderers.some(w => w.state === 'chase')` — all marker room triggers are suppressed while any wanderer is actively chasing the player.
 
 ### DiceBroker Mini-Game ✅ (`assets/DiceBroker/`)
 - Standalone mini-game: `index.html`, `game.js` (~1000 lines), `style.css`.
@@ -179,27 +203,41 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 
 ## 🎯 Phase 4: Content & Progression (Next Focus)
 
-### High Priority
-- [ ] **Analyze command** — Expand tracker row on click to show enemy HP/AC/STR.
-- [ ] **Necromancer passive** — "Exact kills heal 1 HP" not yet wired.
+### High Priority — Boss Arena System
+- [ ] **Boss arena:** Walking into the final tower (`isFinal` room) shows confirmation prompt "Enter the Guardian's Lair — there is no retreat." Confirms → teleport to Battle Island (themed to match floor).
+- [ ] **Boss enemy:** Pick a random floor wanderer, scale it up (2× HP, +3 AC, +2 STR, 1.5–2× mesh scale). Name = random prefix + enemy name (e.g. "The Dread Stomlem of Ruin").
+- [ ] **Boss naming pool:** Prefixes: The Dread, Demonic, Unholy, Ancient, Forsaken, Wrathful, Corrupted. Suffixes: of Doom, the Angry, the Relentless, the Cursed, of Ruin, the Undying, the Terrible.
+- [ ] **Arena walls:** Collision barriers around Battle Island perimeter — no escape allowed. Flee option disabled in boss context.
+- [ ] **Boss arena markers:** Brad will supply boss-only GLBs (one-time heal pedestal, proximity trap, etc.) placed inside the arena.
+- [ ] **Victory:** Beat boss → unlock Double Helix spiral at arena exit.
+- [ ] **Old card-based boss system removal:** `startBossFight()`, `startSoulBrokerEncounter()`, `pickCard()`, `finishRoom()`, `game.deck/combatCards/carryCard`, `createDeck()` — clean removal once new system confirmed working. `showCombat()` shell stays (used by on-map combat backdrop).
+
+### High Priority — Double Helix Progression
+- [ ] **Helix as physical traversal zone:** After beating the floor boss, the Double Helix spiral opens. Player physically runs up it in 3D — not a loading screen.
+- [ ] **Enemies on the helix:** Wanderers from the floor below patrol/chase on the spiral path.
+- [ ] **Offshoot side-quest rooms:** Optional branches off the main spiral (magic rope, bent metal corridor, etc.) with item/coin rewards.
+- [ ] **Top doorway:** Reuse existing doorway GLB. Proximity triggers "Go to next floor? Yes / No." Yes = new floor loads (harder theme, harder enemies). No = player can go back down the helix.
+- [ ] **No floor backtracking:** Once a floor is left, it is locked. Save tracks which floors are behind you.
+- [ ] **Mandatory boss per floor:** Must beat the floor boss to unlock the helix segment to the next floor.
 
 ### Medium Priority
+- [ ] **Analyze command** — Expand tracker row on click to show enemy HP/AC/STR.
+- [ ] **Necromancer passive** — "Exact kills heal 1 HP" not yet wired.
 - [ ] **Equip command** — Quick-swap gear during combat (1/battle).
 - [ ] **Other class passives** — Priest waypoint heals, Paladin +AP on kills, Ranger waypoint reveal, Artificer consumable save chance.
-- [ ] **Enemy-specific skills** — Boss enemies (twins) have unique movesets.
 - [ ] **XP / Leveling** — Gain stat points on level-up.
-- [ ] **Floor progression** — Boss encounter at end of each floor, staircase to next.
+- [ ] **Three-slot save system** — Save game seed so floor layout is consistent on reload. Three save slots.
 
-### Twin Boss Encounter
+### Twin Boss Encounter (Deferred — post-helix)
 - Final encounter: both twins spawn simultaneously as a 2-enemy combat.
 - Multi-enemy combat system already supports this natively.
-- Each twin has independent HP, AI, and turn in the roster.
-- Boss-specific skills planned (one tanky, one aggressive).
+- Soul Broker (floor 9) placement TBD within new helix/boss structure.
 
 ### Polish / Future
 - [ ] **Sound effects** — Attack, hit, bleed, victory stings.
 - [ ] **Height map** — Terrain elevation variation, new file, doesn't touch existing systems.
 - [ ] **Asset compression** — Any remaining GLBs without `-web` suffix need compression pipeline.
+- [ ] **Tauri desktop wrapper** — Post-completion packaging (~3MB vs Electron's ~150MB).
 
 ### Weapon Sprite Sheet Reference (`weaponsfinal.png` — 20 cells, 128×128)
 Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–19 are the new additions.
@@ -233,3 +271,6 @@ Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–1
 
 ### Distribution (Post-Completion)
 - **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets.
+
+### Brad Notes:
+Some special 'rooms' like the Mansion and the Potion -marker- are limited use events, the Potion -marker- can only be used twice, then it rumbles and falls through the floor, forever gone as how it is marked as do not load on the map load again, The manision, if you buy, sell, or accept a free gift, will also do the sinking floor anim and be marked as do not load also.  chosing the leave button will not activate the floor sink and mark as do  not load... the player didnt take anything, so no need to do so.

@@ -1,15 +1,18 @@
 import * as THREE from 'three';
 
+// sheet: themed 9-cell horizontal spritesheet (128×128 per cell).
+// All 9 cells are variations of the same environment — pick any freely.
+// Swap sheet filename here to test a different look. Fall back to block.png if null.
 export const THEMES = [
-    { id: 1, name: 'Dirt', tile: 1, color: 0x3d2817, fogDensity: 0.05, hemiIntensity: 0.35, weather: 'dust' },
-    { id: 2, name: 'Stone', tile: 2, color: 0x222222, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'none' },
-    { id: 3, name: 'Moss', tile: 3, color: 0x173d1a, fogDensity: 0.04, hemiIntensity: 0.36, weather: 'spore' },
-    { id: 4, name: 'Ancient', tile: 4, color: 0x3d173d, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'rain' },
-    { id: 5, name: 'Magma', tile: 5, color: 0x3d1717, fogDensity: 0.06, hemiIntensity: 0.30, weather: 'ember' },
-    { id: 6, name: 'Ice', tile: 6, color: 0x173d3d, fogDensity: 0.03, hemiIntensity: 0.42, weather: 'snow' },
-    { id: 7, name: 'Abyss', tile: 7, color: 0x050505, fogDensity: 0.07, hemiIntensity: 0.22, weather: 'void' },
-    { id: 8, name: 'Bone', tile: 8, color: 0x3d3517, fogDensity: 0.04, hemiIntensity: 0.36, weather: 'dust' },
-    { id: 9, name: 'Ruins', tile: 9, color: 0x282222, fogDensity: 0.035, hemiIntensity: 0.38, weather: 'rain' },
+    { id: 1, name: 'Dirt',    tile: 1, sheet: 'assets/images/grass.png',     color: 0x3d2817, fogDensity: 0.05, hemiIntensity: 0.35, weather: 'dust' },
+    { id: 2, name: 'Stone',   tile: 2, sheet: 'assets/images/mountains.png',  color: 0x222222, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'none' },
+    { id: 3, name: 'Moss',    tile: 3, sheet: 'assets/images/grass.png',      color: 0x173d1a, fogDensity: 0.04, hemiIntensity: 0.36, weather: 'spore' },
+    { id: 4, name: 'Ancient', tile: 4, sheet: 'assets/images/mountains.png',  color: 0x3d173d, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'rain' },
+    { id: 5, name: 'Magma',   tile: 5, sheet: 'assets/images/mountains.png',  color: 0x3d1717, fogDensity: 0.06, hemiIntensity: 0.30, weather: 'ember' },
+    { id: 6, name: 'Ice',     tile: 6, sheet: 'assets/images/mountains.png',  color: 0x173d3d, fogDensity: 0.03, hemiIntensity: 0.42, weather: 'snow' },
+    { id: 7, name: 'Abyss',   tile: 7, sheet: null,                           color: 0x050505, fogDensity: 0.07, hemiIntensity: 0.22, weather: 'void' },
+    { id: 8, name: 'Bone',    tile: 8, sheet: null,                           color: 0x3d3517, fogDensity: 0.04, hemiIntensity: 0.36, weather: 'dust' },
+    { id: 9, name: 'Ruins',   tile: 9, sheet: null,                           color: 0x282222, fogDensity: 0.035, hemiIntensity: 0.38, weather: 'rain' },
 ];
 
 export function getThemeForFloor(floor) {
@@ -176,6 +179,7 @@ export function generateDungeon(floor, roomCountOverride = null) {
     if (potentialAlchemy.length > 0) {
         const a = potentialAlchemy.pop();
         a.isAlchemy = true;
+        a.potionUsesLeft = 2; // Sink after 2 successful brews
         a.depth = 2.0; // Make it look slightly different (standard height)
     }
 
@@ -479,17 +483,17 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         return false;
     }
 
-    // Calculate max variation ONCE (not inside the loop!)
-    const maxVar = (theme.tile <= 7) ? 3 : 2;
+    // If the theme has a dedicated sheet, all 9 cells are in-theme — pick any freely.
+    // Otherwise fall back to the old column-based variation within block.png.
+    const hasThemedSheet = !!theme.sheet;
 
     for (let x = -bounds; x <= bounds; x++) {
         for (let z = -bounds; z <= bounds; z++) {
             if (grid[x][z]) {
-                // Calculate varied tile index
-                // Randomize variation to avoid diagonal patterns
-                const variation = Math.floor(Math.random() * maxVar);
-                // Ensure we don't exceed the sprite sheet (indices 0-8)
-                const tileIndex = Math.min(8, (theme.tile - 1) + variation);
+                // Themed sheet: any of the 9 cells is safe. Legacy block.png: stay in theme column.
+                const tileIndex = hasThemedSheet
+                    ? Math.floor(Math.random() * 9)
+                    : Math.min(8, (theme.tile - 1) + Math.floor(Math.random() * ((theme.tile <= 7) ? 3 : 2)));
 
                 addSolidPrism(x, z, tileIndex);
 
@@ -530,8 +534,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     mergedGeometry.setIndex(indices);
     mergedGeometry.computeVertexNormals();
 
-    // Load texture
-    const blockTex = getClonedTexture('assets/images/block.png');
+    // Load texture — use themed sheet if available, fall back to block.png
+    const blockTex = getClonedTexture(theme.sheet || 'assets/images/block.png');
     blockTex.repeat.set(1, 1);
     blockTex.offset.set(0, 0);
     blockTex.wrapS = THREE.RepeatWrapping;

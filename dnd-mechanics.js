@@ -42,14 +42,16 @@ export class CombatResolver {
      * @param {number} attAC - Attacker's Armor Class
      * @param {number} defAC - Defender's Armor Class
      */
-    static resolveClash(attPower, defPower, attAC, defAC) {
+    // attBonus: flat bonus added to attacker's to-hit total only (not damage).
+    // Used for player luck: Math.floor(game.stats.lck / 2).
+    static resolveClash(attPower, defPower, attAC, defAC, attBonus = 0) {
         const attConfig = DND_CONFIG.getDiceConfig(attPower);
         const defConfig = DND_CONFIG.getDiceConfig(defPower);
 
         const attRoll = DiceRoller.roll(attConfig.sides);
         const defRoll = DiceRoller.roll(defConfig.sides);
 
-        const attTotal = attRoll + attConfig.bonus;
+        const attTotal = attRoll + attConfig.bonus + attBonus;
         const defTotal = defRoll + defConfig.bonus;
 
         let result = {
