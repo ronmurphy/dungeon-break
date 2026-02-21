@@ -225,7 +225,7 @@ export function updateUI() {
             slot.style.cssText = "width:100%; aspect-ratio:1; background:rgba(0,0,0,0.5); border:1px solid #444; position:relative; cursor: pointer;";
             if (game.hotbar[i]) {
                 const item = game.hotbar[i];
-                const val = item.type === 'potion' ? item.val : item.id;
+                const val = (item.type === 'potion' || item.type === 'weapon') ? item.val : item.id;
                 const asset = getAssetData(item.type, val, item.suit);
                 let tint = (item.type === 'armor' && isArmorBroken) ? 'filter: sepia(1) hue-rotate(-50deg) saturate(5) contrast(0.8);' : '';
                 if (item.isCursed) tint = 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);';
@@ -255,7 +255,7 @@ export function updateUI() {
             // .combat-inventory-grid > div CSS handles dimensions
             if (game.hotbar[i]) {
                 const item = game.hotbar[i];
-                const val = item.type === 'potion' ? item.val : item.id;
+                const val = (item.type === 'potion' || item.type === 'weapon') ? item.val : item.id;
                 const asset = getAssetData(item.type, val, item.suit);
                 let tint = (item.type === 'armor' && isArmorBroken) ? 'filter: sepia(1) hue-rotate(-50deg) saturate(5) contrast(0.8);' : '';
                 if (item.isCursed) tint = 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);';
@@ -1265,7 +1265,7 @@ const COMBAT_PAGES = {
     main: [
         { name: 'Attack', icon: 'icon_attack.png', fn: "window.commandAttack()" },
         { name: 'Skill', icon: 'icon_skill.png', fn: "window.commandSkill()" },
-        { name: 'Item', icon: 'icon_item.png', fn: "console.log('Item')" },
+        { name: 'Item', icon: 'icon_item.png', fn: "window.openItemsMenu()" },
         { name: 'Defend', icon: 'icon_defend.png', fn: "window.commandDefend()" },
         { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
         { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
@@ -1284,12 +1284,29 @@ const COMBAT_PAGES = {
 
 window.openTacticsMenu = () => updateCombatMenu('tactics');
 window.openMainMenu = () => updateCombatMenu('main');
+window.openItemsMenu = () => updateCombatMenu('items');
 
 function updateCombatMenu(pageName) {
     const menu = document.getElementById('combatMenuGrid');
     if (!menu) return;
 
-    let items = COMBAT_PAGES[pageName];
+    let items;
+
+    if (pageName === 'items') {
+        // Build dynamically from current hotbar state
+        items = Array(9).fill(null);
+        game.hotbar.forEach((item, i) => {
+            if (item && i < 8) {
+                const nameColor = item.type === 'potion' ? '#ff8888'
+                    : item.type === 'active' ? '#ffcc44'
+                    : '#aaaaaa';
+                items[i] = { name: item.name, icon: 'icon_item.png', fn: `window.commandUseItem(${i})`, nameColor };
+            }
+        });
+        items[8] = { name: 'Back', icon: 'icon_flee.png', fn: 'window.openMainMenu()' };
+    } else {
+        items = COMBAT_PAGES[pageName];
+    }
 
     // For the main page, replace the generic "Skill" label with the class's actual skill name
     if (pageName === 'main') {
@@ -1319,7 +1336,7 @@ function updateCombatMenu(pageName) {
                 btn.onclick = () => { new Function(act.fn)(); };
                 btn.innerHTML = `
                     <img src="assets/images/ui/combat/${act.icon}" style="width:48px; height:48px; margin-bottom:5px;" onerror="this.style.display='none'">
-                    <span style="font-family:'Cinzel'; font-size:12px; color:#ccc;">${act.name}</span>
+                    <span style="font-family:'Cinzel'; font-size:12px; color:${act.nameColor || '#ccc'};">${act.name}</span>
                 `;
             } else {
                 btn.style.visibility = 'hidden';

@@ -132,6 +132,7 @@ let playerReturnPos = null;
 let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
 let wanderers = [];
+const WANDERER_Y_LIFT = 0.08; // Keep enemies just under player height (0.1) so range circles are visible and overlap cleanly
 let corpses = []; // { mesh, name, fuelReward } — skull sprites left after on-map kills
 let _aiFrameCount = 0; // Incremented each animate3D frame; used to throttle wanderer AI + mixers
 let _azureFlameReadyAt = 0; // Timestamp after which Azure Flame proximity can fire (spawn grace)
@@ -163,7 +164,7 @@ const GALLERY_MODELS = [
     'gothic_tower-web.glb',
     'openchest-web.glb',
     // 'room_dome-web.glb',
-    'room_rect-web.glb',
+    'room_rect-web.glb', // ⚠️ FALLBACK — do NOT remove this entry; it is the default room when a shape is not in this list
     'room_round-web.glb',
     // 'room_secret-web.glb',
     'room_spire-web.glb',
@@ -1475,7 +1476,7 @@ function initWanderers() {
                     terrainRaycaster.set(new THREE.Vector3(sx, 50, sz), new THREE.Vector3(0, -1, 0));
                     const hits = terrainRaycaster.intersectObject(globalFloorMesh);
                     if (hits.length > 0) {
-                        sy = hits[0].point.y;
+                        sy = hits[0].point.y + WANDERER_Y_LIFT;
                         valid = true;
                     }
                 }
@@ -1581,7 +1582,7 @@ function pickWandererTarget(wanderer) {
                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                     let currentY = wanderer.mesh.position.y;
                     if (hits.length > 0) {
-                        currentY = hits[0].point.y;
+                        currentY = hits[0].point.y + WANDERER_Y_LIFT;
                         wanderer.mesh.position.y = currentY;
                     }
 
@@ -2077,6 +2078,14 @@ function update3DScene() {
                         } else {
                             customModelPath = 'assets/images/glb/room_rect-web.glb';
                         }
+                        customScale = 0.5;
+                    }
+
+                    // Guard: if the resolved room model isn't present in GALLERY_MODELS
+                    // (e.g. commented out due to high poly count), fall back to the safe rect room.
+                    const _roomFile = customModelPath.split('/').pop();
+                    if (!GALLERY_MODELS.includes(_roomFile)) {
+                        customModelPath = 'assets/images/glb/room_rect-web.glb';
                         customScale = 0.5;
                     }
                 }
@@ -2698,6 +2707,16 @@ function animate3D() {
     // NOTE: We still run during isCombatView so wanderers can chase and JOIN an active fight.
     // Wanderers already in 'combat' state are skipped below.
     _aiFrameCount++;
+
+    // Void safety — remove wanderers that have fallen off the world
+    for (let _vi = wanderers.length - 1; _vi >= 0; _vi--) {
+        const _vw = wanderers[_vi];
+        if (_vw.mesh && _vw.mesh.position.y < -3) {
+            scene.remove(_vw.mesh);
+            wanderers.splice(_vi, 1);
+        }
+    }
+
     if (!isEngagingCombat && wanderers.length > 0) {
         const playerObj = playerMesh;
         if (playerObj) {
@@ -2788,7 +2807,12 @@ function animate3D() {
                                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
                                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                                     if (hits.length > 0) {
-                                        wanderer.mesh.position.y = hits[0].point.y;
+                                        wanderer.mesh.position.y = hits[0].point.y + WANDERER_Y_LIFT;
+                                    } else {
+                                        // No floor found — stepped into void; undo the move and re-patrol
+                                        wanderer.mesh.position.sub(dir);
+                                        wanderer.state = 'patrol';
+                                        pickWandererTarget(wanderer);
                                     }
                                 }
                             }
@@ -2966,10 +2990,15 @@ function exitHouseBattle() {
 }
 
 
-// Temporary hack to get out of house quickly for testing (Weapon Button for Exit)
+// Weapon button — context-sensitive: combat menu in combat, inventory otherwise
 window.openInventory = () => {
     if (isInHouse) {
         exitHouseBattle();
+        return;
+    }
+
+    if (isCombatView) {
+        showCombatMenu();
         return;
     }
 
@@ -3701,7 +3730,7 @@ function finalizeStartDive() {
     game.bonfireUsed = false; game.merchantUsed = false;
     game.currentTrack = null;
     game.visitedWaypoints = [];
-    _azureFlameReadyAt = Date.now() + 4000; // 4s grace — player spawns on top of the flame
+    _azureFlameReadyAt = Date.now() + 12000; // 12s grace on game start — player needs time to orient before the flame prompts
     game.enemiesDefeated = 0;
 
     // Apply Hidden Class Bonuses
@@ -3910,7 +3939,7 @@ function descendToNextFloor() {
     game.deck = createDeck(); game.rooms = generateDungeon(game.floor);
     game.currentRoomIdx = 0; game.lastAvoided = false;
     game.bonfireUsed = false; game.merchantUsed = false;
-    _azureFlameReadyAt = Date.now() + 4000; // Grace period — player drops onto the flame on floor entry
+    _azureFlameReadyAt = Date.now() + 6000; // 6s grace on floor entry — player drops onto the flame
     game.pendingPurchase = null;
     game.isBossFight = false;
     game.currentTrack = null; // Force music re-eval
@@ -5439,6 +5468,12 @@ window.useItem = function (idx) {
     const item = game.hotbar[idx];
     if (!item) return;
 
+    // During 3D wanderer combat, delegate to the combat-aware handler
+    if (isCombatView && window.commandUseItem) {
+        window.commandUseItem(idx);
+        return;
+    }
+
     if (item.type === 'potion') {
         const heal = Math.min(item.val, game.maxHp - game.hp);
         game.hp += heal;
@@ -5449,7 +5484,7 @@ window.useItem = function (idx) {
         return;
     }
 
-    if (!item || item.type !== 'active') return;
+    if (!item || (item.type !== 'active' && item.type !== 'item')) return;
 
     // Tinkerer (Artificer) Passive: Conservation
     const saveItem = (game.classId === 'artificer' && Math.random() < 0.15);
@@ -8020,7 +8055,7 @@ function spawnCorpse(target) {
     const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
     const sprite = new THREE.Sprite(mat);
     sprite.position.copy(deathPos);
-    sprite.position.y = 0.5;
+    sprite.position.y = deathPos.y + 1.5; // Float 1.5 above wherever the enemy actually died
     sprite.scale.set(1.2, 1.2, 1.2);
     scene.add(sprite);
 
@@ -8915,6 +8950,65 @@ window.commandWait = function () {
     startEnemyTurn();
 };
 
+window.commandUseItem = function (idx) {
+    if (combatState.turn !== 'player') return;
+    const item = game.hotbar[idx];
+    if (!item) { if (window.openMainMenu) window.openMainMenu(); return; }
+
+    if (item.type === 'potion') {
+        const heal = Math.min(item.val, game.maxHp - game.hp);
+        game.hp += heal;
+        game.hotbar[idx] = null;
+        logCombat(`Used ${item.name}. Restored ${heal} HP.`, '#44ff88');
+        spawnFloatingText(`+${heal} HP`, window.innerWidth / 2, window.innerHeight / 2, '#44ff88');
+        updateUI();
+        if (window.openMainMenu) window.openMainMenu();
+        setTimeout(startEnemyTurn, 500);
+        return;
+    }
+
+    if (item.type === 'active' || item.type === 'item') {
+        const aliveEnemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
+
+        if (item.id === 0) { // Volatile Bomb — weapon dmg to random enemy
+            if (aliveEnemies.length === 0) { if (window.openMainMenu) window.openMainMenu(); return; }
+            const target = aliveEnemies[Math.floor(Math.random() * aliveEnemies.length)];
+            const dmg = game.equipment.weapon ? Math.max(2, game.equipment.weapon.val - 2) : 2;
+            target.stats.hp = Math.max(0, target.stats.hp - dmg);
+            game.hotbar[idx] = null;
+            logCombat(`Threw Volatile Bomb at ${enemyDisplayName(target)} for ${dmg} damage!`, '#ff8800');
+            spawnFloatingText('BOOM!', window.innerWidth / 2, window.innerHeight / 2, '#ff8800');
+            updateUI();
+            if (window.openMainMenu) window.openMainMenu();
+            checkCombatEnd(target);
+            return;
+        }
+
+        if (item.id === 7) { // Music Box — -2 HP to all enemies
+            aliveEnemies.forEach(e => { e.stats.hp = Math.max(0, e.stats.hp - 2); });
+            game.hotbar[idx] = null;
+            logCombat('Music Box: all enemies weakened (-2 HP).', '#cc88ff');
+            spawnFloatingText('♪ WEAKENED', window.innerWidth / 2, window.innerHeight / 2, '#cc88ff');
+            updateUI();
+            if (window.openMainMenu) window.openMainMenu();
+            const firstDead = aliveEnemies.find(e => e.stats.hp <= 0);
+            if (firstDead) {
+                checkCombatEnd(firstDead);
+            } else {
+                setTimeout(startEnemyTurn, 500);
+            }
+            return;
+        }
+
+        logCombat(`${item.name} can't be used in combat.`, '#888888');
+        if (window.openMainMenu) window.openMainMenu();
+        return;
+    }
+
+    logCombat(`${item.name} can't be used here.`, '#888888');
+    if (window.openMainMenu) window.openMainMenu();
+};
+
 window.commandDefend = function () {
     if (combatState.turn !== 'player') return;
     combatState.isDefending = true;
@@ -9075,7 +9169,7 @@ function startEnemyTurn() {
                     const rayOrigin = new THREE.Vector3(enemy.mesh.position.x, CombatManager.combatTarget.y + 20, enemy.mesh.position.z);
                     terrainRaycaster.set(rayOrigin, new THREE.Vector3(0, -1, 0));
                     const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
-                    if (hits.length > 0) enemy.mesh.position.y = hits[0].point.y;
+                    if (hits.length > 0) enemy.mesh.position.y = hits[0].point.y + WANDERER_Y_LIFT;
                 }
                 if (enemyRangeIndicator) enemyRangeIndicator.position.copy(enemy.mesh.position);
             })
@@ -9227,6 +9321,7 @@ function endEnemyTurn() {
             combatState.isDefending = false;
             updateMovementIndicator();
             updateInitStrip('player');
+            showCombatMenu();
             logCombat("Player turn.");
         }
     }, 1000);
