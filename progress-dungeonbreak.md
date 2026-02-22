@@ -1,6 +1,6 @@
 # Dungeon Break - Progress & Roadmap
 
-*Last updated: 2026-02-21 (session 2)*
+*Last updated: 2026-02-21 (session 3)*
 
 ---
 
@@ -203,14 +203,26 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 
 ## 🎯 Phase 4: Content & Progression (Next Focus)
 
-### High Priority — Boss Arena System
-- [ ] **Boss arena:** Walking into the final tower (`isFinal` room) shows confirmation prompt "Enter the Guardian's Lair — there is no retreat." Confirms → teleport to Battle Island (themed to match floor).
-- [ ] **Boss enemy:** Pick a random floor wanderer, scale it up (2× HP, +3 AC, +2 STR, 1.5–2× mesh scale). Name = random prefix + enemy name (e.g. "The Dread Stomlem of Ruin").
-- [ ] **Boss naming pool:** Prefixes: The Dread, Demonic, Unholy, Ancient, Forsaken, Wrathful, Corrupted. Suffixes: of Doom, the Angry, the Relentless, the Cursed, of Ruin, the Undying, the Terrible.
-- [ ] **Arena walls:** Collision barriers around Battle Island perimeter — no escape allowed. Flee option disabled in boss context.
-- [ ] **Boss arena markers:** Brad will supply boss-only GLBs (one-time heal pedestal, proximity trap, etc.) placed inside the arena.
-- [ ] **Victory:** Beat boss → unlock Double Helix spiral at arena exit.
-- [ ] **Old card-based boss system removal:** `startBossFight()`, `startSoulBrokerEncounter()`, `pickCard()`, `finishRoom()`, `game.deck/combatCards/carryCard`, `createDeck()` — clean removal once new system confirmed working. `showCombat()` shell stays (used by on-map combat backdrop).
+### High Priority — Boss Arena System ✅ (largely complete, bugs below)
+- [x] **Boss arena:** Azure-Flame-style proximity trigger on `isFinal` room (not room-entry — boss room is a 3D GLB model). Confirmation modal "ENTER THE LAIR / Not Yet". 8-second dismiss cooldown. `enterBossArena()` teleports to Battle Island.
+- [x] **Boss enemy:** `spawnBossWanderer(floor, cb)` — 35% chance demoness-web.glb, else random from pool. Scaled stats: `hp=30+floor×8, ac=2+floor, str=3+floor`. Random name from `BOSS_PREFIXES × BOSS_TYPES` (e.g. "Ironborn Sovereign", "Rotbound Keeper"). Boss appears larger + tinted red (existing Three.js instance color system).
+- [x] **Demoness boss:** Ranged spellcaster. `isRanged:true` → `attackRange=8.0`. Fires `magic_02.png` projectile via `spawn3DSpell()`. `MODEL_ANIM_OVERRIDES` uses `swim idle` as walk, `mage_soell_cast` as attack.
+- [x] **Arena walls:** Replaced 4-box square walls with single `CylinderGeometry` (radius=halfSize+2, 48 segments, `THREE.BackSide`) — no corner gaps on organic CA island. Boss and helpers cannot flee (`!enemy.isBoss && !enemy.isHelper && !inBattleIsland` guard).
+- [x] **Boss helper minions — 3 battle plans (The Council, The Phalanx, The Fortress):** `spawnHelperWanderer()` loads helpers async, `finalize()` called when all are ready. Helpers tagged `isHelper/isBulwark/isFanatic/isArchitect`.
+  - **Bulwark** (ironjaw / SkeletalViking): high HP/AC. While alive → +2 STR to boss attack (`executeEnemyAttack` check).
+  - **Fanatic** (male_evil / male_evil-true): high STR aggressive attacker.
+  - **Architect** (a-sorcoress): On its turn, heals boss 2+1d4 instead of attacking.
+- [x] **Victory condition:** All enemies (boss + helpers) must die. `bossVictory()` fires only when `aliveEnemies.length === 0`.
+- [x] **Cleanup on victory:** `removeCombatTracker()` + `hideCombatMenu()` called. Corpses, soul coins, loot sprites all removed from scene before intermission.
+- [x] **Kill count persistence:** `game.floorKills` saved; `initWanderers` subtracts it on reload. Helpers don't increment it (`!target.isHelper` guard).
+- [x] **Enemy counter HUD:** `#enemyCounter` div under gear button shows live `wanderers.length`.
+- [x] **Intermission shop:** Fixed pointer-events (was `none` from combat passthrough). Card layout changed from `display:contents` on enemyArea to proper 2×2 grid on `itemsContainer`. Shop cards fully clickable.
+- [x] **Soul broker cards:** After `showCombat()`, pointer-events explicitly reset to `auto` on modal + enemyArea.
+- [ ] **Victory → Double Helix:** Beat boss → unlock Double Helix spiral. Not yet built.
+- [ ] **Old card-based boss system removal:** `startBossFight()`, `startSoulBrokerEncounter()`, `pickCard()`, `finishRoom()`, `game.deck/combatCards/carryCard`, `createDeck()` — clean removal once new system confirmed working.
+
+### 🐛 Known Bugs — Boss Arena (fix next session)
+- **Helpers never attack (CRITICAL):** The Council / Phalanx / Fortress helpers load and animate in place but never move toward the player or take their turn in combat. They are pushed to `wanderers[]` and `combatState.enemies[]` but their turns in the initiative order appear to be skipped or the AI doesn't move them. Likely cause: `startCombat()` builds `combatState.enemies[]` from only the primary target at call time — helpers pushed after `startCombat()` are in `wanderers` but may not be in `combatState.enemies`. Fix: push helpers into `combatState.enemies` in the `finalize()` callback, or re-run `rollInitiative()` after all helpers are registered. Also check `startEnemyTurn()` picks from `combatState.enemies`, not `wanderers`.
 
 ### High Priority — Double Helix Progression
 - [ ] **Helix as physical traversal zone:** After beating the floor boss, the Double Helix spiral opens. Player physically runs up it in 3D — not a loading screen.

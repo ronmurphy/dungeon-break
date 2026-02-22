@@ -19,7 +19,7 @@ import { CombatTerrain, updateCombatVisibility } from './combat-mechanics.js';
 import { CombatResolver, DND_CONFIG, DiceRoller } from './dnd-mechanics.js';
 import { CardDesigner } from './card-designer.js';
 import { CombatManager } from './combat-manager.js';
-import BattleIsland from './battle-island.js';
+import BattleIsland, { createBattleIsland, addArenaWalls } from './battle-island.js';
 import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getWeaponName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, updateInitStrip } from './ui-manager.js';
@@ -73,6 +73,13 @@ let savedFogDensity = 0.045;
 window.exitBattleIsland = function () {
     hideCombatMenu();
     if (!isCombatView) return;
+
+    // No escape from the boss arena
+    if (game.isBossFight) {
+        spawnFloatingText('NO RETREAT!', window.innerWidth / 2, window.innerHeight / 2, '#ff3300', 32);
+        logCombat("There is no escape from the Guardian's Lair!", '#ff3300');
+        return;
+    }
 
     removeCombatTracker();
     hideCombatMenu();
@@ -142,7 +149,55 @@ const JUMP_MAX_GAP = 2.2;         // Max horizontal gap (world units) player/wan
 const JUMP_MAX_HEIGHT_DIFF = 2.0; // Max up/down height change on a jump
 const JUMP_ARC = 1.3;             // Peak height above start for normal jumps
 const JUMP_ARC_WINGED = 2.2;      // Winged enemies jump higher
-const WINGED_MODELS = ['female_evil-web.glb', 'female_evil-true-web.glb', 'male_evil-web.glb', 'male_evil-true-web.glb'];
+const WINGED_MODELS = ['female_evil-web.glb', 'female_evil-true-web.glb', 'male_evil-web.glb', 'male_evil-true-web.glb', 'demoness-web.glb'];
+
+// Per-model animation term overrides (for models with non-standard clip names)
+const MODEL_ANIM_OVERRIDES = {
+    'demoness-web.glb': {
+        walkTerms:   ['swim idle', 'swim', 'walk', 'run'],
+        attackTerms: ['mage_soell_cast', 'spell', 'cast'],
+        hitTerms:    ['fall2', 'fall', 'hit'],
+        deathTerms:  ['dying', 'death', 'die']
+    }
+};
+
+// Boss name generation
+const BOSS_PREFIXES = ['Ashen', 'Rotbound', 'Dread', 'Ironborn', 'Cursed', 'Voidbound', 'Ancient'];
+const BOSS_TYPES   = ['Warden', 'Keeper', 'Harbinger', 'Sentinel', 'Sovereign', 'Reaper', 'Tyrant'];
+function generateBossName() {
+    const pre  = BOSS_PREFIXES[Math.floor(Math.random() * BOSS_PREFIXES.length)];
+    const type = BOSS_TYPES[Math.floor(Math.random() * BOSS_TYPES.length)];
+    return `${pre} ${type}`;
+}
+
+// Boss battle plans — each defines which helpers spawn alongside the Guardian
+const BOSS_PLANS = [
+    {
+        name: 'The Phalanx',
+        desc: 'Two armored enforcers stand guard.',
+        helpers: [
+            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-2.5, -3.0], scale: 0.70, hp: 22, ac: 4, str: 2, name: 'Bulwark'  },
+            { role: 'Bulwark',   model: 'SkeletalViking-web.glb', pos: [ 2.0, -3.0], scale: 0.75, hp: 18, ac: 3, str: 2, name: 'Bulwark'  },
+        ]
+    },
+    {
+        name: 'The Council',
+        desc: 'A triad of specialists — shield, blade, and healer.',
+        helpers: [
+            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-3.0, -3.5], scale: 0.70, hp: 20, ac: 4, str: 2, name: 'Bulwark'   },
+            { role: 'Fanatic',   model: 'male_evil-web.glb',      pos: [ 0.0, -5.0], scale: 0.65, hp: 14, ac: 2, str: 4, name: 'Fanatic'   },
+            { role: 'Architect', model: 'a-sorcoress-web.glb',    pos: [ 3.0, -2.5], scale: 0.65, hp: 10, ac: 1, str: 1, name: 'Architect' },
+        ]
+    },
+    {
+        name: 'The Fortress',
+        desc: 'A fanatic shields while an architect mends the Guardian\'s wounds.',
+        helpers: [
+            { role: 'Fanatic',   model: 'male_evil-true-web.glb', pos: [-2.0, -4.5], scale: 0.65, hp: 18, ac: 2, str: 4, name: 'Fanatic'   },
+            { role: 'Architect', model: 'a-sorcoress-web.glb',    pos: [ 2.0, -4.0], scale: 0.65, hp: 12, ac: 1, str: 1, name: 'Architect' },
+        ]
+    },
+];
 let corpses = []; // { mesh, name, fuelReward, loot } — skull sprites left after on-map kills
 let soulcoinSprites = []; // { mesh, tex, coins } — animated coin pickups on the map
 let _aiFrameCount = 0; // Incremented each animate3D frame; used to throttle wanderer AI + mixers
@@ -157,7 +212,9 @@ const WANDERER_MODELS = [
     'a-sand-assassin-web.glb',
     'a-sorcoress-web.glb',
     'a-skeleton-king-web.glb',
-    'a-q'
+    'Magma_dog-web.glb',
+    'grimmlinn-web.glb',
+    'demoness-web.glb'
 ];
 // Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
 // 'a-female_twin-web.glb', 'a_male_twin-web.glb'
@@ -1438,13 +1495,16 @@ function initWanderers() {
     wanderers = [];
 
     // Revert to standard enemy count for normal floors
-    let count = 3 + Math.floor(game.floor); 
-    
+    let count = 3 + Math.floor(game.floor);
+
     // Apply Benchmark Math ONLY for True Dungeon
     if (game.inTrueDungeon) {
         const fps = gameSettings.benchmarkFPS || 30;
         count = Math.floor(fps / 2); // FPS / 2 enemies
     }
+
+    // Subtract already-killed enemies (persisted across saves)
+    count = Math.max(0, count - (game.floorKills || 0));
 
     for (let i = 0; i < count; i++) {
         const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
@@ -1849,6 +1909,12 @@ function flipRock(rockMesh, instanceId) {
 }
 
 function getTerrainY(x, z) {
+    // On Battle Island, raycast against the arena group (world Y ≈ 2000)
+    if (inBattleIsland && CombatManager.battleGroup) {
+        terrainRaycaster.set(new THREE.Vector3(x, 2100, z), new THREE.Vector3(0, -1, 0));
+        const hits = terrainRaycaster.intersectObject(CombatManager.battleGroup, true);
+        return hits.length > 0 ? hits[0].point.y : 2000;
+    }
     if (!globalFloorMesh) return 0;
     terrainRaycaster.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
     const hits = terrainRaycaster.intersectObject(globalFloorMesh, true);
@@ -2870,6 +2936,28 @@ function animate3D() {
         }
     }
 
+    // Boss Room proximity trigger — fires when player approaches isFinal room and all enemies are dead
+    if (!isCombatView && !isAttractMode && !isEditMode && !game.isBossFight && playerObj
+        && !(window._bossPromptCooldown && Date.now() < window._bossPromptCooldown)) {
+        const finalRoom = game.rooms ? game.rooms.find(r => r.isFinal) : null;
+        const modal = document.getElementById('combatModal');
+        const modalOpen = modal && modal.style.display === 'flex';
+        if (finalRoom && !modalOpen && finalRoom.state !== 'boss_active') {
+            const dist = Math.hypot(finalRoom.gx - playerObj.position.x, finalRoom.gy - playerObj.position.z);
+            if (dist < 5.0) {
+                const aliveCount = wanderers.length;
+                if (aliveCount === 0) {
+                    game.activeRoom = finalRoom;
+                    startBossEncounter();
+                } else if (!finalRoom._enemyHintShown) {
+                    finalRoom._enemyHintShown = true;
+                    spawnFloatingText(`${aliveCount} enem${aliveCount === 1 ? 'y' : 'ies'} remain!`, window.innerWidth / 2, window.innerHeight / 2 - 60, '#ff8800', 28);
+                    setTimeout(() => { if (finalRoom) finalRoom._enemyHintShown = false; }, 4000);
+                }
+            }
+        }
+    }
+
     // Duck Collection Logic
     if (game.inDuckDungeon && playerObj) {
         for (const r of game.rooms) {
@@ -3063,6 +3151,9 @@ function animate3D() {
     // NOTE: We still run during isCombatView so wanderers can chase and JOIN an active fight.
     // Wanderers already in 'combat' state are skipped below.
     _aiFrameCount++;
+
+    // Enemy counter HUD — update every ~90 frames
+    if (_aiFrameCount % 90 === 0) updateEnemyCounter();
 
     // Void safety — remove wanderers that have fallen off the world
     for (let _vi = wanderers.length - 1; _vi >= 0; _vi--) {
@@ -4225,6 +4316,9 @@ function startIntermission() {
     const overlay = document.getElementById('combatModal');
     const enemyArea = document.getElementById('enemyArea');
     overlay.style.display = 'flex';
+    overlay.style.pointerEvents = 'auto';
+    overlay.style.background = 'rgba(0,0,0,0.88)';
+    enemyArea.style.pointerEvents = 'auto';
     document.getElementById('combatContainer').style.display = 'flex';
     document.getElementById('bonfireUI').style.display = 'none';
 
@@ -4255,12 +4349,11 @@ function startIntermission() {
     // Defer update slightly to ensure layout is settled
     requestAnimationFrame(updateMerchantPortraitPosition);
 
-    enemyArea.classList.remove('boss-grid', 'layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal');
-    enemyArea.classList.add('layout-merchant'); // Force 2x2 grid
+    enemyArea.classList.remove('boss-grid', 'layout-linear', 'layout-scatter', 'layout-corners', 'layout-introverted', 'layout-diagonal', 'layout-merchant');
+    enemyArea.style.cssText = 'display:flex; flex-direction:column; align-items:center; overflow-y:auto;';
 
     const itemsContainer = document.createElement('div');
-    // We let CSS grid handle layout now
-    itemsContainer.style.cssText = "display:contents;";
+    itemsContainer.style.cssText = "display:grid; grid-template-columns:repeat(2,1fr); gap:15px; width:320px; margin-top:8px;";
     enemyArea.appendChild(itemsContainer);
 
     // Render Shop Items (Random selection of 4)
@@ -4344,6 +4437,8 @@ function startIntermission() {
 }
 
 function descendToNextFloor() {
+    const ec = document.getElementById('enemyCounter'); if (ec) ec.style.display = 'none';
+    game.floorKills = 0;
     game.floor++; closeCombat();
     game.deck = createDeck(); game.rooms = generateDungeon(game.floor);
     game.currentRoomIdx = 0; game.lastAvoided = false;
@@ -4846,64 +4941,325 @@ function createShopCard(item, isSell, source, idx) {
     return card;
 }
 
-function startBossFight() {
+// ─── ENEMY COUNTER HUD ────────────────────────────────────────────────────────
+function updateEnemyCounter() {
+    let el = document.getElementById('enemyCounter');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'enemyCounter';
+        el.style.cssText = [
+            'position:fixed', 'top:68px', 'left:20px',
+            'background:rgba(10,5,0,0.82)', 'border:1px solid #7a5a20',
+            'color:#d4af37', 'font-family:"Crimson Text",Georgia,serif',
+            'font-size:1.0em', 'padding:4px 12px', 'border-radius:3px',
+            'pointer-events:none', 'z-index:9005', 'letter-spacing:1px'
+        ].join(';');
+        document.body.appendChild(el);
+    }
+    const alive = wanderers.length;
+    if (alive === 0 || isCombatView || isAttractMode) {
+        el.style.display = 'none';
+    } else {
+        el.style.display = 'block';
+        el.textContent = `⚔ ${alive} enem${alive === 1 ? 'y' : 'ies'} remain`;
+    }
+}
+
+// ─── BOSS ENCOUNTER SYSTEM ────────────────────────────────────────────────────
+
+/**
+ * Spawns a boss wanderer (async GLB load). Pre-sets scaled stats so
+ * initWandererForCombat won't override them. Calls back with the wanderer.
+ */
+function spawnBossWanderer(floor, callback) {
+    // Pick model: demoness gets a weighted shot, otherwise random from the pool
+    const isDemoness = Math.random() < 0.35;
+    const file = isDemoness
+        ? 'demoness-web.glb'
+        : WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
+    const bossYLift = file === 'demoness-web.glb' ? 0.5 : WANDERER_Y_LIFT;
+
+    const bossHp = 30 + floor * 8;
+    const bossStats = {
+        name:   generateBossName(),
+        hp:     bossHp,
+        maxHp:  bossHp,
+        ac:     2 + floor,
+        str:    3 + floor,
+        xp:     100 + floor * 20,
+        bleed: 0, blinded: false, gutsCharge: 0, gutsStacks: 0
+    };
+
+    loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
+        const lod = new THREE.LOD();
+        lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 1.8, 0.6),
+            new THREE.MeshBasicMaterial({ color: 0x1a1a1a })
+        );
+        lod.addLevel(box, (gameSettings.lod && gameSettings.lod.far) || 80);
+        lod.position.set(0, bossYLift, 0);
+        scene.add(lod);
+
+        const mixer = new THREE.AnimationMixer(model);
+        const overrides = MODEL_ANIM_OVERRIDES[file];
+
+        const findAnim = (terms) => {
+            for (const term of terms) {
+                const clip = animations.find(a => a.name.toLowerCase().includes(term.toLowerCase()));
+                if (clip) return clip;
+            }
+            return null;
+        };
+
+        const walkTerms = overrides ? overrides.walkTerms : ['walk', 'run', 'move'];
+        const walkClip  = findAnim(walkTerms) || animations[0];
+        const actions   = {};
+        if (walkClip) { actions.walk = mixer.clipAction(walkClip); actions.walk.play(); }
+
+        const wanderer = {
+            mesh: lod, mixer, actions, filename: file,
+            stats: bossStats, isBoss: true,
+            state: 'idle', tween: null, target: null,
+            isJumping: false, yLift: bossYLift,
+            isRanged: file === 'demoness-web.glb'  // Demoness attacks from range
+        };
+
+        callback(wanderer);
+    }, file === 'demoness-web.glb' ? 0.9 : 0.7);
+}
+
+/**
+ * Shows the pre-fight confirmation screen ("no retreat").
+ * Replaces the old card-based startBossFight().
+ */
+function startBossEncounter() {
+    const modal = document.getElementById('combatModal');
+    modal.style.display = 'flex';
+    // Normal combat runs with pointerEvents:none so clicks reach the 3D scene.
+    // This is a blocking prompt — restore pointer events so buttons work.
+    modal.style.pointerEvents = 'auto';
+    modal.style.background = 'rgba(0,0,0,0.75)';
+
+    document.getElementById('combatMessage').innerText = "The Guardian stirs within.";
+    document.getElementById('enemyArea').innerHTML = `
+        <div style="text-align:center;padding:20px 10px;">
+            <div style="color:#cc3300;font-size:1.6em;letter-spacing:3px;margin-bottom:16px;">⚠ GUARDIAN'S LAIR ⚠</div>
+            <div style="color:#aaa;font-size:1em;margin-bottom:24px;font-style:italic;">There is no retreat once you enter.</div>
+            <div style="display:flex;gap:12px;justify-content:center;">
+                <button onclick="enterBossArena()" style="background:#8b0000;color:#ffd700;border:1px solid #cc3300;padding:10px 24px;font-size:1.1em;cursor:pointer;font-family:inherit;border-radius:3px;">ENTER THE LAIR</button>
+                <button onclick="window._dismissBossPrompt()" style="background:#222;color:#aaa;border:1px solid #555;padding:10px 18px;font-size:1em;cursor:pointer;font-family:inherit;border-radius:3px;">Not Yet</button>
+            </div>
+        </div>`;
+
+    // Hide the default footer buttons — prompt has its own inline buttons
+    document.getElementById('exitCombatBtn').style.display = 'none';
+    document.getElementById('descendBtn').style.display = 'none';
+    document.getElementById('modalAvoidBtn').style.display = 'none';
+
+    // Expose enterBossArena globally so the inline onclick can reach it
+    window.enterBossArena = enterBossArena;
+    window._dismissBossPrompt = () => {
+        closeCombat();
+        window._bossPromptCooldown = Date.now() + 8000; // 8s before it can trigger again
+    };
+}
+
+/**
+ * Spawns a single boss helper wanderer at the given island offset position.
+ */
+function spawnHelperWanderer(helperDef, anchor, getIslandY, callback) {
+    const file = helperDef.model;
+    const [offX, offZ] = helperDef.pos;
+    const wx = anchor.x + offX, wz = anchor.z + offZ;
+
+    loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
+        const lod = new THREE.LOD();
+        lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 1.8, 0.6),
+            new THREE.MeshBasicMaterial({ color: 0x1a1a1a })
+        );
+        lod.addLevel(box, (gameSettings.lod && gameSettings.lod.far) || 80);
+        lod.position.set(wx, getIslandY(wx, wz) + WANDERER_Y_LIFT, wz);
+        scene.add(lod);
+
+        const mixer = new THREE.AnimationMixer(model);
+        const walkClip = animations.find(a => {
+            const n = a.name.toLowerCase();
+            return n.includes('walk') || n.includes('run') || n.includes('move');
+        }) || animations[0];
+        const actions = {};
+        if (walkClip) { actions.walk = mixer.clipAction(walkClip); actions.walk.play(); }
+
+        const hpVal  = helperDef.hp  + Math.floor(game.floor * 2);
+        const strVal = helperDef.str + Math.floor(game.floor / 2);
+
+        const wanderer = {
+            mesh: lod, mixer, actions, filename: file,
+            stats: {
+                name:  helperDef.name,
+                hp: hpVal, maxHp: hpVal,
+                ac:  helperDef.ac,
+                str: strVal,
+                xp:  25 + game.floor * 5,
+                bleed: 0, blinded: false, gutsCharge: 0, gutsStacks: 0
+            },
+            state: 'idle', tween: null, target: null,
+            isJumping: false, yLift: WANDERER_Y_LIFT,
+            isHelper:    true,
+            isBulwark:   helperDef.role === 'Bulwark',
+            isFanatic:   helperDef.role === 'Fanatic',
+            isArchitect: helperDef.role === 'Architect',
+        };
+
+        callback(wanderer);
+    }, helperDef.scale || 0.7);
+}
+
+/**
+ * Teleports player to the Battle Island arena, spawns boss, starts combat.
+ */
+function enterBossArena() {
     game.isBossFight = true;
-    game.activeRoom.state = 'boss_active';
-    game.chosenCount = 0;
+    if (game.activeRoom) game.activeRoom.state = 'boss_active';
+    document.getElementById('combatModal').style.display = 'none';
+    logMsg("You step into the Guardian's Lair...");
 
-    const guardians = ['guardian_abyssal_maw', 'guardian_gargoyle', 'guardian_ironclad_sentinel'];
-    const selectedGuardian = guardians[Math.floor(Math.random() * guardians.length)];
+    // Save dungeon return position BEFORE moving the player
+    const dungeonReturnPos = playerMesh ? playerMesh.position.clone() : new THREE.Vector3();
 
-    // Define Boss Plans (Minion Configurations)
-    const plans = [
-        {
-            name: "The Phalanx",
-            minions: [
-                { slot: 'boss-weapon', name: "Vanguard", val: 10 + game.floor, role: 'vanguard' },
-                { slot: 'boss-potion', name: "Mystic", val: 5, role: 'mystic' },
-                { slot: 'boss-armor', name: "Bulwark", val: 10 + game.floor, role: 'bulwark' }
-            ]
-        },
-        {
-            name: "The Council",
-            minions: [
-                { slot: 'boss-weapon', name: "Sorcerer", val: 8 + game.floor, role: 'sorcerer' }, // Magic/Heart
-                { slot: 'boss-potion', name: "Architect", val: 12 + game.floor, role: 'architect' }, // Structure/Block
-                { slot: 'boss-armor', name: "Loyalist", val: 10 + game.floor, role: 'loyalist' } // Shield/Armor
-            ]
-        },
-        {
-            name: "The Fortress",
-            minions: [
-                { slot: 'boss-weapon', name: "Architect", val: 10 + game.floor, role: 'architect' },
-                { slot: 'boss-potion', name: "Architect", val: 10 + game.floor, role: 'architect' },
-                { slot: 'boss-armor', name: "Bulwark", val: 12 + game.floor, role: 'bulwark' }
-            ]
+    spawnBossWanderer(game.floor, (bossWanderer) => {
+        // Build arena + walls
+        const biGroup = createBattleIsland(scene, game.floor, loadTexture, getClonedTexture);
+        addArenaWalls(biGroup, 20, 5);
+        CombatManager.battleGroup = biGroup;
+
+        const anchor = biGroup.position.clone(); // (2000, 2000, 2000)
+
+        // Raycast against the new island to find ground Y
+        const bossRaycaster = new THREE.Raycaster();
+        const down = new THREE.Vector3(0, -1, 0);
+        const getIslandY = (x, z) => {
+            bossRaycaster.set(new THREE.Vector3(x, anchor.y + 50, z), down);
+            const hits = bossRaycaster.intersectObject(biGroup, true);
+            return hits.length > 0 ? hits[0].point.y : anchor.y;
+        };
+
+        // Place player
+        if (playerMesh) {
+            const px = anchor.x - 3, pz = anchor.z + 4;
+            playerMesh.position.set(px, getIslandY(px, pz) + 0.1, pz);
+            playerMesh.lookAt(anchor);
         }
-    ];
 
-    const plan = plans[Math.floor(Math.random() * plans.length)];
-    logMsg(`The Guardian employs ${plan.name}!`);
+        // Place boss opposite the player
+        const bx = anchor.x + 3, bz = anchor.z - 4;
+        bossWanderer.mesh.position.set(bx, getIslandY(bx, bz) + bossWanderer.yLift, bz);
 
-    game.combatCards = plan.minions.map(m => ({
-        type: 'monster', val: m.val, suit: SUITS.SKULLS, name: `Guardian's ${m.name}`, bossSlot: m.slot, customAsset: m.asset, customUV: m.uv, bossRole: m.role
-    }));
+        // Move camera to island
+        new TWEEN.Tween(camera.position)
+            .to({ x: anchor.x, y: anchor.y + 28, z: anchor.z + 18 }, 1200)
+            .easing(TWEEN.Easing.Cubic.Out).start();
+        if (controls) {
+            new TWEEN.Tween(controls.target)
+                .to({ x: anchor.x, y: anchor.y, z: anchor.z }, 1200)
+                .easing(TWEEN.Easing.Cubic.Out).start();
+        }
 
-    // Add the Guardian itself
-    // Health/Damage = 20 + Floor
-    game.combatCards.push({ type: 'monster', val: 20 + game.floor, suit: SUITS.SKULLS, name: "The Guardian", bossSlot: 'boss-guardian', customAnim: selectedGuardian });
-    game.combatCards.push({
-        type: 'monster',
-        val: 20 + game.floor,
-        suit: SUITS.SKULLS,
-        name: "The Guardian",
-        bossSlot: 'boss-guardian',
-        customAsset: `animations/${selectedGuardian}.png`,
-        customBgSize: '2500% 100%',
-        isAnimated: true
+        // Pick a random battle plan and announce it
+        const plan = BOSS_PLANS[Math.floor(Math.random() * BOSS_PLANS.length)];
+        logMsg(`The Guardian invokes: ${plan.name}! ${plan.desc}`);
+        setTimeout(() => spawnFloatingText(plan.name.toUpperCase(), window.innerWidth / 2, window.innerHeight / 2 - 80, '#ff6644', 28), 800);
+
+        // Shared finalize: register all combatants and begin fight
+        const finalize = (helpers) => {
+            wanderers.push(bossWanderer);
+            helpers.forEach(h => wanderers.push(h));
+
+            // Start on-map combat (sets inBattleIsland=false and saves player pos — we fix both below)
+            startCombat(bossWanderer, false);
+
+            // Override: flag as island combat so exitCombatView restores to dungeon
+            savedPlayerPos.copy(dungeonReturnPos);
+            inBattleIsland = true;
+            window.inBattleIsland = true;
+
+            // Ensure the avoid/flee button is hidden — no retreat from boss fight
+            document.getElementById('modalAvoidBtn').style.display = 'none';
+        };
+
+        // Spawn helpers async, then finalize when all are ready
+        const helperDefs = plan.helpers;
+        if (helperDefs.length === 0) {
+            finalize([]);
+            return;
+        }
+
+        const loadedHelpers = [];
+        let pending = helperDefs.length;
+        helperDefs.forEach(def => {
+            spawnHelperWanderer(def, anchor, getIslandY, (helper) => {
+                loadedHelpers.push(helper);
+                pending--;
+                if (pending === 0) finalize(loadedHelpers);
+            });
+        });
     });
+}
 
-    showCombat();
+/**
+ * Called when the boss dies. Awards loot, restores dungeon, advances floor.
+ */
+function bossVictory() {
+    // Remove the arena geometry
+    if (CombatManager.battleGroup) {
+        scene.remove(CombatManager.battleGroup);
+        CombatManager.battleGroup = null;
+    }
+
+    // Clean up combat UI before restoring
+    removeCombatTracker();
+    hideCombatMenu();
+
+    // Remove all arena-spawned corpses, coins, and loot from the scene
+    corpses.forEach(c => { if (c.mesh) scene.remove(c.mesh); });
+    corpses.length = 0;
+
+    for (let i = soulcoinSprites.length - 1; i >= 0; i--) {
+        const sc = soulcoinSprites[i];
+        if (sc.mesh) scene.remove(sc.mesh);
+    }
+    soulcoinSprites.length = 0;
+
+    for (let i = lootSprites.length - 1; i >= 0; i--) {
+        const ls = lootSprites[i];
+        if (ls.mesh) scene.remove(ls.mesh);
+    }
+    lootSprites.length = 0;
+
+    // Restore player to dungeon (inBattleIsland=true ensures exitCombatView uses savedPlayerPos)
+    inBattleIsland = true;
+    exitCombatView();
+
+    // Rewards
+    game.soulCoins = (game.soulCoins || 0) + 20 + game.floor * 5;
+    spawnFloatingText('GUARDIAN DEFEATED!', window.innerWidth / 2, window.innerHeight / 2, '#ffd700', 44);
+    logMsg(`The Guardian falls! ${20 + game.floor * 5} soul coins awarded.`);
+
+    game.isBossFight = false;
+
+    // Brief victory screen, then intermission (shop)
+    const modal = document.getElementById('combatModal');
+    modal.style.display = 'flex';
+    document.getElementById('combatMessage').innerText = `Guardian Defeated! Descending to Floor ${game.floor + 1}...`;
+    document.getElementById('enemyArea').innerHTML =
+        '<div style="color:#ffd700;font-size:1.5em;text-align:center;padding:24px;">⚔ VICTORY!</div>';
+    document.getElementById('exitCombatBtn').style.display  = 'none';
+    document.getElementById('descendBtn').style.display     = 'none';
+    document.getElementById('modalAvoidBtn').style.display  = 'none';
+
+    setTimeout(() => { closeCombat(); startIntermission(); }, 3500);
 }
 
 function startSoulBrokerEncounter() {
@@ -4946,6 +5302,10 @@ function startSoulBrokerEncounter() {
     ];
 
     showCombat();
+
+    // showCombat() sets pointerEvents:none for 3D passthrough — but broker cards need clicks
+    document.getElementById('combatModal').style.pointerEvents = 'auto';
+    document.getElementById('enemyArea').style.pointerEvents = 'auto';
 }
 
 function showCombat() {
@@ -4994,7 +5354,7 @@ function showCombat() {
                 msgEl.innerText = "The Guardian awaits.";
                 document.getElementById('descendBtn').style.display = 'block';
                 document.getElementById('descendBtn').innerText = "Confront Guardian";
-                document.getElementById('descendBtn').onclick = (e) => { if (e) e.stopPropagation(); startBossFight(); };
+                document.getElementById('descendBtn').onclick = (e) => { if (e) e.stopPropagation(); startBossEncounter(); };
             } else {
                 msgEl.innerText = "Clear all rooms.";
                 document.getElementById('descendBtn').style.display = 'none';
@@ -5672,7 +6032,7 @@ function finishRoom() {
             document.getElementById('combatMessage').innerText = "Floor Purged! The Guardian awaits.";
             document.getElementById('descendBtn').style.display = 'block';
             document.getElementById('descendBtn').innerText = "Confront Guardian";
-            document.getElementById('descendBtn').onclick = (e) => { if (e) e.stopPropagation(); startBossFight(); };
+            document.getElementById('descendBtn').onclick = (e) => { if (e) e.stopPropagation(); startBossEncounter(); };
             document.getElementById('exitCombatBtn').style.display = 'none';
             logMsg("Floor Purged! The Guardian awaits.");
             updateBossBar(0, 60, false, true); // Hide bar if visible
@@ -5720,7 +6080,11 @@ function avoidRoom() {
 }
 
 function closeCombat() {
-    document.getElementById('combatModal').style.display = 'none';
+    const _cm = document.getElementById('combatModal');
+    _cm.style.display = 'none';
+    // Restore passthrough mode for next combat encounter
+    _cm.style.pointerEvents = 'none';
+    _cm.style.background = 'rgba(0,0,0,0)';
     document.getElementById('combatContainer').style.display = 'flex';
     document.getElementById('bonfireUI').style.display = 'none';
     const trapUI = document.getElementById('trapUI');
@@ -6755,6 +7119,7 @@ function saveGame() {
         isBrokerFight: game.isBrokerFight,
         currentRoomIdx: game.currentRoomIdx,
         bonfireUsed: game.bonfireUsed, merchantUsed: game.merchantUsed,
+        floorKills: game.floorKills || 0,
         slainStack: game.slainStack,
         equipment: game.equipment,
         weaponDurability: game.weaponDurability, // Save durability state
@@ -6772,6 +7137,9 @@ function saveGame() {
     localStorage.setItem('scoundrelSave', JSON.stringify(data));
     console.log("Game Saved.");
 }
+window.saveGame = saveGame;   // Expose for console debugging
+window.enterRoom = enterRoom; // Expose for console debugging
+window.getGame = () => game;  // Read game state from console: window.getGame().rooms
 
 function loadGame() {
     // Ensure UI is in correct state for gameplay
@@ -9440,7 +9808,12 @@ function checkCombatEnd(target) {
         const power = (target.stats.str || 1) + 4;
         game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: enemyDisplayName(target) });
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
+        if (!target.isBoss && !target.isHelper) {
+            game.floorKills = (game.floorKills || 0) + 1; // Persist kill count across saves
+            saveGame();
+        }
         spawnCorpse(target);
+        updateEnemyCounter();
 
         // Multi-enemy: are there still living enemies?
         const aliveEnemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0 && e.mesh);
@@ -9448,7 +9821,11 @@ function checkCombatEnd(target) {
             logCombat(`${aliveEnemies.length} enem${aliveEnemies.length > 1 ? 'ies remain' : 'y remains'}!`, '#ff8800');
             setTimeout(startEnemyTurn, 1500);
         } else {
-            setTimeout(() => window.exitBattleIsland(), 1500);
+            if (game.isBossFight) {
+                setTimeout(bossVictory, 1500);
+            } else {
+                setTimeout(() => window.exitBattleIsland(), 1500);
+            }
         }
     } else if (game.hp <= 0) {
         gameOver();
@@ -9579,8 +9956,28 @@ function startEnemyTurn() {
         return;
     }
 
+    // --- ARCHITECT: Heal the boss instead of attacking ---
+    if (enemy.isArchitect && game.isBossFight) {
+        const boss = wanderers.find(w => w.isBoss && w.stats && w.stats.hp > 0 && w !== enemy);
+        if (boss && boss.stats.hp < boss.stats.maxHp) {
+            const healAmt = 2 + DiceRoller.roll(4);
+            boss.stats.hp = Math.min(boss.stats.maxHp, boss.stats.hp + healAmt);
+            const bossName = boss.stats.name || 'Guardian';
+            logCombat(`Architect channels dark energy — heals ${bossName} for ${healAmt}!`, '#66ff88');
+            spawnFloatingText(`+${healAmt}`, window.innerWidth / 2 + 60, window.innerHeight / 2 - 40, '#66ff88', 24);
+            if (boss.healthBar) boss.healthBar.scale.x = Math.max(0, boss.stats.hp / boss.stats.maxHp);
+            updateCombatTracker(combatState.enemies);
+            updateBossBar(boss.stats.hp, boss.stats.maxHp, true);
+            setTimeout(() => endEnemyTurn(), 1200);
+            return;
+        }
+        logCombat(`Architect waits, watching...`, '#888');
+        endEnemyTurn();
+        return;
+    }
+
     const dist = enemy.mesh.position.distanceTo(playerObj.position);
-    const attackRange = 2.0;
+    const attackRange = enemy.isRanged ? 8.0 : 2.0;
     const moveSpeed = 6.0;
 
     // Show Enemy Range
@@ -9614,8 +10011,8 @@ function startEnemyTurn() {
     }
 
     // --- ENEMY FLEE LOGIC (Dash) ---
-    // Flee if HP < 15% and NOT in True Dungeon (no escape there)
-    if (hpPct <= 0.15 && !game.inTrueDungeon) {
+    // Flee if HP < 15% and NOT in True Dungeon or boss arena (bosses/helpers never retreat)
+    if (hpPct <= 0.15 && !game.inTrueDungeon && !enemy.isBoss && !enemy.isHelper && !inBattleIsland) {
         logMsg(`${enemyDisplayName(enemy)} is trying to escape!`);
         spawnFloatingText("FLEEING!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
         
@@ -9698,7 +10095,7 @@ function startEnemyTurn() {
                         logCombat(`${enemyDisplayName(enemy)} investigates... nobody there!`, '#aaa');
                         endEnemyTurn();
                     } else {
-                        executeEnemyAttack(enemy);
+                        enemy.isRanged ? executeEnemyRangedAttack(enemy) : executeEnemyAttack(enemy);
                     }
                 } else {
                     endEnemyTurn();
@@ -9712,9 +10109,81 @@ function startEnemyTurn() {
             logCombat(`${enemyDisplayName(enemy)} investigates... nobody there!`, '#aaa');
             endEnemyTurn();
         } else {
-            executeEnemyAttack(enemy);
+            enemy.isRanged ? executeEnemyRangedAttack(enemy) : executeEnemyAttack(enemy);
         }
     }
+}
+
+/** Spawns a boss spell projectile (dark void orb) from caster toward target. */
+function spawn3DSpell(fromPos, toPos) {
+    const tex = loadTexture('assets/images/textures/magic_02.png');
+    const mat = new THREE.SpriteMaterial({
+        map: tex, color: 0x8800ff, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const orb = new THREE.Sprite(mat);
+    orb.position.copy(fromPos);
+    orb.position.y += 1.2; // Cast from chest height
+    orb.scale.set(2.2, 2.2, 1);
+    scene.add(orb);
+
+    // Trail particle (twirl behind the orb)
+    const trailTex = loadTexture('assets/images/textures/twirl_02.png');
+    const trailMat = new THREE.SpriteMaterial({
+        map: trailTex, color: 0x440088, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.6
+    });
+    const trail = new THREE.Sprite(trailMat);
+    trail.position.copy(orb.position);
+    trail.scale.set(1.4, 1.4, 1);
+    scene.add(trail);
+
+    const impactY = toPos.y + 1.0;
+    new TWEEN.Tween(orb.position)
+        .to({ x: toPos.x, y: impactY, z: toPos.z }, 550)
+        .easing(TWEEN.Easing.Quadratic.In)
+        .onUpdate(() => trail.position.copy(orb.position))
+        .onComplete(() => {
+            scene.remove(orb);
+            scene.remove(trail);
+            // Impact burst
+            spawn3DImpact(new THREE.Vector3(toPos.x, impactY, toPos.z), 0xaa00ff, 'magic_02.png');
+            spawn3DImpact(new THREE.Vector3(toPos.x, impactY, toPos.z), 0x440088, 'circle_03.png');
+            if (audio && audio.initialized) audio.play('attack_blunt', { volume: 0.4, rate: 0.6 });
+        })
+        .start();
+}
+
+/** Ranged spellcaster attack — no melee counter, pure damage roll vs AC. */
+function executeEnemyRangedAttack(enemy) {
+    logCombat(`${enemyDisplayName(enemy)} weaves a dark spell!`, '#aa55ff');
+
+    const enemyStr  = enemy.stats.str || 1;
+    const spellPower = enemyStr + 6; // Amplified — boss spells hit hard
+    const spellConfig = DND_CONFIG.getDiceConfig(spellPower);
+    const spellRoll  = DiceRoller.roll(spellConfig.sides);
+    const spellTotal = spellRoll + spellConfig.bonus;
+
+    let playerAC = (CLASS_DATA[game.classId].stats.ac || 0);
+    if (game.equipment.armor) playerAC += (game.equipment.armor.val || 0);
+    if (combatState.isDefending) playerAC += 4;
+
+    // Fire the visual first, resolve damage after travel time
+    if (playerMesh) spawn3DSpell(enemy.mesh.position.clone(), playerMesh.position.clone());
+
+    // Show spell die (enemy side, purple)
+    spawnDice3D(spellConfig.sides, spellTotal, 0x9900cc, { x: 1.5, y: -0.5 }, enemyDisplayName(enemy), () => {
+        const damage = Math.max(0, spellTotal - playerAC);
+        if (damage > 0) {
+            spawnFloatingText(`CURSED! -${damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#cc44ff');
+            logCombat(`Spell strikes for ${damage}! (Roll ${spellTotal} - AC ${playerAC})`, '#cc44ff');
+            takeDamage(damage);
+        } else {
+            spawnFloatingText('RESISTED!', window.innerWidth / 2, window.innerHeight / 2, '#88aaff');
+            logCombat(`Spell dissipates against your armor! (Roll ${spellTotal} - AC ${playerAC} = 0)`, '#888');
+        }
+        if (game.hp <= 0) { gameOver(); } else { endEnemyTurn(); }
+    });
 }
 
 function executeEnemyAttack(enemy) {
@@ -9751,9 +10220,19 @@ function executeEnemyAttack(enemy) {
         const playerPower = playerStr + weaponVal;
 
         // Enemy Stats
-        const enemyStr = enemy.stats.str || 1;
+        let enemyStr = enemy.stats.str || 1;
         const enemyWeapon = 4;
         const enemyAC = enemy.stats.ac || 10;
+
+        // Bulwark Passive: If a Bulwark ally is alive, embolden the boss (+2 STR)
+        if (enemy.isBoss && game.isBossFight) {
+            const bulwarkAlive = wanderers.some(w => w.isBulwark && w.stats && w.stats.hp > 0 && w !== enemy);
+            if (bulwarkAlive) {
+                enemyStr += 2;
+                logCombat(`Bulwark emboldens the Guardian! (+2 STR)`, '#ff9944');
+            }
+        }
+
         const enemyPower = enemyStr + enemyWeapon;
         const luckBonus = Math.floor((game.stats.lck || 0) / 2);
 

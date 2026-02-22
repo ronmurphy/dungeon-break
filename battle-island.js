@@ -39,6 +39,30 @@ export function createBattleIsland(scene, floor, loadTexture, getClonedTexture) 
     return group;
 }
 
+/**
+ * Adds a cylindrical containment wall around the arena so enemies can't escape.
+ * Uses BackSide rendering so the interior face is visible when standing inside.
+ * A cylinder naturally follows the island's organic shape better than 4 boxes.
+ *
+ * radius:     outer radius of the cylinder (should exceed island halfSize)
+ * wallHeight: total height of the wall (must exceed JUMP_ARC_WINGED = 2.2)
+ */
+export function addArenaWalls(group, halfSize = 20, wallHeight = 6) {
+    const radius = halfSize + 2; // A little outside the island edge
+
+    // Open-ended cylinder — inside face rendered via BackSide
+    const geo = new THREE.CylinderGeometry(radius, radius, wallHeight, 48, 1, true);
+    const mat = new THREE.MeshStandardMaterial({
+        color: 0x1a1008,
+        roughness: 1.0,
+        side: THREE.BackSide,   // Render the inner face (visible from inside the cylinder)
+    });
+    const wall = new THREE.Mesh(geo, mat);
+    // Start the wall slightly below ground so there are no floor gaps
+    wall.position.set(0, wallHeight / 2 - 1.5, 0);
+    group.add(wall);
+}
+
 // Backward Compatibility for existing code to prevent crashes
 const BattleIsland = {
     // Return the new safe location so old code using getAnchor() doesn't break
