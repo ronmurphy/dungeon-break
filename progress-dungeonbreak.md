@@ -221,8 +221,20 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - [ ] **Victory → Double Helix:** Beat boss → unlock Double Helix spiral. Not yet built.
 - [ ] **Old card-based boss system removal:** `startBossFight()`, `startSoulBrokerEncounter()`, `pickCard()`, `finishRoom()`, `game.deck/combatCards/carryCard`, `createDeck()` — clean removal once new system confirmed working.
 
-### 🐛 Known Bugs — Boss Arena (fix next session)
-- **Helpers never attack (CRITICAL):** The Council / Phalanx / Fortress helpers load and animate in place but never move toward the player or take their turn in combat. They are pushed to `wanderers[]` and `combatState.enemies[]` but their turns in the initiative order appear to be skipped or the AI doesn't move them. Likely cause: `startCombat()` builds `combatState.enemies[]` from only the primary target at call time — helpers pushed after `startCombat()` are in `wanderers` but may not be in `combatState.enemies`. Fix: push helpers into `combatState.enemies` in the `finalize()` callback, or re-run `rollInitiative()` after all helpers are registered. Also check `startEnemyTurn()` picks from `combatState.enemies`, not `wanderers`.
+### Double Helix Traversal Zone ✅ (v1 — functional)
+- `helix-generator.js`: `createHelixZone(scene, floor)` builds the zone at world (4000,4000,4000). Returns `{ group, exitPos, botPos }`.
+- **Geometry:** Custom `BufferGeometry` spiral ramp (120 segments, 2 turns, radius 7, width 3.5, height 18). Bottom + top `CylinderGeometry` platforms. Central pillar. Cylindrical containment wall (BackSide). Purple exit beam + point light at apex.
+- **Click-to-move:** `targetFloor` in `on3DClick` now falls through: `battleGroup → helixGroup → globalFloorMesh`.
+- **Terrain Y-snap:** `getTerrainY` helix branch raycasts from `playerMesh.y + 3` (not from sky) so it hits the correct ramp level on a multi-turn spiral.
+- **Enemy spawning:** `_spawnHelixEnemies()` places 3 wanderers at 25%, 50%, 75% up the spiral. Floor-scaled stats.
+- **Exit trigger:** When player reaches within 5 units of `exitPos` (top platform), clears wanderers + helix geometry, calls `descendToNextFloor()`.
+- **Intermission button:** "Ascend the Helix" replaces "Enter Next Floor" — triggers `enterHelixZone()` instead of `descendToNextFloor()`.
+- **Globals:** `window.enterHelixZone` exposed for console debugging.
+- **State:** `inHelixZone` flag gates terrain Y-snap and click-to-move. `helixGroup`, `helixExitPos`, `_helixExitPromptShown` cleared on exit.
+
+### 🐛 Known Bugs — Boss Arena
+- **Helpers never attack (FIXED session 3):** `finalize()` now injects each helper into `combatState.enemies`, calls `initWandererForCombat`, assigns `initRoll`, inserts into `combatState.initiativeOrder`, and refreshes the tracker — all synchronously after `startCombat(boss)` returns. Root cause was `startCombat` resetting `combatState.enemies = [boss]` and helpers being pushed only to `wanderers[]`.
+- **Helix terrain Y-snap on multi-level spiral:** May still have edge cases where raycast from `playerMesh.y + 3` misses the current step or hits an unintended one. Monitor in play-testing.
 
 ### High Priority — Double Helix Progression
 - [ ] **Helix as physical traversal zone:** After beating the floor boss, the Double Helix spiral opens. Player physically runs up it in 3D — not a loading screen.

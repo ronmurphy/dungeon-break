@@ -131,6 +131,13 @@ window.exitBattleIsland = function () {
     exitCombatView();
 };
 
+// spawnPet is a hoisted function declared later — expose now so console commands work immediately
+window.spawnPet = function (...args) { return spawnPet(...args); };
+
+// Debug helpers — available immediately from browser console
+window.debugIntermission = function () { closeCombat(); startIntermission(); };
+window.debugBoss         = function () { game.isBossFight = false; startBossEncounter(); };
+
 // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
 let playerTargetPos = null; // Target position for free movement
@@ -176,15 +183,15 @@ const BOSS_PLANS = [
         name: 'The Phalanx',
         desc: 'Two armored enforcers stand guard.',
         helpers: [
-            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-2.5, -3.0], scale: 0.70, hp: 22, ac: 4, str: 2, name: 'Bulwark'  },
-            { role: 'Bulwark',   model: 'SkeletalViking-web.glb', pos: [ 2.0, -3.0], scale: 0.75, hp: 18, ac: 3, str: 2, name: 'Bulwark'  },
+            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-2.5, -3.0], scale: 0.70, hp: 24, ac: 4, str: 1, name: 'Bulwark'  },
+            { role: 'Bulwark',   model: 'SkeletalViking-web.glb', pos: [ 2.0, -3.0], scale: 0.75, hp: 20, ac: 3, str: 1, name: 'Bulwark'  },
         ]
     },
     {
         name: 'The Council',
         desc: 'A triad of specialists — shield, blade, and healer.',
         helpers: [
-            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-3.0, -3.5], scale: 0.70, hp: 20, ac: 4, str: 2, name: 'Bulwark'   },
+            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-3.0, -3.5], scale: 0.70, hp: 22, ac: 4, str: 1, name: 'Bulwark'   },
             { role: 'Fanatic',   model: 'male_evil-web.glb',      pos: [ 0.0, -5.0], scale: 0.65, hp: 14, ac: 2, str: 4, name: 'Fanatic'   },
             { role: 'Architect', model: 'a-sorcoress-web.glb',    pos: [ 3.0, -2.5], scale: 0.65, hp: 10, ac: 1, str: 1, name: 'Architect' },
         ]
@@ -213,7 +220,7 @@ const WANDERER_MODELS = [
     'a-sorcoress-web.glb',
     'a-skeleton-king-web.glb',
     'Magma_dog-web.glb',
-    'grimmlinn-web.glb',
+    'gremlinn-web.glb',
     'demoness-web.glb'
 ];
 // Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
@@ -315,6 +322,10 @@ let clickStart = { x: 0, y: 0 }; // Track mouse down position for drag detection
 let combatGroup = new THREE.Group();
 let isCombatView = false;
 let activeWanderer = null; // Track current enemy
+
+// Player pet (MagmaDog)
+let playerPet = null; // { mesh, mixer, actions } — friendly companion, follows player
+
 let savedCamState = { pos: new THREE.Vector3(), target: new THREE.Vector3(), zoom: 1 };
 let combatEntities = []; // Track standees/chests for updates
 let combatState = {
@@ -2177,7 +2188,7 @@ function on3DClick(event, isRightClick = false) {
     }
 
     // If no interactable object was clicked, check for Floor (Movement)
-    // Allow movement on Battle Island if in combat
+    // If no interactable object was clicked, check for Floor (Movement)
     const targetFloor = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
 
     if (targetFloor) {
@@ -3335,8 +3346,8 @@ function animate3D() {
     if (window.TWEEN) TWEEN.update();
 
     // Update Animation Mixer
+    const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches (shared with pet AI below)
     if (mixer) {
-        const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches
         mixer.update(delta * globalAnimSpeed);
         // Use player distance (not camera distance) for LOD.
         // Camera-based LOD breaks in isometric view: the overhead camera is already
@@ -3373,10 +3384,37 @@ function animate3D() {
         });
     }
 
+    // --- Pet follow AI + mixer update ---
+    if (playerPet && playerPet.mesh && playerMesh) {
+        playerPet.mesh.update(camera); // LOD distance check
+        playerPet.mixer.update(delta * globalAnimSpeed);
+
+        // Follow the player — throttle position update to every 2nd frame
+        if (_aiFrameCount % 2 === 0) {
+            const petPos    = playerPet.mesh.position;
+            const playerPos = playerMesh.position;
+            const dx = playerPos.x - petPos.x;
+            const dz = playerPos.z - petPos.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+
+            const FOLLOW_DIST = 2.2;  // start walking when further than this
+            const CATCH_SPEED  = 0.08; // lerp factor per 2-frame tick (snappy but not teleporting)
+
+            if (dist > FOLLOW_DIST) {
+                // Walk toward player
+                petPos.x += dx * CATCH_SPEED;
+                petPos.z += dz * CATCH_SPEED;
+                petPos.y  = getTerrainY(petPos.x, petPos.z) + 0.08;
+                playerPet.mesh.lookAt(new THREE.Vector3(playerPos.x, petPos.y, playerPos.z));
+            }
+            // Animation runs continuously (single clip), no start/stop needed
+        }
+    }
+
     if (stats) stats.update();
 }
 
-/* 
+/*
 function enterHouseBattle(enemy) { ... DEPRECATED: Replaced by startCombat() ... }
 */
 
@@ -4423,17 +4461,26 @@ function startIntermission() {
         itemsContainer.appendChild(card);
     }
 
-    // Add "Next Floor" button to enemyArea or reuse existing buttons?
-    // Let's repurpose the descend button but change its onclick
-    const nextBtn = document.getElementById('descendBtn');
-    nextBtn.innerText = "Enter Next Floor";
-    nextBtn.style.display = 'block';
-    nextBtn.onclick = () => {
-        nextBtn.innerText = "Descend"; // Reset text
-        nextBtn.onclick = startIntermission; // Reset handler to intermission
+    // Keep the external descendBtn hidden — inject the "next floor" button inside the scroll area
+    document.getElementById('descendBtn').style.display = 'none';
 
-        descendToNextFloor();
+    const nextBtn = document.createElement('button');
+    nextBtn.innerText = "Enter Next Floor";
+    nextBtn.style.cssText = `
+        margin-top:22px; padding:12px 36px;
+        background:linear-gradient(135deg,#1a0a00,#3a1800);
+        color:#d4af37; border:2px solid #d4af37;
+        font-family:inherit; font-size:1.1em; letter-spacing:1px;
+        cursor:pointer; border-radius:4px;
+        box-shadow:0 0 12px #d4af3755;
+    `;
+    nextBtn.onmouseenter = () => nextBtn.style.background = 'linear-gradient(135deg,#3a1800,#5a2800)';
+    nextBtn.onmouseleave = () => nextBtn.style.background = 'linear-gradient(135deg,#1a0a00,#3a1800)';
+    nextBtn.onclick = () => {
+        document.getElementById('descendBtn').onclick = startIntermission; // Reset for future calls
+        enterHelixZone();
     };
+    enemyArea.appendChild(nextBtn);
 }
 
 function descendToNextFloor() {
@@ -5058,11 +5105,57 @@ function startBossEncounter() {
     document.getElementById('modalAvoidBtn').style.display = 'none';
 
     // Expose enterBossArena globally so the inline onclick can reach it
-    window.enterBossArena = enterBossArena;
+    window.enterBossArena  = enterBossArena;
+    window.spawnPet        = spawnPet;
     window._dismissBossPrompt = () => {
         closeCombat();
         window._bossPromptCooldown = Date.now() + 8000; // 8s before it can trigger again
     };
+}
+
+/**
+ * Spawns the player's pet MagmaDog companion.
+ * The pet follows the player, never engages in combat,
+ * and has a 35% chance to heal the player at the end of each enemy round.
+ */
+function spawnPet() {
+    if (playerPet) {
+        logMsg("Your Magma Pup is already with you.");
+        return;
+    }
+    const file = 'MagmaDog-web.glb';
+    logMsg("A Magma Pup bounds out of the shadows and joins you!");
+    spawnFloatingText("✦ MAGMA PUP!", window.innerWidth / 2, window.innerHeight / 2 - 80, '#ff6622', 28);
+
+    loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
+        const lod = new THREE.LOD();
+        lod.addLevel(model, 60);
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 0.8, 0.6),
+            new THREE.MeshBasicMaterial({ color: 0xff4400 })
+        );
+        lod.addLevel(box, 90);
+
+        // Place beside the player
+        const startPos = playerMesh
+            ? playerMesh.position.clone().add(new THREE.Vector3(1.2, 0, 1.2))
+            : new THREE.Vector3(2, 0, 2);
+        lod.position.copy(startPos);
+        scene.add(lod);
+
+        const mixer = new THREE.AnimationMixer(model);
+
+        // MagmaDog has exactly one animation — just loop it always
+        const actions = {};
+        if (animations.length > 0) {
+            const clip = animations[0];
+            actions.main = mixer.clipAction(clip);
+            actions.main.setLoop(THREE.LoopRepeat);
+            actions.main.play();
+        }
+
+        playerPet = { mesh: lod, mixer, actions, _followTimer: 0 };
+    }, 0.8);
 }
 
 /**
@@ -5177,8 +5270,37 @@ function enterBossArena() {
             wanderers.push(bossWanderer);
             helpers.forEach(h => wanderers.push(h));
 
-            // Start on-map combat (sets inBattleIsland=false and saves player pos — we fix both below)
+            // Start combat with just the boss — this sets combatState.enemies=[boss]
+            // and builds combatState.initiativeOrder synchronously before dice animate.
             startCombat(bossWanderer, false);
+
+            // Inject helpers into the active roster now that isCombatView=true.
+            // rollInitiative() already ran synchronously, so we insert manually.
+            helpers.forEach(helper => {
+                if (!combatState.enemies.includes(helper)) {
+                    combatState.enemies.push(helper);
+                    initWandererForCombat(helper);
+
+                    const str = helper.stats ? (helper.stats.str || 1) : 1;
+                    helper.stats.initRoll = Math.ceil(Math.random() * 20) + Math.floor(str / 2);
+                    const helperIdx = combatState.enemies.length - 1;
+
+                    if (combatState.initiativeOrder) {
+                        combatState.initiativeOrder.push({
+                            label: enemyDisplayName(helper),
+                            roll: helper.stats.initRoll,
+                            isPlayer: false,
+                            enemyIdx: helperIdx,
+                        });
+                        combatState.initiativeOrder.sort((a, b) => b.roll - a.roll || (a.isPlayer ? -1 : 1));
+                    }
+                }
+            });
+
+            // Refresh tracker to include all helpers in the initiative strip
+            if (helpers.length > 0) {
+                showCombatTracker(combatState.enemies, combatState.initiativeOrder);
+            }
 
             // Override: flag as island combat so exitCombatView restores to dungeon
             savedPlayerPos.copy(dungeonReturnPos);
@@ -5260,6 +5382,42 @@ function bossVictory() {
     document.getElementById('modalAvoidBtn').style.display  = 'none';
 
     setTimeout(() => { closeCombat(); startIntermission(); }, 3500);
+}
+
+function enterHelixZone() {
+    closeCombat();
+
+    const nextFloor = (game.floor || 1) + 1;
+
+    // Full-screen fade + floor title, then descend
+    const veil = document.createElement('div');
+    veil.style.cssText = `
+        position:fixed; inset:0; z-index:99999;
+        background:#000; opacity:0;
+        display:flex; flex-direction:column;
+        align-items:center; justify-content:center;
+        pointer-events:none;
+        transition:opacity 0.6s ease;
+        font-family:inherit;
+    `;
+    veil.innerHTML = `
+        <div style="color:#d4af37;font-size:14px;letter-spacing:6px;text-transform:uppercase;margin-bottom:10px;opacity:0.7;">Descending</div>
+        <div style="color:#fff;font-size:38px;font-weight:bold;letter-spacing:3px;text-shadow:0 0 30px #d4af37aa;">FLOOR ${nextFloor}</div>
+        <div style="color:#888;font-size:13px;letter-spacing:4px;margin-top:12px;text-transform:uppercase;">The Depths Await</div>
+    `;
+    document.body.appendChild(veil);
+
+    // Fade in
+    requestAnimationFrame(() => { veil.style.opacity = '1'; });
+
+    // Hold, then descend, then fade out
+    setTimeout(() => {
+        descendToNextFloor();
+        setTimeout(() => {
+            veil.style.opacity = '0';
+            setTimeout(() => veil.remove(), 650);
+        }, 400);
+    }, 2000);
 }
 
 function startSoulBrokerEncounter() {
@@ -10224,7 +10382,7 @@ function executeEnemyAttack(enemy) {
         const enemyWeapon = 4;
         const enemyAC = enemy.stats.ac || 10;
 
-        // Bulwark Passive: If a Bulwark ally is alive, embolden the boss (+2 STR)
+        // Bulwark Passive: If ANY Bulwark ally is alive, embolden the boss (+2 STR, capped — doesn't stack)
         if (enemy.isBoss && game.isBossFight) {
             const bulwarkAlive = wanderers.some(w => w.isBulwark && w.stats && w.stats.hp > 0 && w !== enemy);
             if (bulwarkAlive) {
@@ -10312,6 +10470,19 @@ function endEnemyTurn() {
             combatState.canAttack = true;
             combatState.isDashing = false;
             combatState.isDefending = false;
+
+            // Pet heal — 35% chance at the start of the player's turn
+            if (playerPet && playerPet.mesh && Math.random() < 0.35) {
+                const maxHeal = Math.min(10, game.maxHp - game.hp);
+                if (maxHeal > 0) {
+                    const healAmt = Math.max(1, Math.floor(Math.random() * maxHeal) + 1);
+                    game.hp = Math.min(game.maxHp, game.hp + healAmt);
+                    logCombat(`Magma Pup nuzzles you — healed ${healAmt} HP! 🐾`, '#ff6622');
+                    spawnFloatingText(`🐾 +${healAmt}`, window.innerWidth / 2 - 80, window.innerHeight / 2 + 40, '#ff6622', 22);
+                    updateUI();
+                }
+            }
+
             updateMovementIndicator();
             updateInitStrip('player');
             showCombatMenu();
