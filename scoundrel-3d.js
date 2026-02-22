@@ -24,6 +24,7 @@ import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './d
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getWeaponName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, updateInitStrip } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
+import { createHelixCA, addHelixWalls } from './helix-ca.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
 
@@ -66,6 +67,13 @@ let hiddenDecorationIndices = new Map(); // Track hidden instances for combat
 let hiddenStaticMeshes = []; // Track hidden static objects for combat bulldozer
 let inBattleIsland = false;
 window.inBattleIsland = false; // Expose globally
+let inHelixZone          = false;
+let helixGroup           = null;
+let helixFloorGroup      = null;
+let helixExitPos         = null;
+let _helixExitPromptShown = false;
+let helixPathWaypoints   = null;  // world-space Vector3[] — full spiral, used for path snap
+let _helixSavedControls  = null;  // saved OrbitControls config, restored on exit
 let savedPlayerPos = new THREE.Vector3();
 let savedFogDensity = 0.045;
 
@@ -135,7 +143,15 @@ window.exitBattleIsland = function () {
 window.spawnPet = function (...args) { return spawnPet(...args); };
 
 // Debug helpers — available immediately from browser console
-window.debugIntermission = function () { closeCombat(); startIntermission(); };
+window.debugIntermission = function (floor = 1, coins = 300) {
+    game.floor      = floor;
+    game.soulCoins  = Math.max(game.soulCoins || 0, coins);
+    if (!game.classId) game.classId = 'knight';
+    game.bonfireUsed   = false;
+    game.merchantUsed  = false;
+    closeCombat();
+    startIntermission();
+};
 window.debugBoss         = function () { game.isBossFight = false; startBossEncounter(); };
 
 // Store player pos before teleporting to Battle Island
@@ -2189,7 +2205,9 @@ function on3DClick(event, isRightClick = false) {
 
     // If no interactable object was clicked, check for Floor (Movement)
     // If no interactable object was clicked, check for Floor (Movement)
-    const targetFloor = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+    const targetFloor = inHelixZone ? helixFloorGroup
+        : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
+        : globalFloorMesh;
 
     if (targetFloor) {
         // Create a temporary raycaster for the floor check to ensure we hit it
@@ -2200,7 +2218,19 @@ function on3DClick(event, isRightClick = false) {
         const floorHits = floorRaycaster.intersectObject(targetFloor, true);
 
         if (floorHits.length > 0) {
-            const point = floorHits[0].point;
+            let point = floorHits[0].point;
+
+            // Helix zone: snap destination to nearest spiral-path waypoint so the
+            // player can only walk the path, not cut across the side walls / slopes.
+            if (inHelixZone && helixPathWaypoints && helixPathWaypoints.length > 0) {
+                let nearest = helixPathWaypoints[0];
+                let minD = Infinity;
+                for (const wp of helixPathWaypoints) {
+                    const d = Math.hypot(point.x - wp.x, point.z - wp.z);
+                    if (d < minD) { minD = d; nearest = wp; }
+                }
+                point = nearest.clone();
+            }
 
             // Combat Movement Restrictions
             if (isCombatView) {
@@ -2947,6 +2977,17 @@ function animate3D() {
         }
     }
 
+    // Helix apex proximity — "Descend to next floor?" prompt
+    if (inHelixZone && helixExitPos && playerObj && !_helixExitPromptShown && !isCombatView) {
+        const modal = document.getElementById('combatModal');
+        if (!modal || modal.style.display !== 'flex') {
+            if (playerObj.position.distanceTo(helixExitPos) < 3.5) {
+                _helixExitPromptShown = true;
+                showHelixExitPrompt();
+            }
+        }
+    }
+
     // Boss Room proximity trigger — fires when player approaches isFinal room and all enemies are dead
     if (!isCombatView && !isAttractMode && !isEditMode && !game.isBossFight && playerObj
         && !(window._bossPromptCooldown && Date.now() < window._bossPromptCooldown)) {
@@ -3260,9 +3301,12 @@ function animate3D() {
                             if (distance > 1.2) {
                                 wanderer.mesh.position.add(dir.multiplyScalar(moveDist));
                                 // Snap to floor to prevent flying/sinking
-                                const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+                                const targetMesh = inHelixZone ? helixFloorGroup
+                                    : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
+                                    : globalFloorMesh;
                                 if (targetMesh && !wanderer.isJumping) {
-                                    terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, 50, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
+                                    const _rayY = inHelixZone ? wanderer.mesh.position.y + 5 : 50;
+                                    terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, _rayY, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
                                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
                                     if (hits.length > 0) {
                                         wanderer.mesh.position.y = hits[0].point.y + WANDERER_Y_LIFT;
@@ -3615,8 +3659,10 @@ function movePlayerTo(targetVec, isRunning = false) {
             // Jump arc handles Y — skip terrain snap and cliff stops while airborne
             if (playerJumping) return;
 
-            // Determine which floor to snap to (Dungeon or Battle Island)
-            const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+            // Determine which floor to snap to (Helix, Battle Island, or Dungeon)
+            const targetMesh = inHelixZone ? helixFloorGroup
+                : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
+                : globalFloorMesh;
 
             if (targetMesh) {
                 const offset = 0.1;
@@ -3694,12 +3740,12 @@ function stopMovement() {
 function updatePlayerMovement(dt) {
     // Camera Follow Logic
     const playerObj = playerMesh;
-    if (playerObj && !isAttractMode && !isCombatView) {
-        // Smoothly lerp camera target to player position
+    if (playerObj && !isAttractMode && !isCombatView && !inHelixZone) {
+        // Smoothly lerp camera target to player position (dungeon / on-map only)
+        // In helix zone the camera is a fixed island-overview; target must not drift.
         controls.target.lerp(playerObj.position, 0.1);
 
-        // Optional: Move camera body if we want it to follow strictly
-        // For now, OrbitControls handles the orbiting, we just move the pivot (target)
+        // (helix zone: camera target stays on island centre, managed in enterHelixZone)
     }
 }
 
@@ -4465,7 +4511,7 @@ function startIntermission() {
     document.getElementById('descendBtn').style.display = 'none';
 
     const nextBtn = document.createElement('button');
-    nextBtn.innerText = "Enter Next Floor";
+    nextBtn.innerText = "Ascend the Helix";
     nextBtn.style.cssText = `
         margin-top:22px; padding:12px 36px;
         background:linear-gradient(135deg,#1a0a00,#3a1800);
@@ -4478,7 +4524,8 @@ function startIntermission() {
     nextBtn.onmouseleave = () => nextBtn.style.background = 'linear-gradient(135deg,#1a0a00,#3a1800)';
     nextBtn.onclick = () => {
         document.getElementById('descendBtn').onclick = startIntermission; // Reset for future calls
-        enterHelixZone();
+        closeCombat();
+        descendToNextFloor(); // TEMP: bypass helix zone
     };
     enemyArea.appendChild(nextBtn);
 }
@@ -4801,20 +4848,36 @@ window.handleAzureFlameChoice = function(choice) {
     // Normal (non-combat) path
     closeCombat();
 
-    if (choice === 'leave') {
-        // Push player just outside the 1.5-unit proximity threshold
+    // Push player back regardless of choice — prevents re-triggering on both refuel and leave
+    {
         const playerObj = playerMesh;
         const r = game.activeRoom;
         if (playerObj && r) {
             const dx = playerObj.position.x - r.gx;
             const dz = playerObj.position.z - r.gy;
             const len = Math.sqrt(dx * dx + dz * dz) || 1;
+            // Push to 3.5 units from flame centre (trigger radius is 3.0)
+            const tx = r.gx + (dx / len) * 3.5;
+            const tz = r.gy + (dz / len) * 3.5;
             new TWEEN.Tween(playerObj.position)
-                .to({ x: r.gx + (dx / len) * 3.5, z: r.gy + (dz / len) * 3.5 }, 400)
+                .to({ x: tx, z: tz }, 400)
                 .easing(TWEEN.Easing.Quadratic.Out)
+                .onUpdate(() => {
+                    // Snap to floor while sliding back
+                    if (globalFloorMesh) {
+                        terrainRaycaster.set(
+                            new THREE.Vector3(playerObj.position.x, playerObj.position.y + 3, playerObj.position.z),
+                            new THREE.Vector3(0, -1, 0)
+                        );
+                        const hits = terrainRaycaster.intersectObject(globalFloorMesh, true);
+                        if (hits.length > 0) playerObj.position.y = hits[0].point.y + 0.1;
+                    }
+                })
                 .start();
         }
     }
+    // Grace period so the re-trigger can't fire until the slide finishes
+    _azureFlameReadyAt = Date.now() + 2000;
     // Azure Flame marker is NEVER sunk/cleared — always present
 };
 
@@ -5387,9 +5450,172 @@ function bossVictory() {
 function enterHelixZone() {
     closeCombat();
 
-    const nextFloor = (game.floor || 1) + 1;
+    // Build the CA helix island and teleport the player there.
+    const helix = createHelixCA(scene, game.floor, loadGLB, loadTexture, getClonedTexture);
+    addHelixWalls(helix.group);
 
-    // Full-screen fade + floor title, then descend
+    helixGroup           = helix.group;
+    helixFloorGroup      = helix.floorGroup;
+    helixExitPos         = helix.exitPos;
+    _helixExitPromptShown = false;
+
+    // Teleport player to bottom of spiral
+    if (playerMesh) {
+        playerMesh.position.copy(helix.botPos);
+    }
+
+    // Store full spiral path for click-to-move snapping
+    helixPathWaypoints = helix.allWaypoints;
+
+    // ── Camera: top-down island overview ─────────────────────────────────────
+    // Camera stays fixed on the island centre — NOT following the player.
+    // Right-drag rotates the view around the vertical axis; scroll zooms.
+    // Left-click is intercepted by the game for movement as normal.
+    if (controls) {
+        // Save current controls state so we can restore it on exit
+        _helixSavedControls = {
+            target:        controls.target.clone(),
+            mouseButtons:  { ...controls.mouseButtons },
+            enablePan:     controls.enablePan,
+            minDistance:   controls.minDistance,
+            maxDistance:   controls.maxDistance,
+            minPolarAngle: controls.minPolarAngle,
+            maxPolarAngle: controls.maxPolarAngle,
+            fogDensity:    scene.fog ? scene.fog.density : 0,
+        };
+
+        // The island is 40+ units across — helix wall provides the boundary,
+        // fog would make everything invisible at that scale.
+        if (scene.fog) scene.fog.density = 0.003;
+
+        // Island centre, mid-height between base (botPos.y) and apex (exitPos.y)
+        const isoY   = (helix.botPos.y + helix.exitPos.y) * 0.5;
+        const isoCtr = new THREE.Vector3(helix.group.position.x, isoY, helix.group.position.z);
+
+        // Tilt slightly south so the spiral reads as 3D, not a flat circle
+        camera.position.set(isoCtr.x, isoCtr.y + 52, isoCtr.z + 12);
+        controls.target.copy(isoCtr);
+
+        // Right-drag rotates, scroll zooms, left is reserved for movement
+        controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+        controls.enablePan     = false;
+        controls.minDistance   = 18;
+        controls.maxDistance   = 80;
+        controls.minPolarAngle = 0;
+        controls.maxPolarAngle = Math.PI * 0.42; // ~75° — can't flip below horizon
+
+        controls.update(); // bake spherical offset before first frame
+    }
+
+    // Spawn 3 guardians at 25 / 50 / 75 % of the climb
+    helix.waypoints.forEach(wp => _spawnHelixGuardian(wp, helix.getIslandY));
+
+    inHelixZone = true;
+    logMsg("You enter the Double Helix. Fight your way to the top.");
+}
+
+/** Spawns a single guardian wanderer at worldPos on the helix. */
+function _spawnHelixGuardian(worldPos, getIslandY) {
+    const file  = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
+    const base  = getEnemyStats(file) || {};
+    const hp    = (base.hp  || 8)  + game.floor * 2;
+    const ac    = Math.max(1, (base.ac  || 1)  + Math.floor(game.floor / 3));
+    const str   = (base.str || 2)  + Math.floor(game.floor / 2);
+    const stats = {
+        name: base.name || file.replace('-web.glb', '').replace(/-/g, ' '),
+        hp, maxHp: hp, ac, str,
+        xp: 20 + game.floor * 5,
+        bleed: 0, blinded: false, gutsCharge: 0, gutsStacks: 0,
+    };
+
+    loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
+        const lod = new THREE.LOD();
+        lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
+        const box = new THREE.Mesh(
+            new THREE.BoxGeometry(0.6, 1.8, 0.6),
+            new THREE.MeshBasicMaterial({ color: 0x1a1a1a })
+        );
+        lod.addLevel(box, (gameSettings.lod && gameSettings.lod.far) || 80);
+
+        const y = getIslandY(worldPos.x, worldPos.z);
+        lod.position.set(worldPos.x, y + WANDERER_Y_LIFT, worldPos.z);
+        scene.add(lod);
+
+        const mixer    = new THREE.AnimationMixer(model);
+        const walkClip = animations.find(a => {
+            const n = a.name.toLowerCase();
+            return n.includes('walk') || n.includes('run') || n.includes('move');
+        }) || animations[0];
+        const actions = {};
+        if (walkClip) { actions.walk = mixer.clipAction(walkClip); actions.walk.play(); }
+
+        wanderers.push({
+            mesh: lod, mixer, actions, filename: file, stats,
+            state: 'patrol', tween: null, target: null,
+            isJumping: false, yLift: WANDERER_Y_LIFT,
+            _isHelixWanderer: true,
+        });
+    }, 0.7);
+}
+
+/** Proximity modal: "Descend to the next floor? YES / NO" */
+function showHelixExitPrompt() {
+    const overlay = document.getElementById('combatModal');
+    overlay.style.display = 'flex';
+    document.getElementById('combatContainer').style.display = 'none';
+    document.getElementById('bonfireUI').style.display = 'none';
+
+    let trapUI = document.getElementById('trapUI');
+    if (!trapUI) {
+        trapUI = document.createElement('div');
+        trapUI.id = 'trapUI';
+        document.body.appendChild(trapUI);
+    }
+    trapUI.style.display = 'flex';
+
+    const nextFloor = (game.floor || 1) + 1;
+    trapUI.innerHTML = `
+        <h2 style="font-family:'Cinzel'; font-size:2.6rem; color:#aa44ff;
+            text-shadow:0 0 30px #6600cc, 0 0 60px #440088; margin-bottom:20px;">
+            THE PASSAGE BELOW
+        </h2>
+        <div style="font-style:italic; margin-bottom:40px; color:#aaa;
+            text-align:center; max-width:400px;">
+            The spiral ends here.<br>
+            <span style="color:#cc99ff;">Floor ${nextFloor} awaits in the depths below.</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:15px; width:320px;">
+            <button class="v2-btn trap-option-btn" onclick="window._helixDescendYes()">
+                <span>Descend</span>
+                <span style="color:#aa44ff;">Enter Floor ${nextFloor}</span>
+            </button>
+            <button class="v2-btn" onclick="window._helixDescendNo()"
+                style="background:#444; margin-top:20px;">
+                Not Yet
+            </button>
+        </div>
+    `;
+}
+
+window._helixDescendYes = function () {
+    const trapUI = document.getElementById('trapUI');
+    if (trapUI) trapUI.style.display = 'none';
+    const overlay = document.getElementById('combatModal');
+    if (overlay) overlay.style.display = 'none';
+    _doHelixDescend();
+};
+window._helixDescendNo = function () {
+    const trapUI = document.getElementById('trapUI');
+    if (trapUI) trapUI.style.display = 'none';
+    const overlay = document.getElementById('combatModal');
+    if (overlay) overlay.style.display = 'none';
+    _helixExitPromptShown = false; // allow re-trigger on next approach
+};
+
+function _doHelixDescend() {
+    cleanupHelixZone();
+
+    const nextFloor = (game.floor || 1) + 1;
     const veil = document.createElement('div');
     veil.style.cssText = `
         position:fixed; inset:0; z-index:99999;
@@ -5406,11 +5632,7 @@ function enterHelixZone() {
         <div style="color:#888;font-size:13px;letter-spacing:4px;margin-top:12px;text-transform:uppercase;">The Depths Await</div>
     `;
     document.body.appendChild(veil);
-
-    // Fade in
     requestAnimationFrame(() => { veil.style.opacity = '1'; });
-
-    // Hold, then descend, then fade out
     setTimeout(() => {
         descendToNextFloor();
         setTimeout(() => {
@@ -5418,6 +5640,52 @@ function enterHelixZone() {
             setTimeout(() => veil.remove(), 650);
         }, 400);
     }, 2000);
+}
+
+function cleanupHelixZone() {
+    if (helixGroup) {
+        helixGroup.traverse(obj => {
+            if (obj.geometry) obj.geometry.dispose();
+            if (obj.material) {
+                if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                else obj.material.dispose();
+            }
+        });
+        scene.remove(helixGroup);
+    }
+    if (helixFloorGroup) {
+        helixFloorGroup.traverse(obj => {
+            if (obj.geometry) obj.geometry.dispose();
+        });
+        scene.remove(helixFloorGroup);
+    }
+    // Remove helix guardians from scene and wanderers[]
+    wanderers.filter(w => w._isHelixWanderer).forEach(w => {
+        if (w.mesh) scene.remove(w.mesh);
+        if (w.mixer) w.mixer.stopAllAction();
+    });
+    wanderers = wanderers.filter(w => !w._isHelixWanderer);
+
+    helixGroup           = null;
+    helixFloorGroup      = null;
+    helixExitPos         = null;
+    helixPathWaypoints   = null;
+    inHelixZone          = false;
+    _helixExitPromptShown = false;
+
+    // Restore OrbitControls and fog to pre-helix state
+    if (controls && _helixSavedControls) {
+        controls.target.copy(_helixSavedControls.target);
+        controls.mouseButtons  = { ..._helixSavedControls.mouseButtons };
+        controls.enablePan     = _helixSavedControls.enablePan;
+        controls.minDistance   = _helixSavedControls.minDistance;
+        controls.maxDistance   = _helixSavedControls.maxDistance;
+        controls.minPolarAngle = _helixSavedControls.minPolarAngle;
+        controls.maxPolarAngle = _helixSavedControls.maxPolarAngle;
+        controls.update();
+        if (scene.fog) scene.fog.density = _helixSavedControls.fogDensity;
+    }
+    _helixSavedControls = null;
 }
 
 function startSoulBrokerEncounter() {
