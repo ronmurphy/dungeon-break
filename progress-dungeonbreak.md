@@ -1,6 +1,6 @@
 # Dungeon Break - Progress & Roadmap
 
-*Last updated: 2026-02-21 (session 3)*
+*Last updated: 2026-02-22 (session 4)*
 
 ---
 
@@ -221,6 +221,22 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - [ ] **Victory → Double Helix:** Beat boss → unlock Double Helix spiral. Not yet built.
 - [ ] **Old card-based boss system removal:** `startBossFight()`, `startSoulBrokerEncounter()`, `pickCard()`, `finishRoom()`, `game.deck/combatCards/carryCard`, `createDeck()` — clean removal once new system confirmed working.
 
+### Double Helix Traversal Zone ❌ (abandoned — session 4)
+
+The CA-based Double Helix island was attempted across two sessions. The concept was a standalone 3D spiral island at world position (4000,4000,4000) — CA terrain, corkscrew spiral path, 3 enemies, door GLB at the apex, YES/NO prompt to descend.
+
+It was functional in isolation but never felt right in practice:
+- **Terrain spikes:** off-path cells were bleeding spiral height into CA fill, causing 8–16 unit cliffs.
+- **Camera fighting:** `controls.update()` every frame undid any external camera tween. Required direct `camera.position.set()` + baking spherical coords manually.
+- **Fog wipeout:** dungeon fog density 0.045 made the island invisible from across the world. Required a per-entry density override.
+- **Spiral arms merging:** PATH_FLATTEN=2.5 wider than arm separation (~3.1 units) → all arms merged into a flat dungeon floor. Reducing to 1.2 with pure-path grid fixed geometry but removed organic feel.
+- **Click-to-move path snap:** needed a full waypoint-snap system to stop the player running across spiral walls.
+- The combination of custom terrain, custom camera mode, custom raycasting, and custom path nav made every fix break something adjacent.
+
+`helix-ca.js` and `helix-generator.js` remain in the repo but are **not in the main flow**. `enterHelixZone()` currently calls `descendToNextFloor()` directly (bypassed). `window.debugHelix()` still available for console testing if the concept is ever revisited.
+
+---
+
 ### Double Helix Traversal Zone ✅ (v1 — functional)
 - `helix-generator.js`: `createHelixZone(scene, floor)` builds the zone at world (4000,4000,4000). Returns `{ group, exitPos, botPos }`.
 - **Geometry:** Custom `BufferGeometry` spiral ramp (120 segments, 2 turns, radius 7, width 3.5, height 18). Bottom + top `CylinderGeometry` platforms. Central pillar. Cylindrical containment wall (BackSide). Purple exit beam + point light at apex.
@@ -236,13 +252,44 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - **Helpers never attack (FIXED session 3):** `finalize()` now injects each helper into `combatState.enemies`, calls `initWandererForCombat`, assigns `initRoll`, inserts into `combatState.initiativeOrder`, and refreshes the tracker — all synchronously after `startCombat(boss)` returns. Root cause was `startCombat` resetting `combatState.enemies = [boss]` and helpers being pushed only to `wanderers[]`.
 - **Helix terrain Y-snap on multi-level spiral:** May still have edge cases where raycast from `playerMesh.y + 3` misses the current step or hits an unintended one. Monitor in play-testing.
 
-### High Priority — Double Helix Progression
-- [ ] **Helix as physical traversal zone:** After beating the floor boss, the Double Helix spiral opens. Player physically runs up it in 3D — not a loading screen.
-- [ ] **Enemies on the helix:** Wanderers from the floor below patrol/chase on the spiral path.
-- [ ] **Offshoot side-quest rooms:** Optional branches off the main spiral (magic rope, bent metal corridor, etc.) with item/coin rewards.
-- [ ] **Top doorway:** Reuse existing doorway GLB. Proximity triggers "Go to next floor? Yes / No." Yes = new floor loads (harder theme, harder enemies). No = player can go back down the helix.
-- [ ] **No floor backtracking:** Once a floor is left, it is locked. Save tracks which floors are behind you.
-- [ ] **Mandatory boss per floor:** Must beat the floor boss to unlock the helix segment to the next floor.
+### Floor Transition Zone — "The Passage" (Planned — session 4)
+
+Replace the helix concept entirely. Instead of a bespoke 3D island, the inter-floor transition is **a small generated dungeon floor** that the player must navigate to find an exit room. The exit room triggers `descendToNextFloor()`.
+
+**Why this approach:**
+- Reuses all existing systems: dungeon generator, wanderer AI, click-to-move, camera, fog, Y-snap. Zero new terrain infrastructure.
+- The player already knows how to play in a dungeon room — no new controls, no camera fighting, no custom raycasting.
+- The exit room can be dressed with the door GLB + glow platform we already built for the helix apex.
+- Scales naturally with floor number (harder enemies, different themes in later passages).
+
+**Design intent:**
+- Small map (4–6 rooms) — quick traversal, not a full grind floor.
+- 2–3 enemies scaled to current floor. Normal wanderer AI, normal loot drops.
+- One room flagged as the exit room: door GLB, glow effect, proximity prompt "THE PASSAGE BELOW — Descend deeper? YES / NO".
+- YES → `cleanupPassage()` → veil → `descendToNextFloor()`. NO → dismiss, player can go back.
+- Minimap shows the passage floor normally.
+- Spawns at a separate world position (e.g. `(6000, 0, 6000)`) to avoid collision with dungeon, battle island, and helix remnants.
+
+**Generator math options under research (player to decide):**
+| Method | Feel | Complexity | Notes |
+|---|---|---|---|
+| **BSP (Binary Space Partitioning)** | Structured, grid-like | Low | Deterministic room splits. Good for organised dungeon corridors. |
+| **Random Room Placement + A\* corridors** | Natural, varies | Medium | Drop rooms randomly, pathfind corridors between them. Very common in roguelikes. |
+| **Drunkard's Walk** | Organic, cave-like | Very low | Random walk carves corridors. Minimal code. Less controlled shape. |
+| **Delaunay triangulation + MST** | Natural, loopy | Medium-high | Triangulate room centres, minimum spanning tree for main paths, add a few extra edges for loops. Feels the most handcrafted. |
+| **Wave Function Collapse** | Highly thematic | High | Tile-based constraint propagation. Beautiful results but significant setup cost. |
+| **Existing CA generator (extended)** | Matches current dungeon | None | Simplest path — reuse `generateFloorCA()` with a small room count and an exit room flag. |
+
+The last option (extend existing CA) is the lowest-risk starting point and produces terrain consistent with the rest of the game. Research other methods if a distinct visual style is wanted for the passage.
+
+**Implementation checklist (not yet started):**
+- [ ] Decide generator method
+- [ ] Build passage generator (or extend existing one)
+- [ ] Flag one room as exit room, spawn door GLB + glow platform
+- [ ] Wire `enterPassage()` (replaces `enterHelixZone()`) in `scoundrel-3d.js`
+- [ ] Proximity trigger on exit room → "THE PASSAGE BELOW" prompt
+- [ ] `cleanupPassage()` → veil → `descendToNextFloor()`
+- [ ] Intermission button text: "Enter the Passage" (or similar)
 
 ### Medium Priority
 - [ ] **Analyze command** — Expand tracker row on click to show enemy HP/AC/STR.
