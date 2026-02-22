@@ -161,7 +161,9 @@ export const game = {
     deck: [],
     visitedWaypoints: [],
     enemiesDefeated: 0,
-    brokerPhase: 0
+    brokerPhase: 0,
+    level: 1,
+    xp: 0
 };
 window.game = game;
 

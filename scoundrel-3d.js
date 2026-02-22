@@ -4306,6 +4306,7 @@ function finalizeStartDive() {
     game.maxHp = cData.hp;
 
     game.floor = 1; game.deck = createDeck();
+    game.level = 1; game.xp = 0;
     game.weapon = null; game.weaponDurability = Infinity; game.slainStack = [];
     game.soulCoins = 0; game.ap = 0; game.maxAp = 0;
     game.torchCharge = 20;
@@ -10236,8 +10237,19 @@ function checkCombatEnd(target) {
         game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: enemyDisplayName(target) });
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
         if (!target.isBoss && !target.isHelper) {
-            game.floorKills = (game.floorKills || 0) + 1; // Persist kill count across saves
+            game.floorKills = (game.floorKills || 0) + 1;
+            // Award XP
+            const xpGain = target.stats.xp || Math.max(1, (target.stats.str || 1) + 2);
+            game.xp = (game.xp || 0) + xpGain;
+            spawnFloatingText(`+${xpGain} XP`, window.innerWidth / 2 + 55, window.innerHeight / 2 + 50, '#aa66ff');
+            checkLevelUp();
             saveGame();
+        } else if (target.isBoss) {
+            // Boss kill: big XP reward
+            const bossXp = (game.floor || 1) * 20;
+            game.xp = (game.xp || 0) + bossXp;
+            spawnFloatingText(`+${bossXp} XP`, window.innerWidth / 2 + 55, window.innerHeight / 2 + 50, '#aa66ff');
+            checkLevelUp();
         }
         spawnCorpse(target);
         updateEnemyCounter();
@@ -10259,6 +10271,82 @@ function checkCombatEnd(target) {
     } else {
         setTimeout(startEnemyTurn, 1000);
     }
+}
+
+function checkLevelUp() {
+    if (!game.level) game.level = 1;
+    if (!game.xp) game.xp = 0;
+    const xpNeeded = game.level * 50;
+    if (game.xp >= xpNeeded) {
+        game.xp = 0; // resets to 0 for the new level
+        game.level++;
+        // Small delay so VICTORY floater clears first
+        setTimeout(showLevelUpModal, 800);
+    }
+    updateUI();
+}
+
+function showLevelUpModal() {
+    let modal = document.getElementById('statModal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'statModal';
+        modal.className = 'modal-overlay';
+        modal.style.zIndex = '20000';
+        document.body.appendChild(modal);
+    }
+
+    const newLevel = game.level;
+
+    const allStats = [
+        { key: 'str', label: 'STRENGTH', color: '#e88', desc: '+1 max HP and melee power' },
+        { key: 'dex', label: 'DEXTERITY', color: '#8e8', desc: '+1 initiative and evasion' },
+        { key: 'int', label: 'INTELLECT', color: '#88e', desc: '+1 spell potency and lore' },
+        { key: 'lck', label: 'LUCK',      color: '#ee8', desc: '+1 fortune and rare finds' },
+    ];
+
+    // Shuffle and pick 3
+    const picks = allStats.slice().sort(() => Math.random() - 0.5).slice(0, 3);
+
+    const cardHtml = picks.map(s => `
+        <div onclick="window._lvlPick('${s.key}')" style="
+            flex:1; background:#111; border:1px solid ${s.color}33; padding:18px 10px;
+            cursor:pointer; text-align:center; transition:background 0.15s, border-color 0.15s;"
+            onmouseenter="this.style.background='#1c1c1c'; this.style.borderColor='${s.color}';"
+            onmouseleave="this.style.background='#111'; this.style.borderColor='${s.color}33';">
+            <div style="font-size:2rem; font-weight:bold; color:${s.color}; font-family:'Cinzel',serif;">+1</div>
+            <div style="font-size:0.85rem; color:${s.color}; font-family:'Cinzel',serif; letter-spacing:2px; margin-top:4px;">${s.label}</div>
+            <div style="font-size:0.8rem; color:#666; font-family:'Crimson Text',serif; margin-top:10px; line-height:1.4;">${s.desc}</div>
+        </div>
+    `).join('');
+
+    modal.innerHTML = `
+        <div style="background:rgba(5,5,5,0.98); border:2px solid #aa44ff; padding:32px; width:580px; max-width:92vw;
+                    text-align:center; color:#fff; font-family:'Cinzel',serif;
+                    box-shadow:0 0 80px #6600cc66, 0 0 20px #000;">
+            <div style="font-size:0.7rem; color:#aa44ff; letter-spacing:4px; margin-bottom:10px;">── POWER ASCENDS ──</div>
+            <h2 style="color:#d4af37; margin:0 0 4px; font-size:2.2rem; text-shadow:0 0 20px #d4af3788;">LEVEL ${newLevel}</h2>
+            <div style="font-size:1rem; color:#888; font-family:'Crimson Text',serif; margin-bottom:28px;">Choose your advancement.</div>
+            <div style="display:flex; gap:12px; justify-content:center;">
+                ${cardHtml}
+            </div>
+        </div>
+    `;
+
+    window._lvlPick = (key) => {
+        if (!game.stats) game.stats = { str: 0, dex: 0, int: 0, lck: 0 };
+        game.stats[key] = (game.stats[key] || 0) + 1;
+        if (key === 'str') {
+            game.maxHp = (game.maxHp || 20) + 1;
+            game.hp = Math.min(game.hp + 1, game.maxHp);
+        }
+        modal.style.display = 'none';
+        delete window._lvlPick;
+        spawnFloatingText(`Lv.${newLevel}! +1 ${key.toUpperCase()}`, window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa44ff');
+        updateUI();
+    };
+
+    modal.style.display = 'flex';
 }
 
 window.commandWait = function () {

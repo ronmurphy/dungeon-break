@@ -551,14 +551,40 @@ function showTooltip(el, item) {
     if (!tooltip) {
         tooltip = document.createElement('div');
         tooltip.id = 'gameTooltip';
-        tooltip.style.cssText = "position:fixed; pointer-events:none; background:rgba(0,0,0,0.95); border:1px solid #666; color:#fff; padding:8px; font-size:12px; z-index:10000; display:none; max-width:200px; border-radius:4px; box-shadow: 0 4px 8px rgba(0,0,0,0.5);";
+        tooltip.style.cssText = "position:fixed; pointer-events:none; background:rgba(0,0,0,0.96); border:1px solid #555; color:#fff; padding:10px 12px; font-size:12px; z-index:10000; display:none; max-width:220px; border-radius:3px; box-shadow:0 4px 16px rgba(0,0,0,0.9); font-family:'Cinzel',serif;";
         document.body.appendChild(tooltip);
     }
+
+    let powerLine = '';
+    if (item.type === 'weapon') {
+        powerLine = `<div style="color:#ffaa44; margin-top:5px; font-size:11px;">Power: ${item.val || '—'}</div>`;
+    } else if (item.type === 'armor') {
+        powerLine = `<div style="color:#6af; margin-top:5px; font-size:11px;">AP: ${item.ap || 0}  <span style="color:#666;">(${item.slot || '—'})</span></div>`;
+    } else if (item.type === 'potion') {
+        powerLine = `<div style="color:#ff8888; margin-top:5px; font-size:11px;">Potion</div>`;
+    }
+
+    const durLine = (item.durability !== undefined && item.durability !== Infinity)
+        ? `<div style="color:#888; margin-top:2px; font-size:11px;">Durability: ${item.durability}</div>`
+        : '';
+
+    const flavor = item.desc || item.flavor || '';
+    const flavorLine = flavor
+        ? `<div style="color:#666; font-style:italic; margin-top:6px; border-top:1px solid #2a2a2a; padding-top:5px; font-family:'Crimson Text',serif; font-size:11px;">${flavor}</div>`
+        : '';
+
+    tooltip.innerHTML = `
+        <div style="color:#d4af37; font-size:13px; font-weight:bold; letter-spacing:0.05em;">${item.name}</div>
+        ${powerLine}${durLine}${flavorLine}
+    `;
     tooltip.style.display = 'block';
-    tooltip.innerHTML = `<strong style="color:#ffd700; font-size:13px;">${item.name}</strong><br/><span style="color:#aaa; font-size:11px;">${item.type === 'armor' ? `+${item.ap} AP (${item.slot})` : 'Item'}</span><br/><div style="margin-top:4px; color:#ddd;">${item.desc || ''}</div>`;
+
     const rect = el.getBoundingClientRect();
-    tooltip.style.left = (rect.right + 10) + 'px';
-    tooltip.style.top = rect.top + 'px';
+    const tipW = 220;
+    const left = (rect.right + 10 + tipW < window.innerWidth) ? rect.right + 10 : rect.left - tipW - 10;
+    const top = Math.max(0, Math.min(rect.top, window.innerHeight - 160));
+    tooltip.style.left = left + 'px';
+    tooltip.style.top = top + 'px';
 }
 
 function hideTooltip() {
@@ -574,15 +600,66 @@ export function renderInventoryUI() {
     const doll = document.getElementById('paperDoll');
     if (doll) doll.style.backgroundImage = `url('assets/images/visualnovel/${game.sex}_doll.png')`;
 
+    // --- STATS PANEL ---
+    const statRow = (label, value, color = '#fff') =>
+        `<div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="color:#888;">${label}</span>
+            <span style="color:${color}; font-weight:bold;">${value}</span>
+        </div>`;
+
+    const s = game.stats || {};
+    const attrsEl = document.getElementById('invStatAttrs');
+    if (attrsEl) attrsEl.innerHTML = [
+        statRow('STR', s.str ?? 0, '#e88'),
+        statRow('DEX', s.dex ?? 0, '#8e8'),
+        statRow('INT', s.int ?? 0, '#88e'),
+        statRow('LCK', s.lck ?? 0, '#ee8'),
+    ].join('');
+
+    // Weapon damage
+    const wpn = game.equipment?.weapon;
+    const wpnDmg = wpn ? `${wpn.val} (${wpn.suit || '—'})` : '—';
+    // Total armor
+    const totalAP = ['head','chest','hands','legs'].reduce((sum, slot) => {
+        return sum + (game.equipment?.[slot]?.ap || 0);
+    }, 0);
+
+    const vitalsEl = document.getElementById('invStatVitals');
+    if (vitalsEl) vitalsEl.innerHTML = [
+        statRow('HP', `${game.hp} / ${game.maxHp}`, '#f66'),
+        statRow('Armor', `${totalAP} AP`, '#6af'),
+        statRow('Weapon', wpnDmg, '#fd8'),
+    ].join('');
+
+    // Level / XP (placeholders until XP system is wired)
+    const level = game.level || 1;
+    const xp    = game.xp    || 0;
+    const xpNext = level * 50;
+    const xpPct  = Math.min(100, Math.floor((xp / xpNext) * 100));
+
+    const elClass = document.getElementById('invStatClass');
+    if (elClass) elClass.textContent = CLASS_DATA[game.classId]?.name || game.classId || '';
+    const elLevel = document.getElementById('invStatLevel');
+    if (elLevel) elLevel.textContent = level;
+    const elXPLabel = document.getElementById('invStatXPLabel');
+    if (elXPLabel) elXPLabel.textContent = `${xp} / ${xpNext}`;
+    const elXPBar = document.getElementById('invStatXPBar');
+    if (elXPBar) elXPBar.style.width = `${xpPct}%`;
+    const elFloor = document.getElementById('invStatFloor');
+    if (elFloor) elFloor.textContent = game.floor || 1;
+    // --- END STATS PANEL ---
+
     // Helper to create draggable item
     const createItemEl = (item, source, idx) => {
         if (!item) return null;
         const div = document.createElement('div');
         div.className = 'inv-item-drag';
         div.style.width = '100%'; div.style.height = '100%';
-        div.title = item.name;
 
-        const asset = getAssetData(item.type, item.val || item.id, item.suit);
+        // 'active' and other non-standard types use items.png via the 'item' lookup
+        const assetType = ['weapon', 'armor', 'potion', 'item'].includes(item.type) ? item.type : 'item';
+        const assetVal  = item.val || item.id;
+        const asset = getAssetData(assetType, assetVal, item.suit);
         div.style.backgroundImage = `url('assets/images/${asset.file}')`;
         div.style.backgroundSize = `${asset.sheetCount * 100}% 100%`;
         div.style.backgroundPosition = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
@@ -592,11 +669,9 @@ export function renderInventoryUI() {
             e.dataTransfer.setData('text/plain', JSON.stringify({ source, idx }));
         };
 
-        div.onclick = (e) => {
-            e.stopPropagation();
-            const desc = document.getElementById('invDescription');
-            if (desc) desc.innerHTML = `<span style="color:#fff; font-weight:bold;">${item.name}</span> <span style="margin-left:10px; color:#666;">| ${item.desc || "No description."}</span>`;
-        };
+        div.onclick = (e) => { e.stopPropagation(); };
+        div.onmouseenter = () => showTooltip(div, item);
+        div.onmouseleave = () => hideTooltip();
 
         // Touch Start Logic
         div.ontouchstart = (e) => {
@@ -627,7 +702,7 @@ export function renderInventoryUI() {
     const invGrid = document.getElementById('invGrid');
     if (invGrid) {
         invGrid.innerHTML = '';
-        while (game.backpack.length < 24) game.backpack.push(null);
+        while (game.backpack.length < 28) game.backpack.push(null);
         game.backpack.forEach((item, idx) => {
             const div = document.createElement('div');
             div.style.cssText = "border:1px solid #333; background:#0a0a0a; position:relative;";
@@ -666,25 +741,23 @@ export function renderInventoryUI() {
         }
     });
 
-    // Render Trophies
-    const trophyShelf = document.getElementById('invTrophyShelf');
-    if (trophyShelf) {
-        trophyShelf.innerHTML = '';
-        if (game.slainStack.length === 0) {
-            trophyShelf.innerHTML = '<div style="color:#666; font-size:0.8rem; font-style:italic; padding:10px; grid-column: 1 / -1;">No trophies collected.</div>';
-        } else {
-            game.slainStack.forEach((c, idx) => {
-                const container = createTrophyElement(c, idx);
-                trophyShelf.appendChild(container);
-            });
-        }
+    // Render Trophy Stack Slot
+    const trophySlot = document.getElementById('invTrophySlot');
+    if (trophySlot) {
+        const count = game.slainStack.length;
+        const artStyle = count > 0
+            ? `background:url('assets/images/corpse.png') no-repeat center; background-size:contain; filter:sepia(0.2) contrast(1.1);`
+            : `background:url('assets/images/corpse.png') no-repeat center; background-size:contain; filter:grayscale(1) opacity(0.25);`;
+        trophySlot.innerHTML = `
+            <div style="width:100%; height:100%; position:absolute; top:0; left:0; ${artStyle}"></div>
+            <div id="invTrophyCount" style="position:absolute; top:2px; right:4px; font-size:0.7rem; color:${count > 0 ? '#d4af37' : '#444'}; font-family:'Cinzel',serif; font-weight:bold; text-shadow:0 1px 3px #000;">${count}</div>
+        `;
     }
 
     // Update Class Icon
     const classIcon = document.getElementById('classIconDisplay');
     if (classIcon) {
-        const classMap = { 'knight': 0, 'rogue': 1, 'occultist': 2 };
-        const cIdx = classMap[game.classId] || 0;
+        const cIdx = CLASS_DATA[game.classId]?.icon?.val ?? 0;
         classIcon.style.backgroundImage = "url('assets/images/classes.png')";
         classIcon.style.backgroundSize = "900% 100%";
         classIcon.style.backgroundPosition = `${cIdx * (100 / 8)}% 0%`;
@@ -741,15 +814,16 @@ export function setupInventoryUI() {
 
     modal.innerHTML = `
     <div class="inventory-layout-container" style="
-        width: 850px; 
-        max-width: 95vw;
-        height: 700px; 
-        background: #050505; 
-        border: 2px solid var(--gold); 
-        padding: 5px; 
-        box-shadow: 0 0 20px #000; 
-        display:grid; 
-        grid-template-rows: 40px 1fr 180px; 
+        width: 1050px;
+        max-width: 98vw;
+        height: 630px;
+        margin-bottom: 110px;
+        background: #050505;
+        border: 2px solid var(--gold);
+        padding: 5px;
+        box-shadow: 0 0 20px #000;
+        display:grid;
+        grid-template-rows: 40px 1fr 148px;
         gap: 5px;
         position: relative;
         font-family: 'Cinzel', serif;
@@ -767,8 +841,8 @@ export function setupInventoryUI() {
             </div>
         </div>
 
-        <!-- MAIN CONTENT: DOLL vs BACKPACK -->
-        <div style="grid-row:2; display:grid; grid-template-columns: 320px 1fr; gap:10px;">
+        <!-- MAIN CONTENT: DOLL | BACKPACK | STATS -->
+        <div style="grid-row:2; display:grid; grid-template-columns: 320px 1fr 200px; gap:8px;">
             
             <!-- LEFT: PAPER DOLL -->
             <div style="position:relative; background:#111; border:1px solid #333;">
@@ -807,83 +881,105 @@ export function setupInventoryUI() {
                 
             </div>
 
-            <!-- RIGHT: BACKPACK & HOTBAR -->
-            <div style="display:flex; flex-direction:column; gap:10px;">
-                
-                <!-- Backpack Label -->
+            <!-- RIGHT: BACKPACK (7x4 = 28 slots, hotbar moved to bottom row) -->
+            <div style="display:flex; flex-direction:column; gap:6px;">
                 <div style="font-size:1.1rem; color:#d4af37; border-bottom:1px solid #333; padding-bottom:2px;">BACKPACK</div>
-                
-                <!-- 6x4 Grid -->
                 <div id="invGrid" style="
-                    display:grid; 
-                    grid-template-columns: repeat(6, 1fr); 
-                    grid-template-rows: repeat(4, 1fr); 
-                    gap:4px; 
+                    display:grid;
+                    grid-template-columns: repeat(7, 1fr);
+                    grid-template-rows: repeat(4, 1fr);
+                    gap:4px;
                     flex-grow:1;
-                ">
-                    <!-- JS Injects 24 slots here -->
+                "><!-- JS injects 28 slots --></div>
+            </div>
+
+            <!-- STATS PANEL -->
+            <div id="invStatsPanel" style="
+                display:flex; flex-direction:column; gap:0;
+                background:#0a0a0a; border:1px solid #333;
+                padding:10px 8px; overflow:hidden;
+                font-family:'Cinzel',serif;
+            ">
+                <!-- Header -->
+                <div style="text-align:center; color:#d4af37; font-size:0.75rem; letter-spacing:2px; border-bottom:1px solid #333; padding-bottom:6px; margin-bottom:8px;">CHARACTER</div>
+
+                <!-- Class + Level -->
+                <div style="text-align:center; margin-bottom:8px;">
+                    <div id="invStatClass" style="color:#aaa; font-size:0.7rem; letter-spacing:1px; text-transform:uppercase;"></div>
+                    <div style="margin-top:3px;">
+                        <span style="color:#d4af37; font-size:1.1rem; font-weight:bold;">Lv.</span>
+                        <span id="invStatLevel" style="color:#fff; font-size:1.2rem; font-weight:bold; margin-left:2px;">1</span>
+                    </div>
                 </div>
 
-                <!-- Provisioning Label -->
-                <div style="font-size:1.1rem; color:#d4af37; border-bottom:1px solid #333; padding-bottom:2px; margin-top:10px;">PROVISIONING (HOTBAR)</div>
-                
-                <!-- Hotbar Row -->
-                <div id="hotbarGrid" style="display:grid; grid-template-columns: repeat(6, 1fr); gap:4px; height:60px;">
-                    <!-- JS Injects 6 slots here -->
+                <!-- XP Bar -->
+                <div style="margin-bottom:10px;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.65rem; color:#888; margin-bottom:2px;">
+                        <span>XP</span><span id="invStatXPLabel">0 / 100</span>
+                    </div>
+                    <div style="height:5px; background:#222; border:1px solid #444; border-radius:2px;">
+                        <div id="invStatXPBar" style="height:100%; background:linear-gradient(90deg,#6600cc,#aa44ff); width:0%; border-radius:2px; transition:width 0.3s;"></div>
+                    </div>
+                </div>
+
+                <div style="border-top:1px solid #222; margin-bottom:8px;"></div>
+
+                <!-- Attributes -->
+                <div style="font-size:0.65rem; color:#d4af37; letter-spacing:2px; margin-bottom:6px;">ATTRIBUTES</div>
+                <div id="invStatAttrs" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px; font-size:0.85rem;">
+                    <!-- injected by renderInventoryUI -->
+                </div>
+
+                <div style="border-top:1px solid #222; margin-bottom:8px;"></div>
+
+                <!-- Vitals -->
+                <div style="font-size:0.65rem; color:#d4af37; letter-spacing:2px; margin-bottom:6px;">VITALS</div>
+                <div id="invStatVitals" style="display:flex; flex-direction:column; gap:4px; margin-bottom:10px; font-size:0.85rem;">
+                    <!-- injected by renderInventoryUI -->
+                </div>
+
+                <div style="border-top:1px solid #222; margin-bottom:8px;"></div>
+
+                <!-- Floor -->
+                <div style="text-align:center; margin-top:auto;">
+                    <div style="font-size:0.65rem; color:#888; letter-spacing:2px;">FLOOR</div>
+                    <div id="invStatFloor" style="color:#d4af37; font-size:1.4rem; font-weight:bold;">1</div>
                 </div>
             </div>
         </div>
 
-        <!-- BOTTOM: DETAILS, TROPHY, ANVIL -->
-        <div style="grid-row:3; display:grid; grid-template-columns: 1fr 200px; gap:10px; border-top:1px solid #444; padding-top:5px;">
-            
-            <!-- LEFT BOTTOM: Description + Trophies -->
-            <div style="display:flex; flex-direction:column; gap:5px;">
-                <!-- Description Line -->
-                <div id="invDescription" style="
-                    font-family: 'Special Elite', monospace; 
-                    color:#aaa; 
-                    font-size:0.9rem; 
-                    padding:5px; 
-                    background:#111; 
-                    border:1px solid #333; 
-                    height:24px; 
-                    display:flex; align-items:center;
-                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
-                ">Select an item to view details...</div>
-                
-                <!-- Trophies Label -->
-                <div style="font-size:0.9rem; color:#d4af37; margin-top:5px;">TROPHIES (CLICK TO BURN)</div>
-                
-                <!-- Trophy Shelf (Vertical Scroll) -->
-                <div id="invTrophyShelf" style="
-                    display: grid; 
-                    grid-template-columns: repeat(6, 80px);
-                    gap:5px; 
-                    overflow-y:auto; 
-                    height:100px; 
-                    background:#080808; 
-                    border:1px solid #333; 
-                    padding:5px;
-                    scrollbar-width: thin;
-                    scrollbar-color: #444 #111;
-                    align-content: start;
-                ">
-                    <!-- JS Injects Trophies -->
+        <!-- BOTTOM ROW: TROPHY SLOT | HOTBAR | ANVIL -->
+        <div style="grid-row:3; display:grid; grid-template-columns: 100px 1fr 210px; gap:8px; border-top:1px solid #333; padding-top:6px; align-items:stretch;">
+
+            <!-- TROPHY STACK SLOT -->
+            <div style="background:#0a0a0a; border:1px solid #333; padding:6px; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                <div style="font-size:0.65rem; color:#d4af37; letter-spacing:2px;">TROPHIES</div>
+                <div id="invTrophySlot" style="
+                    width:72px; height:72px; border:1px solid #444;
+                    background:#080808; position:relative; cursor:pointer;
+                    overflow:hidden;
+                " onclick="window.burnAllTrophies()">
+                    <!-- JS renders art + count badge -->
+                </div>
+                <div style="font-size:0.55rem; color:#555; letter-spacing:1px; text-transform:uppercase;">Burn All</div>
+            </div>
+
+            <!-- HOTBAR -->
+            <div style="background:#0a0a0a; border:1px solid #333; padding:6px; display:flex; flex-direction:column; gap:4px;">
+                <div style="font-size:0.65rem; color:#d4af37; letter-spacing:2px;">HOTBAR</div>
+                <div id="hotbarGrid" style="display:grid; grid-template-columns:repeat(6,1fr); gap:4px; flex:1;">
+                    <!-- JS injects 6 slots -->
                 </div>
             </div>
 
-            <!-- RIGHT BOTTOM: ANVIL -->
-            <div style="display:flex; flex-direction:column; border:1px solid #444; background:#111; padding:5px;">
-                <div style="text-align:center; color:#d4af37; margin-bottom:5px;">THE ANVIL</div>
-                
-                <!-- Anvil Slots -->
-                <div style="display:flex; justify-content:center; gap:10px; margin-bottom:10px;">
-                    <div id="anvilSlot0" data-slot-type="anvil" data-slot-idx="0" style="width:60px; height:60px; border:1px dashed #666; background:#222;" ondrop="handleDrop(event, 'anvil', '0')" ondragover="allowDrop(event)"></div>
-                    <div id="anvilSlot1" data-slot-type="anvil" data-slot-idx="1" style="width:60px; height:60px; border:1px dashed #666; background:#222;" ondrop="handleDrop(event, 'anvil', '1')" ondragover="allowDrop(event)"></div>
+            <!-- ANVIL -->
+            <div style="background:#0a0a0a; border:1px solid #333; padding:6px; display:flex; flex-direction:column; gap:5px;">
+                <div style="text-align:center; font-size:0.65rem; color:#d4af37; letter-spacing:2px;">THE ANVIL</div>
+                <div style="display:flex; justify-content:center; gap:8px; flex:1; align-items:center;">
+                    <div id="anvilSlot0" data-slot-type="anvil" data-slot-idx="0" style="width:55px; height:55px; border:1px dashed #555; background:#111;" ondrop="handleDrop(event, 'anvil', '0')" ondragover="allowDrop(event)"></div>
+                    <div id="anvilSlot1" data-slot-type="anvil" data-slot-idx="1" style="width:55px; height:55px; border:1px dashed #555; background:#111;" ondrop="handleDrop(event, 'anvil', '1')" ondragover="allowDrop(event)"></div>
                 </div>
-                
-                <button class="v2-btn" onclick="window.forgeItems()" style="width:100%; font-size:0.9rem; padding:5px;">FORGE</button>
+                <button class="v2-btn" onclick="window.forgeItems()" style="width:100%; font-size:0.8rem; padding:3px;">FORGE</button>
             </div>
         </div>
 
@@ -1484,6 +1580,21 @@ export function burnTrophy(idx) {
     updateUI();
     renderInventoryUI();
 }
+
+window.burnAllTrophies = function () {
+    if (!game.slainStack || game.slainStack.length === 0) {
+        spawnFloatingText('No trophies!', window.innerWidth / 2, window.innerHeight / 2, '#aaa');
+        return;
+    }
+    const count = game.slainStack.length;
+    let totalFuel = 0;
+    game.slainStack.forEach(card => { totalFuel += (card.val || 1) * 2; });
+    game.slainStack = [];
+    game.torchCharge = Math.min(100, (game.torchCharge || 0) + totalFuel);
+    spawnFloatingText(`Burned ${count} trophies! +${totalFuel} Fuel`, window.innerWidth / 2, window.innerHeight / 2, '#ff8800');
+    updateUI();
+    renderInventoryUI();
+};
 
 // --- GLOBAL TOUCH HANDLERS ---
 window.addEventListener('touchmove', (e) => {
