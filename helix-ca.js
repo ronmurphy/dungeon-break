@@ -22,8 +22,7 @@ const ISLAND_BOUNDS   = 40;    // CA grid size in cells (= local world units)
 const HELIX_HEIGHT    = 14;    // total Y rise from bot to apex
 const HELIX_TURNS     = 2.5;   // rotations — 2½ full turns around the corkscrew
 const SPIRAL_R_FRAC   = 0.52;  // centerline at 52% of island half-width (~10.4 units)
-const PATH_FLATTEN    = 2.5;   // cells within this dist of path get exact spiral height
-const CA_INIT_ALIVE   = 0.45;
+const PATH_FLATTEN    = 1.2;   // cells within this dist of path get exact spiral height
 const PRISM_BASE      = -1.5;  // bottom of side skirts (below Y=0)
 
 // ── Spiral waypoints ─────────────────────────────────────────────────────────
@@ -89,43 +88,17 @@ function buildPathGrid(waypoints) {
 }
 
 /**
- * Runs 3 CA iterations.
- * Path cells are never killed — guarantees a walkable lane along the spiral.
+ * Pure-path grid: only cells within PATH_FLATTEN of the spiral are alive.
+ * No CA fill between arms — the gap between turns is void, making the
+ * spiral ribbon clearly visible from the top-down camera.
+ * (Adjacent arms are ~3.1 units apart radially; PATH_FLATTEN=1.2 leaves
+ *  a ~0.7-unit void gap between them.)
  */
 function buildCAGrid(waypoints) {
-    const cx       = ISLAND_BOUNDS * 0.5;
-    const cz       = ISLAND_BOUNDS * 0.5;
-    const islandR  = (ISLAND_BOUNDS * 0.5) * 0.85;
     const pathGrid = buildPathGrid(waypoints);
-
-    // Initialise
-    const alive = Array.from({ length: ISLAND_BOUNDS }, (_, gz) =>
-        Array.from({ length: ISLAND_BOUNDS }, (_, gx) => {
-            if (pathGrid[gz][gx]) return true;
-            const d = Math.hypot(gx - cx, gz - cz);
-            const p = d < islandR * 0.5 ? 0.75 : d < islandR ? CA_INIT_ALIVE : 0;
-            return Math.random() < p;
-        })
+    return Array.from({ length: ISLAND_BOUNDS }, (_, gz) =>
+        Array.from({ length: ISLAND_BOUNDS }, (_, gx) => pathGrid[gz][gx] === 1)
     );
-
-    // 3 iterations
-    for (let iter = 0; iter < 3; iter++) {
-        const next = alive.map(row => [...row]);
-        for (let gz = 1; gz < ISLAND_BOUNDS - 1; gz++) {
-            for (let gx = 1; gx < ISLAND_BOUNDS - 1; gx++) {
-                if (pathGrid[gz][gx]) { next[gz][gx] = true; continue; }
-                let n = 0;
-                for (let dz = -1; dz <= 1; dz++)
-                    for (let dx = -1; dx <= 1; dx++)
-                        if ((dx || dz) && alive[gz + dz]?.[gx + dx]) n++;
-                next[gz][gx] = alive[gz][gx] ? n >= 3 : n > 4;
-            }
-        }
-        for (let gz = 0; gz < ISLAND_BOUNDS; gz++)
-            for (let gx = 0; gx < ISLAND_BOUNDS; gx++)
-                alive[gz][gx] = next[gz][gx];
-    }
-    return alive;
 }
 
 // ── Geometry builder ──────────────────────────────────────────────────────────

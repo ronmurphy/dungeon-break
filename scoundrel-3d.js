@@ -153,6 +153,7 @@ window.debugIntermission = function (floor = 1, coins = 300) {
     startIntermission();
 };
 window.debugBoss         = function () { game.isBossFight = false; startBossEncounter(); };
+window.debugHelix        = function (floor = 1) { game.floor = floor; if (!game.classId) game.classId = 'knight'; closeCombat(); enterHelixZone(); };
 
 // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
@@ -4525,7 +4526,7 @@ function startIntermission() {
     nextBtn.onclick = () => {
         document.getElementById('descendBtn').onclick = startIntermission; // Reset for future calls
         closeCombat();
-        descendToNextFloor(); // TEMP: bypass helix zone
+        descendToNextFloor(); // helix bypassed — re-wire to enterHelixZone() when ready
     };
     enemyArea.appendChild(nextBtn);
 }
