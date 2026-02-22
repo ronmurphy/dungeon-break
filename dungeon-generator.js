@@ -593,13 +593,13 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         treeMesh.castShadow = true;
         treeMesh.receiveShadow = true;
 
-        // Mark ~8% of trees as shakeable (hidden weapon)
+        // Mark ~15% of trees as shakeable (hidden weapon)
         const treeShakeable = new Set();
         const treeRewards = new Map();
         const baseTreeColor = new THREE.Color(0x2a1d15);
         for (let i = 0; i < treeInstances.length; i++) {
             treeMesh.setColorAt(i, baseTreeColor);
-            if (Math.random() < 0.08) {
+            if (Math.random() < 0.15) {  // 15% chance to be shakeable (adjust as needed)
                 treeShakeable.add(i);
                 treeRewards.set(i, Math.floor(2 + Math.random() * 4)); // weapon val 2–5
             }
@@ -632,7 +632,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         const baseRockColor = new THREE.Color(0x555555);
         for (let i = 0; i < rockInstances.length; i++) {
             rockMesh.setColorAt(i, baseRockColor); // Init per-instance color buffer
-            if (Math.random() < 0.07) {  // 7% chance to be flippable (adjust as needed)
+            if (Math.random() < 0.15) {  // 15% chance to be flippable (adjust as needed)
                 flippable.add(i);
                 rewards.set(i, Math.random() < 0.6 ? 'coin' : 'potion');
             }

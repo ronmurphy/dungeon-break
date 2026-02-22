@@ -28,7 +28,7 @@ export function getEnemyStats(filename) {
     if (lower.includes('viking')) return { ...ENEMY_DATA['skeleton-viking'] };
     if (lower.includes('king')) return { ...ENEMY_DATA['king'] };
     if (lower.includes('queen')) return { ...ENEMY_DATA['queen'] };
-    if (lower.includes('sorceress')) return { ...ENEMY_DATA['sorceress'] };
+    if (lower.includes('sorcoress')) return { ...ENEMY_DATA['sorceress'] };
     if (lower.includes('assassin')) return { ...ENEMY_DATA['assassin'] };
     if (lower.includes('female_twin')) return { ...ENEMY_DATA['female_twin'] };
     if (lower.includes('male_twin')) return { ...ENEMY_DATA['male_twin'] };
