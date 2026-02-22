@@ -239,7 +239,7 @@ Combat happens in place on the main 3D map — no teleport, no Battle Island.
 - [ ] **Asset compression** — Any remaining GLBs without `-web` suffix need compression pipeline.
 - [ ] **Tauri desktop wrapper** — Post-completion packaging (~3MB vs Electron's ~150MB).
 
-### Weapon Sprite Sheet Reference (`weaponsfinal.png` — 20 cells, 128×128)
+### Weapon Sprite Sheet Reference (`weapons_final.png` — 20 cells, 128×128)
 Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–19 are the new additions.
 
 | Cell | Val | Name | Type | Notes |

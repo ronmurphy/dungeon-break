@@ -584,7 +584,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     if (treeInstances.length > 0) {
         const treeGeo = new THREE.CylinderGeometry(0.05, 0.15, 1.5, 5);
         treeGeo.translate(0, 0.75, 0); // Pivot at bottom
-        const treeMat = new THREE.MeshStandardMaterial({ color: 0x2a1d15, roughness: 1.0 });
+        const treeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1.0 }); // White so instance colors render accurately
         const treeMesh = new THREE.InstancedMesh(treeGeo, treeMat, treeInstances.length);
 
         for (let i = 0; i < treeInstances.length; i++) {
@@ -592,6 +592,24 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         }
         treeMesh.castShadow = true;
         treeMesh.receiveShadow = true;
+
+        // Mark ~8% of trees as shakeable (hidden weapon)
+        const treeShakeable = new Set();
+        const treeRewards = new Map();
+        const baseTreeColor = new THREE.Color(0x2a1d15);
+        for (let i = 0; i < treeInstances.length; i++) {
+            treeMesh.setColorAt(i, baseTreeColor);
+            if (Math.random() < 0.08) {
+                treeShakeable.add(i);
+                treeRewards.set(i, Math.floor(2 + Math.random() * 4)); // weapon val 2–5
+            }
+        }
+        if (treeMesh.instanceColor) treeMesh.instanceColor.needsUpdate = true;
+        treeMesh.userData.isTreeMesh = true;
+        treeMesh.userData.shakeable = treeShakeable;
+        treeMesh.userData.shook = new Set();
+        treeMesh.userData.rewards = treeRewards;
+
         scene.add(treeMesh);
         decorationMeshes.push(treeMesh);
     }
@@ -599,7 +617,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     if (rockInstances.length > 0) {
         const rockGeo = new THREE.DodecahedronGeometry(0.3);
         rockGeo.translate(0, 0.15, 0); // Pivot at bottom
-        const rockMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.8 });
+        const rockMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }); // White so instance colors render accurately
         const rockMesh = new THREE.InstancedMesh(rockGeo, rockMat, rockInstances.length);
 
         for (let i = 0; i < rockInstances.length; i++) {
@@ -607,6 +625,24 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         }
         rockMesh.castShadow = false; // Optimization: Small rocks don't need to cast shadows
         rockMesh.receiveShadow = true;
+
+        // Mark ~15% of rocks as flippable (hidden loot)
+        const flippable = new Set();
+        const rewards = new Map();
+        const baseRockColor = new THREE.Color(0x555555);
+        for (let i = 0; i < rockInstances.length; i++) {
+            rockMesh.setColorAt(i, baseRockColor); // Init per-instance color buffer
+            if (Math.random() < 0.07) {  // 7% chance to be flippable (adjust as needed)
+                flippable.add(i);
+                rewards.set(i, Math.random() < 0.6 ? 'coin' : 'potion');
+            }
+        }
+        if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
+        rockMesh.userData.isRockMesh = true;
+        rockMesh.userData.flippable = flippable;
+        rockMesh.userData.flipped = new Set();
+        rockMesh.userData.rewards = rewards;
+
         scene.add(rockMesh);
         decorationMeshes.push(rockMesh);
     }

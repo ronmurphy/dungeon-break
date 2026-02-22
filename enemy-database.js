@@ -11,7 +11,7 @@ export const ENEMY_DATA = {
     'evil': { name: "Cultist", hp: 30, ac: 3, str: 4, xp: 40 },
     'king': { name: "King", hp: 50, ac: 5, str: 5, xp: 100 },
     'queen': { name: "Queen", hp: 45, ac: 4, str: 4, xp: 80 },
-    'sorceress': { name: "Sorceress", hp: 35, ac: 3, str: 3, xp: 60 },
+    'sorcoress': { name: "Sorceress", hp: 35, ac: 3, str: 3, xp: 60 },
     'assassin': { name: "Assassin", hp: 25, ac: 2, str: 4, xp: 50 },
     'female_twin': { name: "F. Twin", hp: 30, ac: 3, str: 3, xp: 60 },
     'male_twin': { name: "M. Twin", hp: 30, ac: 3, str: 3, xp: 60 }

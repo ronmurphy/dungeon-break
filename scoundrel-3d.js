@@ -58,6 +58,8 @@ let waypointMeshes = new Map();
 let corridorMeshes = new Map();
 let doorMeshes = new Map();
 let decorationMeshes = []; // Store instanced meshes for cleanup
+let hoveredDecoration = { mesh: null, id: -1 }; // Currently gold-tinted flippable rock/tree
+let lootSprites = []; // Spinning ground pickups (potions, weapons, items)
 let treePositions = []; // Store tree locations for FX
 let animatedMaterials = []; // Track shaders that need time updates
 let hiddenDecorationIndices = new Map(); // Track hidden instances for combat
@@ -155,6 +157,7 @@ const WANDERER_MODELS = [
     'a-sand-assassin-web.glb',
     'a-sorcoress-web.glb',
     'a-skeleton-king-web.glb',
+    'a-q'
 ];
 // Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
 // 'a-female_twin-web.glb', 'a_male_twin-web.glb'
@@ -1297,6 +1300,8 @@ function init3D() {
     window.addEventListener('click', on3DClick);
     window.removeEventListener('contextmenu', on3DContextMenu);
     window.addEventListener('contextmenu', on3DContextMenu);
+    window.removeEventListener('mousemove', onDecorationHover);
+    window.addEventListener('mousemove', onDecorationHover);
 }
 
 function rebuildComposer() {
@@ -1717,6 +1722,225 @@ function clearFogRings() {
 }
 */
 
+const _ROCK_BASE_COLOR = new THREE.Color(0x555555);
+const _TREE_BASE_COLOR = new THREE.Color(0x2a1d15);
+const _ROCK_GOLD_COLOR = new THREE.Color(0xd4af37);
+
+function onDecorationHover(event) {
+    if (isCombatView || isAttractMode || isEditMode) {
+        if (hoveredDecoration.mesh) {
+            const baseCol = hoveredDecoration.mesh.userData.isTreeMesh ? _TREE_BASE_COLOR : _ROCK_BASE_COLOR;
+            hoveredDecoration.mesh.setColorAt(hoveredDecoration.id, baseCol);
+            hoveredDecoration.mesh.instanceColor.needsUpdate = true;
+            hoveredDecoration = { mesh: null, id: -1 };
+        }
+        return;
+    }
+
+    const rockMesh = decorationMeshes.find(m => m.userData?.isRockMesh);
+    const treeMesh = decorationMeshes.find(m => m.userData?.isTreeMesh);
+    if (!rockMesh && !treeMesh) return;
+
+    const container = renderer.domElement;
+    const rect = container.getBoundingClientRect();
+    const mx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    const my = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
+
+    // Check rocks then trees — first valid hit wins
+    let newMesh = null, newId = -1;
+    if (rockMesh) {
+        const hits = raycaster.intersectObject(rockMesh);
+        if (hits.length > 0) {
+            const id = hits[0].instanceId;
+            if (rockMesh.userData.flippable?.has(id) && !rockMesh.userData.flipped?.has(id)) {
+                newMesh = rockMesh; newId = id;
+            }
+        }
+    }
+    if (!newMesh && treeMesh) {
+        const hits = raycaster.intersectObject(treeMesh);
+        if (hits.length > 0) {
+            const id = hits[0].instanceId;
+            if (treeMesh.userData.shakeable?.has(id) && !treeMesh.userData.shook?.has(id)) {
+                newMesh = treeMesh; newId = id;
+            }
+        }
+    }
+
+    // Reset previous hover
+    if (hoveredDecoration.id !== -1 && (hoveredDecoration.mesh !== newMesh || hoveredDecoration.id !== newId)) {
+        const baseCol = hoveredDecoration.mesh?.userData.isTreeMesh ? _TREE_BASE_COLOR : _ROCK_BASE_COLOR;
+        hoveredDecoration.mesh.setColorAt(hoveredDecoration.id, baseCol);
+        hoveredDecoration.mesh.instanceColor.needsUpdate = true;
+        hoveredDecoration = { mesh: null, id: -1 };
+    }
+    // Apply new hover
+    if (newMesh && newId !== -1 && hoveredDecoration.id !== newId) {
+        newMesh.setColorAt(newId, _ROCK_GOLD_COLOR);
+        newMesh.instanceColor.needsUpdate = true;
+        hoveredDecoration = { mesh: newMesh, id: newId };
+    }
+}
+
+function flipRock(rockMesh, instanceId) {
+    rockMesh.userData.flipped.add(instanceId);
+
+    // Reset gold tint
+    rockMesh.setColorAt(instanceId, _ROCK_BASE_COLOR);
+    rockMesh.instanceColor.needsUpdate = true;
+    hoveredDecoration = { mesh: null, id: -1 };
+
+    // Get world position from instance matrix
+    const matrix = new THREE.Matrix4();
+    rockMesh.getMatrixAt(instanceId, matrix);
+    const pos = new THREE.Vector3().setFromMatrixPosition(matrix);
+
+    // Hide instance by shrinking it
+    const hideMatrix = new THREE.Matrix4().makeTranslation(pos.x, pos.y, pos.z).multiply(new THREE.Matrix4().makeScale(0.001, 0.001, 0.001));
+    rockMesh.setMatrixAt(instanceId, hideMatrix);
+    rockMesh.instanceMatrix.needsUpdate = true;
+
+    // Spawn temp mesh at rock position for flip animation
+    const tempGeo = new THREE.DodecahedronGeometry(0.3);
+    const tempMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.8 });
+    const tempMesh = new THREE.Mesh(tempGeo, tempMat);
+    tempMesh.position.set(pos.x, 0.15, pos.z);
+    scene.add(tempMesh);
+
+    // Flip: hop up then back down, rotate as it goes
+    new TWEEN.Tween(tempMesh.rotation)
+        .to({ x: Math.PI, z: Math.PI * 0.4 }, 380)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .start();
+
+    new TWEEN.Tween(tempMesh.position)
+        .to({ y: 0.6 }, 190)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .chain(new TWEEN.Tween(tempMesh.position)
+            .to({ y: 0.05 }, 190)
+            .easing(TWEEN.Easing.Quadratic.In)
+            .onComplete(() => {
+                scene.remove(tempMesh);
+                tempGeo.dispose(); tempMat.dispose();
+
+                // Spawn reward
+                const reward = rockMesh.userData.rewards?.get(instanceId);
+                if (reward === 'coin') {
+                    const coinTex = getClonedTexture('assets/images/animations/soulcoin.png');
+                    coinTex.repeat.set(1 / 25, 1);
+                    const coinMat = new THREE.SpriteMaterial({ map: coinTex, transparent: true });
+                    const coinSprite = new THREE.Sprite(coinMat);
+                    coinSprite.position.set(pos.x, getTerrainY(pos.x, pos.z) + 0.4, pos.z);
+                    coinSprite.scale.set(0.7, 0.7, 0.7);
+                    scene.add(coinSprite);
+                    soulcoinSprites.push({ mesh: coinSprite, tex: coinTex, coins: 1 });
+                    spawnFloatingText('Soul Coin!', window.innerWidth / 2, window.innerHeight / 2, '#d4af37');
+                    logMsg('A soul coin hidden under the rock — walk over it to collect!');
+                } else {
+                    const potionItem = { type: 'potion', val: 2, suit: '♥', name: 'HP Incense 2', desc: 'A small stash hidden under a rock.' };
+                    spawnLootSprite(pos, potionItem);
+                    logMsg('Found a hidden stash under a rock — go pick it up!');
+                }
+            })
+        ).start();
+
+    spawnFloatingText('...', window.innerWidth / 2, window.innerHeight / 2, '#aaaaaa');
+}
+
+function getTerrainY(x, z) {
+    if (!globalFloorMesh) return 0;
+    terrainRaycaster.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
+    const hits = terrainRaycaster.intersectObject(globalFloorMesh, true);
+    return hits.length > 0 ? hits[0].point.y : 0;
+}
+
+function spawnLootSprite(pos, item) {
+    let texPath, cols, cellIdx;
+    if (item.type === 'potion') {
+        texPath = 'assets/images/heart.png';
+        cols = 9;
+        cellIdx = Math.max(0, Math.min(8, Math.floor((item.val - 2) * 8 / 18)));
+    } else if (item.type === 'weapon') {
+        texPath = 'assets/images/weapons_final.png';
+        cols = 20;
+        cellIdx = Math.max(0, Math.min(19, (item.val || 2) - 2));
+    } else {
+        texPath = 'assets/images/items.png';
+        cols = 10;
+        const idx = ITEM_DATA ? ITEM_DATA.findIndex(d => d.id === item.id) : -1;
+        cellIdx = Math.max(0, Math.min(9, idx >= 0 ? idx : 0));
+    }
+
+    console.log(`[LootSprite] Spawning ${item.type} — ${item.name} | tex: ${texPath} cell ${cellIdx}/${cols}`);
+
+    // getClonedTexture gives each sprite its own UV settings (repeat/offset won't corrupt shared texture).
+    // Do NOT set needsUpdate manually — getClonedTexture's polling sets it once image data is ready.
+    const tex = getClonedTexture(texPath);
+    tex.repeat.set(1 / cols, 1);
+    tex.offset.x = cellIdx / cols;
+
+    const geo = new THREE.PlaneGeometry(0.7, 0.7);
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, side: THREE.DoubleSide, depthWrite: false, alphaTest: 0.05 });
+    const mesh = new THREE.Mesh(geo, mat);
+    const spawnX = pos.x + (Math.random() - 0.5) * 0.5;
+    const spawnZ = pos.z + (Math.random() - 0.5) * 0.5;
+    mesh.position.set(spawnX, getTerrainY(spawnX, spawnZ) + 0.55, spawnZ);
+    scene.add(mesh);
+    lootSprites.push({ mesh, item });
+}
+
+function shakeTree(treeMesh, instanceId) {
+    treeMesh.userData.shook.add(instanceId);
+
+    // Reset gold tint
+    treeMesh.setColorAt(instanceId, _TREE_BASE_COLOR);
+    treeMesh.instanceColor.needsUpdate = true;
+    hoveredDecoration = { mesh: null, id: -1 };
+
+    // Get world position
+    const matrix = new THREE.Matrix4();
+    treeMesh.getMatrixAt(instanceId, matrix);
+    const pos = new THREE.Vector3().setFromMatrixPosition(matrix);
+
+    // Hide instance
+    const hideMatrix = new THREE.Matrix4().makeTranslation(pos.x, pos.y, pos.z).multiply(new THREE.Matrix4().makeScale(0.001, 0.001, 0.001));
+    treeMesh.setMatrixAt(instanceId, hideMatrix);
+    treeMesh.instanceMatrix.needsUpdate = true;
+
+    // Temp mesh for shake animation (same geometry as real tree)
+    const tempGeo = new THREE.CylinderGeometry(0.05, 0.15, 1.5, 5);
+    tempGeo.translate(0, 0.75, 0);
+    const tempMat = new THREE.MeshStandardMaterial({ color: 0x2a1d15, roughness: 1.0 });
+    const tempMesh = new THREE.Mesh(tempGeo, tempMat);
+    tempMesh.position.set(pos.x, pos.y, pos.z);
+    scene.add(tempMesh);
+
+    // Wobble chain — sways and decays to rest
+    new TWEEN.Tween(tempMesh.rotation)
+        .to({ z: 0.3 }, 100)
+        .chain(new TWEEN.Tween(tempMesh.rotation)
+            .to({ z: -0.25 }, 150)
+            .chain(new TWEEN.Tween(tempMesh.rotation)
+                .to({ z: 0.15 }, 120)
+                .chain(new TWEEN.Tween(tempMesh.rotation)
+                    .to({ z: 0 }, 100)
+                    .onComplete(() => {
+                        scene.remove(tempMesh);
+                        tempGeo.dispose(); tempMat.dispose();
+
+                        const val = treeMesh.userData.rewards?.get(instanceId) || 2;
+                        const weaponItem = { type: 'weapon', val, suit: '♦', name: getWeaponName(val) };
+                        spawnLootSprite(pos, weaponItem);
+                        logMsg('Something fell from the tree!');
+                    })
+                )
+            )
+        ).start();
+
+    spawnFloatingText('...', window.innerWidth / 2, window.innerHeight / 2, '#aaaaaa');
+}
+
 function on3DContextMenu(e) {
     e.preventDefault();
     on3DClick(e, true);
@@ -1815,6 +2039,27 @@ function on3DClick(event, isRightClick = false) {
     if (!isRightClick) { // Only interact with objects on Left Click
         for (let i = 0; i < intersects.length; i++) {
             let obj = intersects[i].object;
+
+            // --- FLIPPABLE ROCK CHECK ---
+            if (obj.userData && obj.userData.isRockMesh && !isCombatView) {
+                const instanceId = intersects[i].instanceId;
+                if (instanceId !== undefined && obj.userData.flippable?.has(instanceId) && !obj.userData.flipped?.has(instanceId)) {
+                    flipRock(obj, instanceId);
+                    return;
+                }
+                continue; // Non-flippable rock — let click pass through to floor
+            }
+
+            // --- SHAKEABLE TREE CHECK ---
+            if (obj.userData && obj.userData.isTreeMesh && !isCombatView) {
+                const instanceId = intersects[i].instanceId;
+                if (instanceId !== undefined && obj.userData.shakeable?.has(instanceId) && !obj.userData.shook?.has(instanceId)) {
+                    shakeTree(obj, instanceId);
+                    return;
+                }
+                continue; // Non-shakeable tree — let click pass through
+            }
+
             const current = game.rooms.find(r => r.id === game.currentRoomIdx);
 
             // Traverse up to find roomId if clicking on a child model (like the chest)
@@ -2552,6 +2797,34 @@ function animate3D() {
         }
     }
 
+    // Spinning loot sprites (potions, weapons, items) — walk over to collect
+    if (lootSprites.length > 0) {
+        const now = Date.now();
+        for (let i = lootSprites.length - 1; i >= 0; i--) {
+            const ls = lootSprites[i];
+            if (!ls.mesh) { lootSprites.splice(i, 1); continue; }
+            ls.mesh.rotation.y = now * 0.002;
+            ls.mesh.position.y = 0.5 + Math.sin(now * 0.003 + i * 1.3) * 0.08;
+            if (!isCombatView && !isAttractMode && !isEditMode && playerObj) {
+                const dist = ls.mesh.position.distanceTo(playerObj.position);
+                if (dist < 1.5) {
+                    scene.remove(ls.mesh);
+                    lootSprites.splice(i, 1);
+                    if (addToBackpack(ls.item)) {
+                        spawnFloatingText(`+ ${ls.item.name}`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#ffcc44', 26);
+                        logMsg(`Picked up ${ls.item.name}.`);
+                    } else {
+                        const consolation = Math.floor(10 + Math.random() * 15);
+                        game.soulCoins = (game.soulCoins || 0) + consolation;
+                        spawnFloatingText(`FULL! +${consolation} coins`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#ff8844', 22);
+                        logMsg(`${ls.item.name} — backpack full, sold for ${consolation} soul coins.`);
+                    }
+                    updateUI();
+                }
+            }
+        }
+    }
+
     // Corpse loot proximity — auto-collect skull remains after combat
     if (!isCombatView && !isAttractMode && !isEditMode && playerObj && corpses.length > 0) {
         const modal = document.getElementById('combatModal');
@@ -2564,19 +2837,6 @@ function animate3D() {
                 if (dist < 1.5) {
                     scene.remove(c.mesh);
                     corpses.splice(i, 1);
-
-                    // Item loot drop (weapon / potion / item)
-                    if (c.loot) {
-                        if (addToBackpack(c.loot)) {
-                            spawnFloatingText(`+ ${c.loot.name}`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#ffcc44', 26);
-                            logMsg(`Found: ${c.loot.name}`);
-                        } else {
-                            const consolation = Math.floor(10 + Math.random() * 15);
-                            game.soulCoins = (game.soulCoins || 0) + consolation;
-                            spawnFloatingText(`BACKPACK FULL (+${consolation} coins)`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#ff8844', 22);
-                            logMsg(`Found ${c.loot.name} — backpack full, sold for ${consolation} soul coins.`);
-                        }
-                    }
 
                     // Torch fuel (soul coins now drop as a separate sprite pickup)
                     if (game.torchCharge < 100) {
@@ -3609,6 +3869,8 @@ function clear3DScene() {
     scene.add(amb);
 
     roomMeshes.clear(); waypointMeshes.clear(); corridorMeshes.clear(); doorMeshes.clear(); markerRings.clear();
+    lootSprites.forEach(ls => { if (ls.mesh && ls.mesh.parent) ls.mesh.parent.remove(ls.mesh); });
+    lootSprites = [];
 
     // Cleanup decorations
     decorationMeshes.forEach(m => {
@@ -8293,7 +8555,10 @@ function spawnCorpse(target) {
         .easing(TWEEN.Easing.Sinusoidal.InOut)
         .start();
 
-    corpses.push({ mesh: sprite, name: displayName, fuelReward, loot });
+    corpses.push({ mesh: sprite, name: displayName, fuelReward });
+
+    // Item loot — spawn as spinning ground sprite immediately at death position
+    if (loot) spawnLootSprite(deathPos, loot);
 
     // Soul coin drop — always spawns as a separate animated sprite the player must walk over
     const coinAmount = Math.max(3, str * 3);
@@ -8310,8 +8575,7 @@ function spawnCorpse(target) {
     scene.add(coinSprite);
     soulcoinSprites.push({ mesh: coinSprite, tex: coinTex, coins: coinAmount });
 
-    const lootHint = loot ? ` [${loot.name}]` : '';
-    logMsg(`${displayName} has fallen. Walk over their remains to loot.${lootHint}`);
+    logMsg(`${displayName} has fallen.${loot ? ' Loot nearby — go get it!' : ''}`);
 }
 
 function claimLoot(sprite) {
