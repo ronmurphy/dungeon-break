@@ -336,7 +336,8 @@ const WANDERER_MODELS = [
     'a-skeleton-king-web.glb',
     'MagmaDog-web.glb',
     'gremlinn-web.glb',
-    'demoness-web.glb'
+    'demoness-web.glb',
+    'queen-web.glb'
 ];
 // Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
 // 'a-female_twin-web.glb', 'a_male_twin-web.glb'
@@ -367,6 +368,7 @@ const GALLERY_MODELS = [
     'Whispering_Obelisk-marker-web.glb',
     'duck-web.glb',
     'Stone_Wat-web.glb',
+    'Forge-web.glb',
     'dungeon/dungeon-exit-web.glb', 'dungeon/dungeon-fountain-web.glb', 'dungeon/dungeon-holder-web.glb', 'dungeon/dungeon-obelisk-web.glb', 'dungeon/dungeon-plantir-web.glb'
 ];
 
