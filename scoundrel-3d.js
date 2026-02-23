@@ -102,13 +102,13 @@ let hiddenDecorationIndices = new Map(); // Track hidden instances for combat
 let hiddenStaticMeshes = []; // Track hidden static objects for combat bulldozer
 let inBattleIsland = false;
 window.inBattleIsland = false; // Expose globally
-let inHelixZone = false;
-let helixGroup = null;
-let helixFloorGroup = null;
-let helixExitPos = null;
+let inHelixZone          = false;
+let helixGroup           = null;
+let helixFloorGroup      = null;
+let helixExitPos         = null;
 let _helixExitPromptShown = false;
-let helixPathWaypoints = null;  // world-space Vector3[] — full spiral, used for path snap
-let _helixSavedControls = null;  // saved OrbitControls config, restored on exit
+let helixPathWaypoints   = null;  // world-space Vector3[] — full spiral, used for path snap
+let _helixSavedControls  = null;  // saved OrbitControls config, restored on exit
 let savedPlayerPos = new THREE.Vector3();
 let savedFogDensity = 0.045;
 
@@ -179,29 +179,29 @@ window.spawnPet = function (...args) { return spawnPet(...args); };
 
 // Expose live state objects to console for inspection
 // Using getters so reassignment of combatState is always reflected
-Object.defineProperty(window, 'game', { get: () => game, configurable: true });
-Object.defineProperty(window, 'combatState', { get: () => combatState, configurable: true });
+Object.defineProperty(window, 'game',         { get: () => game,        configurable: true });
+Object.defineProperty(window, 'combatState',  { get: () => combatState, configurable: true });
 
 // Debug helpers — available immediately from browser console
 window.debugIntermission = function (floor = 1, coins = 300) {
-    game.floor = floor;
-    game.soulCoins = Math.max(game.soulCoins || 0, coins);
+    game.floor      = floor;
+    game.soulCoins  = Math.max(game.soulCoins || 0, coins);
     if (!game.classId) game.classId = 'knight';
-    game.bonfireUsed = false;
-    game.merchantUsed = false;
+    game.bonfireUsed   = false;
+    game.merchantUsed  = false;
     closeCombat();
     startIntermission();
 };
-window.debugBoss = function () { game.isBossFight = false; startBossEncounter(); };
-window.debugHelix = function (floor = 1) { game.floor = floor; if (!game.classId) game.classId = 'knight'; closeCombat(); enterHelixZone(); };
-window.testDungeon = function (floor = 1) {
+window.debugBoss         = function () { game.isBossFight = false; startBossEncounter(); };
+window.debugHelix        = function (floor = 1) { game.floor = floor; if (!game.classId) game.classId = 'knight'; closeCombat(); enterHelixZone(); };
+window.testDungeon       = function (floor = 1) {
     // Drop straight into a BSP dungeon — no class select, no intro
     if (!game.classId) game.classId = 'scoundrel';
-    if (!game.stats) game.stats = { str: 2, dex: 2, int: 2, lck: 2 };
-    if (!game.maxHp) { game.maxHp = 20; game.hp = 20; }
+    if (!game.stats)   game.stats   = { str: 2, dex: 2, int: 2, lck: 2 };
+    if (!game.maxHp)   { game.maxHp = 20; game.hp = 20; }
     game.floor = floor;
-    game.seed = (Math.random() * 0xFFFFFFFF | 0) >>> 0 || 1;
-    game.deck = createDeck();
+    game.seed  = (Math.random() * 0xFFFFFFFF | 0) >>> 0 || 1;
+    game.deck  = createDeck();
     game.currentRoomIdx = 0;
     game.isBossFight = false;
     game.visitedWaypoints = [];
@@ -219,10 +219,10 @@ window.testDungeon = function (floor = 1) {
     initWanderers();
     updateUI();
     enterRoom(0);
-    console.log(`%c[testDungeon] Floor ${floor} — ${game.rooms.filter(r => !r.isWaypoint).length} rooms`, 'color:#d4af37;font-weight:bold');
+    console.log(`%c[testDungeon] Floor ${floor} — ${game.rooms.filter(r=>!r.isWaypoint).length} rooms`, 'color:#d4af37;font-weight:bold');
 };
 
-window.help = function () {
+window.help = function() {
     const g = 'color:#d4af37;font-weight:bold;font-size:13px';
     const w = 'color:#ffffff;font-weight:bold';
     const d = 'color:#aaaaaa';
@@ -246,7 +246,9 @@ window.help = function () {
     console.log('%cshowWandererDebug%c(true/false) %cenemy AI debug info', w, d, d);
     console.log('%ctestmfglb%c(filename)         %ctest-load a GLB into the scene', w, d, d);
     console.log('%c\n── Gameplay (in-game) ────────────────────────────────', h);
-    console.log('%cspawnPet%c()                  %cspawn your pet companion', w, d, d);
+    console.log('%cspawnPet%c()                  %copen companion picker panel', w, d, d);
+    console.log('%cspawnPet%c("Name")            %cspawn companion by name (e.g. "Gwark")', w, d, d);
+    console.log('%cspawnPet%c("list")            %csame as spawnPet() — shows picker', w, d, d);
     console.log('%c\n── Also available ────────────────────────────────────', h);
     console.log('%cgame%c                        %cthe live game state object', w, d, d);
     console.log('%ccombatState%c                 %cthe live combat state object', w, d, d);
@@ -276,18 +278,18 @@ const WINGED_MODELS = ['female_evil-web.glb', 'female_evil-true-web.glb', 'male_
 // Per-model animation term overrides (for models with non-standard clip names)
 const MODEL_ANIM_OVERRIDES = {
     'demoness-web.glb': {
-        walkTerms: ['swim idle', 'swim', 'walk', 'run'],
+        walkTerms:   ['swim idle', 'swim', 'walk', 'run'],
         attackTerms: ['mage_soell_cast', 'spell', 'cast'],
-        hitTerms: ['fall2', 'fall', 'hit'],
-        deathTerms: ['dying', 'death', 'die']
+        hitTerms:    ['fall2', 'fall', 'hit'],
+        deathTerms:  ['dying', 'death', 'die']
     }
 };
 
 // Boss name generation
 const BOSS_PREFIXES = ['Ashen', 'Rotbound', 'Dread', 'Ironborn', 'Cursed', 'Voidbound', 'Ancient'];
-const BOSS_TYPES = ['Warden', 'Keeper', 'Harbinger', 'Sentinel', 'Sovereign', 'Reaper', 'Tyrant'];
+const BOSS_TYPES   = ['Warden', 'Keeper', 'Harbinger', 'Sentinel', 'Sovereign', 'Reaper', 'Tyrant'];
 function generateBossName() {
-    const pre = BOSS_PREFIXES[Math.floor(Math.random() * BOSS_PREFIXES.length)];
+    const pre  = BOSS_PREFIXES[Math.floor(Math.random() * BOSS_PREFIXES.length)];
     const type = BOSS_TYPES[Math.floor(Math.random() * BOSS_TYPES.length)];
     return `${pre} ${type}`;
 }
@@ -298,25 +300,25 @@ const BOSS_PLANS = [
         name: 'The Phalanx',
         desc: 'Two armored enforcers stand guard.',
         helpers: [
-            { role: 'Bulwark', model: 'ironjaw-web.glb', pos: [-2.5, -3.0], scale: 0.70, hp: 24, ac: 4, str: 1, name: 'Bulwark' },
-            { role: 'Bulwark', model: 'SkeletalViking-web.glb', pos: [2.0, -3.0], scale: 0.75, hp: 20, ac: 3, str: 1, name: 'Bulwark' },
+            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-2.5, -3.0], scale: 0.70, hp: 24, ac: 4, str: 1, name: 'Bulwark'  },
+            { role: 'Bulwark',   model: 'SkeletalViking-web.glb', pos: [ 2.0, -3.0], scale: 0.75, hp: 20, ac: 3, str: 1, name: 'Bulwark'  },
         ]
     },
     {
         name: 'The Council',
         desc: 'A triad of specialists — shield, blade, and healer.',
         helpers: [
-            { role: 'Bulwark', model: 'ironjaw-web.glb', pos: [-3.0, -3.5], scale: 0.70, hp: 22, ac: 4, str: 1, name: 'Bulwark' },
-            { role: 'Fanatic', model: 'male_evil-web.glb', pos: [0.0, -5.0], scale: 0.65, hp: 14, ac: 2, str: 4, name: 'Fanatic' },
-            { role: 'Architect', model: 'a-sorcoress-web.glb', pos: [3.0, -2.5], scale: 0.65, hp: 10, ac: 1, str: 1, name: 'Architect' },
+            { role: 'Bulwark',   model: 'ironjaw-web.glb',       pos: [-3.0, -3.5], scale: 0.70, hp: 22, ac: 4, str: 1, name: 'Bulwark'   },
+            { role: 'Fanatic',   model: 'male_evil-web.glb',      pos: [ 0.0, -5.0], scale: 0.65, hp: 14, ac: 2, str: 4, name: 'Fanatic'   },
+            { role: 'Architect', model: 'a-sorcoress-web.glb',    pos: [ 3.0, -2.5], scale: 0.65, hp: 10, ac: 1, str: 1, name: 'Architect' },
         ]
     },
     {
         name: 'The Fortress',
         desc: 'A fanatic shields while an architect mends the Guardian\'s wounds.',
         helpers: [
-            { role: 'Fanatic', model: 'male_evil-true-web.glb', pos: [-2.0, -4.5], scale: 0.65, hp: 18, ac: 2, str: 4, name: 'Fanatic' },
-            { role: 'Architect', model: 'a-sorcoress-web.glb', pos: [2.0, -4.0], scale: 0.65, hp: 12, ac: 1, str: 1, name: 'Architect' },
+            { role: 'Fanatic',   model: 'male_evil-true-web.glb', pos: [-2.0, -4.5], scale: 0.65, hp: 18, ac: 2, str: 4, name: 'Fanatic'   },
+            { role: 'Architect', model: 'a-sorcoress-web.glb',    pos: [ 2.0, -4.0], scale: 0.65, hp: 12, ac: 1, str: 1, name: 'Architect' },
         ]
     },
 ];
@@ -327,10 +329,10 @@ let _azureFlameReadyAt = 0; // Timestamp after which Azure Flame proximity can f
 const WANDERER_MODELS = [
     'skeleton-web.glb',
     'female_evil-web.glb', 'female_evil-true-web.glb',
-    'male_evil-web.glb', 'male_evil-true-web.glb',
-    'male-web.glb', 'female-web.glb',
+    'male_evil-web.glb',   'male_evil-true-web.glb',
+    'male-web.glb',        'female-web.glb',
     'ironjaw-web.glb',
-    'Gwark-web.glb', 'SkeletalViking-web.glb',
+    'Gwark-web.glb',       'SkeletalViking-web.glb',
     'a-sand-assassin-web.glb',
     'a-sorcoress-web.glb',
     'a-skeleton-king-web.glb',
@@ -448,11 +450,11 @@ function createDungeonDustMotes() {
     const velocities = new Float32Array(count * 3); // Stored in userData
 
     for (let i = 0; i < count; i++) {
-        positions[i * 3] = (Math.random() - 0.5) * spread * 2;
+        positions[i * 3]     = (Math.random() - 0.5) * spread * 2;
         positions[i * 3 + 1] = Math.random() * 3.2; // Float 0–3.2 units high
         positions[i * 3 + 2] = (Math.random() - 0.5) * spread * 2;
         // Very slow drift: mostly upward, tiny horizontal wander
-        velocities[i * 3] = (Math.random() - 0.5) * 0.0015;
+        velocities[i * 3]     = (Math.random() - 0.5) * 0.0015;
         velocities[i * 3 + 1] = 0.0008 + Math.random() * 0.0012;
         velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.0015;
     }
@@ -1427,7 +1429,7 @@ function init3D() {
         scene.background = new THREE.Color(0x080616);
         scene.fog = new THREE.FogExp2(0x080616, 0.04);
 
-        renderer = new THREE.WebGLRenderer({
+        renderer = new THREE.WebGLRenderer({ 
             antialias: true,
             powerPreference: "high-performance" // Hint to browser to use dGPU (NVIDIA/AMD) over iGPU
         });
@@ -1661,9 +1663,9 @@ function loadPlayerModel() {
                 return null;
             };
 
-            if (!idleClip) idleClip = findAnim(['idle', 'stand', 'wait', 'stance']) || animations[0];
+            if (!idleClip) idleClip = findAnim(['idle', 'stand', 'wait','stance']) || animations[0];
             if (!walkClip) walkClip = findAnim(['walk', 'run', 'move']) || animations.find(a => a !== idleClip) || animations[0];
-            if (!attackClip) attackClip = findAnim(['attack', 'slash', 'punch', 'kick', 'spin', 'throw']) || animations.find(a => a !== idleClip && a !== walkClip) || animations[0];
+            if (!attackClip) attackClip = findAnim(['attack', 'slash', 'punch', 'kick','spin','throw']) || animations.find(a => a !== idleClip && a !== walkClip) || animations[0];
             if (!hitClip) hitClip = findAnim(['hit', 'damage', 'reaction', 'death']);
 
             if (walkClip) {
@@ -1908,8 +1910,8 @@ function pickWandererTarget(wanderer) {
                     // Use the Battle Island mesh if in combat, otherwise global floor
                     const targetMesh = inHelixZone ? helixFloorGroup
                         : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
-                            : globalFloorMesh;
-
+                        : globalFloorMesh;
+                    
                     let currentY = wanderer.mesh.position.y;
 
                     // OPTIMIZATION: In BSP mode, floor is flat at Y=0. Skip raycast.
@@ -1938,8 +1940,8 @@ function pickWandererTarget(wanderer) {
                         terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
                         const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
                         if (aheadHits.length > 0) {
-                            const nextY = aheadHits[0].point.y;
-                            if (Math.abs(nextY - currentY) > 1.5) stop = true; // Wall or Cliff
+                        const nextY = aheadHits[0].point.y;
+                        if (Math.abs(nextY - currentY) > 1.5) stop = true; // Wall or Cliff
                         } else {
                             stop = true; // Void
                         }
@@ -2407,7 +2409,7 @@ function on3DClick(event, isRightClick = false) {
             // Check for Room Mesh Interaction
             if (roomObj && roomObj.userData && roomObj.userData.roomId !== undefined) {
                 const roomIdx = roomObj.userData.roomId;
-
+                
                 console.log(`[Click] Hit Object in Room ${roomIdx}. Current Room: ${game.currentRoomIdx}`);
 
                 // Movement
@@ -2450,7 +2452,7 @@ function on3DClick(event, isRightClick = false) {
     // If no interactable object was clicked, check for Floor (Movement)
     const targetFloor = inHelixZone ? helixFloorGroup
         : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
-            : globalFloorMesh;
+        : globalFloorMesh;
 
     if (targetFloor) {
         // Create a temporary raycaster for the floor check to ensure we hit it
@@ -2508,12 +2510,12 @@ function update3DScene() {
         const spread = dungeonDustMotes.userData.spread;
         const arr = pos.array;
         for (let i = 0, n = pos.count; i < n; i++) {
-            arr[i * 3] += vel[i * 3];
+            arr[i * 3]     += vel[i * 3];
             arr[i * 3 + 1] += vel[i * 3 + 1];
             arr[i * 3 + 2] += vel[i * 3 + 2];
             // Wrap vertically; scatter horizontally when recycled
             if (arr[i * 3 + 1] > 3.2) {
-                arr[i * 3] = (Math.random() - 0.5) * spread * 2;
+                arr[i * 3]     = (Math.random() - 0.5) * spread * 2;
                 arr[i * 3 + 1] = 0;
                 arr[i * 3 + 2] = (Math.random() - 0.5) * spread * 2;
             }
@@ -2546,7 +2548,7 @@ function update3DScene() {
         // Min baseDist 50: must reach camera (~35 units away) so floor tiles are lit even when drained
         // Min baseInt 2000: dungeon must be readable even at 0% charge; full charge (100) gives 5200
         const baseDist = Math.max(50, 15 + (game.torchCharge * 1.5));
-        const baseInt = Math.max(2000, 200 + (game.torchCharge * 50));
+        const baseInt  = Math.max(2000, 200 + (game.torchCharge * 50));
 
         if (game.equipment.weapon) {
             if (game.equipment.weapon.val >= 8 || hasLantern) {
@@ -2709,7 +2711,7 @@ function update3DScene() {
                     const duckGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5); // Fallback
                     const duckMat = new THREE.MeshStandardMaterial({ color: 0xffff00 });
                     const mesh = new THREE.Mesh(duckGeo, duckMat);
-
+                    
                     loadGLB('assets/images/glb/duck.glb', (model) => {
                         mesh.add(model);
                         mesh.material.visible = false;
@@ -3134,7 +3136,7 @@ function animate3D() {
             camera.position.z = Math.cos(time) * dist;
             camera.position.y = 12;
             camera.lookAt(0, 0, 0);
-            controls.target.set(0, 0, 0);
+            controls.target.set(0,0,0);
         }
 
         if (now - benchmarkState.startTime >= benchmarkState.duration) {
@@ -3188,7 +3190,7 @@ function animate3D() {
             // Only check markers that are not the current room
             if (r.id !== game.currentRoomIdx && (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret || r.isSpecial)) {
                 const dist = Math.hypot(r.gx - playerObj.position.x, r.gy - playerObj.position.z);
-
+                
                 // Dynamic threshold: Standard markers (0.6) vs Large Structures (Manor)
                 let threshold = 0.6;
                 if (r.isSpecial) threshold = ((Math.max(r.w, r.h) / 2) + 1.5) * 1.5;
@@ -3339,8 +3341,8 @@ function animate3D() {
                     r.isCollected = true;
                     game.ducksFound++;
                     audio.play('quack', { volume: 0.8 });
-                    spawnFloatingText(`QUACK! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
-
+                    spawnFloatingText(`QUACK! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
+                    
                     const mesh = roomMeshes.get(r.id);
                     if (mesh) scene.remove(mesh);
 
@@ -3359,9 +3361,9 @@ function animate3D() {
         const playerObj = playerMesh;
         if (playerObj) {
             // Find which room we are physically in
-            const physicalRoom = game.rooms.find(r =>
-                Math.abs(r.gx - playerObj.position.x) < r.w / 2 - 0.1 &&
-                Math.abs(r.gy - playerObj.position.z) < r.h / 2 - 0.1
+            const physicalRoom = game.rooms.find(r => 
+                Math.abs(r.gx - playerObj.position.x) < r.w/2 - 0.1 && 
+                Math.abs(r.gy - playerObj.position.z) < r.h/2 - 0.1
             );
 
             if (physicalRoom && physicalRoom.id !== game.currentRoomIdx) {
@@ -3423,7 +3425,7 @@ function animate3D() {
 
         // Position just above the floor — the inner sits one sliver higher to always win z
         const groundY = playerObj.position.y + 0.05;
-        torchGlowOuter.position.set(playerObj.position.x, groundY, playerObj.position.z);
+        torchGlowOuter.position.set(playerObj.position.x, groundY,       playerObj.position.z);
         torchGlowInner.position.set(playerObj.position.x, groundY + 0.01, playerObj.position.z);
 
         // Visibility: hide in waypoints, attract mode, and during combat (battle island)
@@ -3440,7 +3442,7 @@ function animate3D() {
         const pulse = 0.3 + Math.sin(Date.now() * 0.005) * 0.1;
         movementRangeIndicator.material.opacity = pulse;
     }
-
+    
     // Update Range Rings
     if (meleeRangeIndicator && meleeRangeIndicator.visible && playerObj) {
         meleeRangeIndicator.position.set(playerObj.position.x, playerObj.position.y + 0.12, playerObj.position.z);
@@ -3628,7 +3630,7 @@ function animate3D() {
                                 // Snap to floor to prevent flying/sinking
                                 const targetMesh = inHelixZone ? helixFloorGroup
                                     : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
-                                        : globalFloorMesh;
+                                    : globalFloorMesh;
                                 if (targetMesh && !wanderer.isJumping) {
                                     const _rayY = inHelixZone ? wanderer.mesh.position.y + 5 : 50;
                                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, _rayY, wanderer.mesh.position.z), new THREE.Vector3(0, -1, 0));
@@ -3663,7 +3665,7 @@ function animate3D() {
                                 // If dot is negative, player is generally behind.
                                 // We use the same angle as the vision cone to define the "back arc".
                                 const isFlank = dot < -visionConeAngleCos;
-
+                                
                                 startCombat(wanderer, isFlank);
                             }
                         }
@@ -3760,20 +3762,20 @@ function animate3D() {
 
         // Follow the player — throttle position update to every 2nd frame
         if (_aiFrameCount % 2 === 0) {
-            const petPos = playerPet.mesh.position;
+            const petPos    = playerPet.mesh.position;
             const playerPos = playerMesh.position;
             const dx = playerPos.x - petPos.x;
             const dz = playerPos.z - petPos.z;
             const dist = Math.sqrt(dx * dx + dz * dz);
 
             const FOLLOW_DIST = 2.2;  // start walking when further than this
-            const CATCH_SPEED = 0.08; // lerp factor per 2-frame tick (snappy but not teleporting)
+            const CATCH_SPEED  = 0.08; // lerp factor per 2-frame tick (snappy but not teleporting)
 
             if (dist > FOLLOW_DIST) {
                 // Walk toward player
                 petPos.x += dx * CATCH_SPEED;
                 petPos.z += dz * CATCH_SPEED;
-                petPos.y = getTerrainY(petPos.x, petPos.z) + 0.08;
+                petPos.y  = getTerrainY(petPos.x, petPos.z) + 0.08;
                 playerPet.mesh.lookAt(new THREE.Vector3(playerPos.x, petPos.y, playerPos.z));
             }
             // Animation runs continuously (single clip), no start/stop needed
@@ -3986,7 +3988,7 @@ function movePlayerTo(targetVec, isRunning = false) {
             // Determine which floor to snap to (Helix, Battle Island, or Dungeon)
             const targetMesh = inHelixZone ? helixFloorGroup
                 : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
-                    : globalFloorMesh;
+                : globalFloorMesh;
 
             if (targetMesh) {
                 const offset = 0.1;
@@ -4042,7 +4044,7 @@ function movePlayerTo(targetVec, isRunning = false) {
                 collisionRaycaster.camera = camera; // Fix for sprite raycasting error
                 collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
                 const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
-
+                
                 if (wallHits.length > 0) {
                     stopMovement();
                 }
@@ -4287,11 +4289,11 @@ function takeDamage(amount) {
     }
 
     game.hp -= remaining;
-
+    
     if (remaining > 0) {
         spawnHudFloatingText(`-${remaining}`, '#ff0000');
     }
-
+    
     updateUI(); // Ensure HUD updates immediately
 
     // Trigger 3D Hit Animation
@@ -5039,13 +5041,13 @@ function sinkManor(room) {
     if (!mesh) return;
 
     logMsg("The Manor groans and sinks into the earth...");
-
+    
     // Sound (Low pitch rumble)
     if (audio.initialized) audio.play('bonfire_loop', { volume: 0.8, rate: 0.5 });
 
     // Dirt Particles — kick up through the whole 3-second sink
     const count = 45;
-    for (let i = 0; i < count; i++) {
+    for(let i=0; i<count; i++) {
         setTimeout(() => {
             const angle = Math.random() * Math.PI * 2;
             const rad = 1 + Math.random() * 4;
@@ -5109,12 +5111,12 @@ function sinkAlchemy(room) {
         .start();
 }
 
-window.handleManorChoice = function (choice) {
+window.handleManorChoice = function(choice) {
     if (choice === 'leave') {
         closeCombat();
         // If the player cleared the room (bought something or took gift), sink it
         if (game.activeRoom.state === 'cleared') {
-            sinkManor(game.activeRoom);
+             sinkManor(game.activeRoom);
         } else {
             // Player left without interacting. Push them out and reset collision.
             const playerObj = playerMesh;
@@ -5123,7 +5125,7 @@ window.handleManorChoice = function (choice) {
                 // Calculate push direction (from center to player)
                 const dx = playerObj.position.x - r.gx;
                 const dz = playerObj.position.z - r.gy;
-                const len = Math.sqrt(dx * dx + dz * dz) || 1;
+                const len = Math.sqrt(dx*dx + dz*dz) || 1;
                 const nx = dx / len;
                 const nz = dz / len;
 
@@ -5161,15 +5163,15 @@ window.handleManorChoice = function (choice) {
         const pool = [...ITEM_DATA.filter(i => i.cost < 40), ...ARMOR_DATA.filter(a => a.cost < 40)];
         const item = pool[Math.floor(Math.random() * pool.length)];
         const gift = { ...item, type: item.ap ? 'armor' : 'item' };
-
+        
         if (addToBackpack(gift)) {
             logMsg(`Manor Gift: Received ${gift.name}.`);
-            spawnFloatingText("GIFT RECEIVED", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
+            spawnFloatingText("GIFT RECEIVED", window.innerWidth/2, window.innerHeight/2, '#00ff00');
         } else {
             logMsg("Backpack full! Gift lost.");
-            spawnFloatingText("FULL!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+            spawnFloatingText("FULL!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
         }
-
+        
         game.activeRoom.state = 'cleared';
         window.updateUI();
         closeCombat();
@@ -5181,7 +5183,7 @@ window.handleManorChoice = function (choice) {
     }
 };
 
-window.handleAzureFlameChoice = function (choice) {
+window.handleAzureFlameChoice = function(choice) {
     // Race condition: combat may have started while the flame modal was open.
     // If wanderer combat is already active, just dismiss the overlay — don't
     // call closeCombat() which would tear down isCombatView and the enemy roster.
@@ -5242,7 +5244,7 @@ window.handleAzureFlameChoice = function (choice) {
     // Azure Flame marker is NEVER sunk/cleared — always present
 };
 
-window.handleFountainChoice = function (choice) {
+window.handleFountainChoice = function(choice) {
     const room = game.activeRoom;
     closeCombat();
     if (!room) return;
@@ -5263,7 +5265,7 @@ window.handleFountainChoice = function (choice) {
 };
 
 // Tracker-row click targeting (3rd fallback after raycaster + proximity ray)
-window.selectCombatTarget = function (idx) {
+window.selectCombatTarget = function(idx) {
     if (!isCombatView || !combatState.isTargeting) {
         logMsg("No action awaiting a target.");
         return;
@@ -5284,11 +5286,11 @@ window.selectCombatTarget = function (idx) {
 let shopMode = 'buy'; // 'buy' or 'sell'
 let shopInventory = []; // Generated items for this session
 
-window.showBrokerShop = function () {
+window.showBrokerShop = function() {
     const overlay = document.getElementById('combatModal');
     const enemyArea = document.getElementById('enemyArea');
     const trapUI = document.getElementById('trapUI');
-
+    
     if (trapUI) trapUI.style.display = 'none';
     overlay.style.display = 'flex';
     document.getElementById('combatContainer').style.display = 'flex';
@@ -5296,7 +5298,7 @@ window.showBrokerShop = function () {
 
     // Generate Shop Inventory if empty (8 items, Uncommon+)
     if (shopInventory.length === 0) {
-        const pool = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
+        const pool = [...ARMOR_DATA.map(a => ({...a, type:'armor'})), ...ITEM_DATA.map(i => ({...i, type:'item'})), ...CURSED_ITEMS];
         // Filter for better items (Cost > 30)
         const betterPool = pool.filter(i => i.cost >= 30);
         shuffle(betterPool);
@@ -5307,7 +5309,7 @@ window.showBrokerShop = function () {
     renderShopUI();
 };
 
-window.toggleShopMode = function () {
+window.toggleShopMode = function() {
     shopMode = (shopMode === 'buy') ? 'sell' : 'buy';
     renderShopUI();
 };
@@ -5316,7 +5318,7 @@ function renderShopUI() {
     const enemyArea = document.getElementById('enemyArea');
     enemyArea.innerHTML = '';
     enemyArea.className = 'enemy-area'; // Reset layout classes
-
+    
     // Header & Controls
     const header = document.createElement('div');
     header.style.cssText = "width:100%; text-align:center; margin-bottom:10px; display:flex; flex-direction:column; align-items:center; gap:5px;";
@@ -5358,8 +5360,8 @@ function renderShopUI() {
                 grid.appendChild(card);
             }
         });
-
-        const hasItems = game.equipment.weapon || game.hotbar.some(i => i) || game.backpack.some(i => i);
+        
+        const hasItems = game.equipment.weapon || game.hotbar.some(i=>i) || game.backpack.some(i=>i);
         if (!hasItems) {
             grid.innerHTML = `<div style="grid-column:1/-1; color:#aaa; font-style:italic; margin-top:20px;">You have nothing to sell.</div>`;
         }
@@ -5378,13 +5380,13 @@ function createShopCard(item, isSell, source, idx) {
     // Smaller card for 8-grid
     card.style.width = '140px';
     card.style.height = '200px';
-
+    
     const buyDiscount = (game.classId === 'bard') ? 0.8 : 1.0;
     const sellRate = (game.classId === 'bard') ? 0.65 : 0.5; // Minstrel: Silver Tongue sells for 65% (+15%)
     // Default cost to 0 if undefined (e.g. starter weapons). Enforce min sell price of 10.
     const baseCost = item.cost || 0;
     const price = isSell ? Math.max(10, Math.floor(baseCost * sellRate)) : Math.floor(baseCost * buyDiscount);
-
+    
     const asset = getAssetData(item.type, item.id || item.val, null);
     const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
     const bgSize = `${asset.sheetCount * 100}% 100%`;
@@ -5404,7 +5406,7 @@ function createShopCard(item, isSell, source, idx) {
             else if (source === 'backpack') game.backpack[idx] = null;
 
             game.soulCoins += price;
-            spawnFloatingText(`+${price}`, window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
+            spawnFloatingText(`+${price}`, window.innerWidth/2, window.innerHeight/2, '#ffd700');
             audio.play('card_flip', { volume: 0.5 });
             renderShopUI();
             window.updateUI();
@@ -5412,20 +5414,20 @@ function createShopCard(item, isSell, source, idx) {
             // Buy Logic
             if (game.soulCoins >= price) {
                 if (getFreeBackpackSlot() === -1) {
-                    spawnFloatingText("Backpack Full!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+                    spawnFloatingText("Backpack Full!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
                     return;
                 }
                 game.soulCoins -= price;
                 addToBackpack(item);
-                spawnFloatingText("BOUGHT!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
+                spawnFloatingText("BOUGHT!", window.innerWidth/2, window.innerHeight/2, '#00ff00');
                 audio.play('card_flip', { volume: 0.5 });
-
+                
                 // Mark room cleared on purchase
                 game.activeRoom.state = 'cleared';
                 renderShopUI();
                 window.updateUI();
             } else {
-                spawnFloatingText("Not enough coins!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+                spawnFloatingText("Not enough coins!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
             }
         }
     };
@@ -5472,12 +5474,12 @@ function spawnBossWanderer(floor, callback) {
 
     const bossHp = 30 + floor * 8;
     const bossStats = {
-        name: generateBossName(),
-        hp: bossHp,
-        maxHp: bossHp,
-        ac: 2 + floor,
-        str: 3 + floor,
-        xp: 100 + floor * 20,
+        name:   generateBossName(),
+        hp:     bossHp,
+        maxHp:  bossHp,
+        ac:     2 + floor,
+        str:    3 + floor,
+        xp:     100 + floor * 20,
         bleed: 0, blinded: false, gutsCharge: 0, gutsStacks: 0
     };
 
@@ -5505,8 +5507,8 @@ function spawnBossWanderer(floor, callback) {
         };
 
         const walkTerms = overrides ? overrides.walkTerms : ['walk', 'run', 'move'];
-        const walkClip = findAnim(walkTerms) || animations[0];
-        const actions = {};
+        const walkClip  = findAnim(walkTerms) || animations[0];
+        const actions   = {};
         if (walkClip) { actions.walk = mixer.clipAction(walkClip); actions.walk.play(); }
 
         const wanderer = {
@@ -5554,8 +5556,8 @@ function startBossEncounter() {
     document.getElementById('modalAvoidBtn').style.display = 'none';
 
     // Expose enterBossArena globally so the inline onclick can reach it
-    window.enterBossArena = enterBossArena;
-    window.spawnPet = spawnPet;
+    window.enterBossArena  = enterBossArena;
+    window.spawnPet        = spawnPet;
     window._dismissBossPrompt = () => {
         closeCombat();
         window._bossPromptCooldown = Date.now() + 8000; // 8s before it can trigger again
@@ -5563,28 +5565,173 @@ function startBossEncounter() {
 }
 
 /**
- * Spawns the player's pet MagmaDog companion.
- * The pet follows the player, never engages in combat,
- * and has a 35% chance to heal the player at the end of each enemy round.
+ * Returns a human-readable display name from a wanderer GLB filename.
+ * e.g. 'SkeletalViking-web.glb' → 'Skeletal Viking'
+ *      'female_evil-true-web.glb' → 'Female Evil II'
+ *      'a-skeleton-king-web.glb'  → 'Skeleton King'
  */
-function spawnPet() {
-    if (playerPet) {
-        logMsg("Your Magma Pup is already with you.");
+function parsePetDisplayName(filename) {
+    return filename
+        .replace(/-web\.glb$/, '')
+        .replace(/-true$/, ' II')
+        .replace(/^a-/, '')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')  // camelCase → spaced
+        .replace(/[-_]/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase())
+        .trim();
+}
+
+/**
+ * Shows the companion picker panel. Calling spawnPet() or spawnPet("list") opens this.
+ */
+function showCompanionPicker() {
+    const existing = document.getElementById('companionPickerPanel');
+    if (existing) { existing.remove(); return; }
+
+    const panel = document.createElement('div');
+    panel.id = 'companionPickerPanel';
+    panel.style.cssText = `
+        position:fixed; inset:0; z-index:25000;
+        display:flex; align-items:center; justify-content:center;
+        background:rgba(0,0,0,0.78);
+    `;
+
+    const box = document.createElement('div');
+    box.style.cssText = `
+        background:#0a0a0f; border:1px solid rgba(180,140,60,0.35);
+        box-shadow:0 0 60px rgba(0,0,0,0.95), inset 0 0 30px rgba(0,0,0,0.4);
+        padding:30px 34px; min-width:380px; max-width:540px;
+        font-family:'Cinzel',serif;
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = `color:#d4af37; font-size:0.9rem; letter-spacing:5px;
+        text-transform:uppercase; text-align:center; margin-bottom:6px;`;
+    title.textContent = 'SUMMON COMPANION';
+
+    const sub = document.createElement('div');
+    sub.style.cssText = `color:#555; font-size:0.72rem; font-family:'Crimson Text',serif;
+        text-align:center; margin-bottom:22px; font-style:italic;`;
+    sub.textContent = 'Choose who follows you into the depths.';
+
+    const grid = document.createElement('div');
+    grid.style.cssText = `display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-bottom:18px;`;
+
+    WANDERER_MODELS.forEach(file => {
+        const displayName = parsePetDisplayName(file);
+        const btn = document.createElement('button');
+        btn.style.cssText = `
+            background:#111; border:1px solid rgba(180,140,60,0.22);
+            color:#b89a3a; font-family:'Cinzel',serif; font-size:0.58rem;
+            letter-spacing:1px; padding:9px 5px; cursor:pointer;
+            text-transform:uppercase; transition:background 0.12s,border-color 0.12s;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        `;
+        btn.title = displayName;
+        btn.textContent = displayName;
+        btn.onmouseenter = () => {
+            btn.style.background = '#1c1a10';
+            btn.style.borderColor = 'rgba(212,175,55,0.7)';
+            btn.style.color = '#d4af37';
+        };
+        btn.onmouseleave = () => {
+            btn.style.background = '#111';
+            btn.style.borderColor = 'rgba(180,140,60,0.22)';
+            btn.style.color = '#b89a3a';
+        };
+        // Pass the raw filename so matching is always exact
+        btn.onclick = () => { panel.remove(); spawnPet(file); };
+        grid.appendChild(btn);
+    });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = `
+        width:100%; background:transparent; border:1px solid rgba(255,255,255,0.08);
+        color:#444; font-family:'Cinzel',serif; font-size:0.6rem;
+        letter-spacing:3px; padding:9px; cursor:pointer; text-transform:uppercase;
+        transition:color 0.12s, border-color 0.12s;
+    `;
+    closeBtn.textContent = 'DISMISS';
+    closeBtn.onmouseenter = () => { closeBtn.style.color = '#888'; closeBtn.style.borderColor = 'rgba(255,255,255,0.2)'; };
+    closeBtn.onmouseleave = () => { closeBtn.style.color = '#444'; closeBtn.style.borderColor = 'rgba(255,255,255,0.08)'; };
+    closeBtn.onclick = () => panel.remove();
+
+    box.appendChild(title);
+    box.appendChild(sub);
+    box.appendChild(grid);
+    box.appendChild(closeBtn);
+    panel.appendChild(box);
+    panel.onclick = e => { if (e.target === panel) panel.remove(); };
+    document.body.appendChild(panel);
+}
+
+/**
+ * Spawns a companion that follows the player and heals them between enemy turns.
+ *
+ * spawnPet()          — opens the companion picker panel
+ * spawnPet("list")    — same as above
+ * spawnPet("Gwark")   — spawns by display name or file stem (case-insensitive)
+ * spawnPet("Gwark-web.glb") — spawns by exact filename
+ *
+ * Spawning a new companion while one is active silently dismisses the old one.
+ */
+function spawnPet(name) {
+    // No name / "list" → show picker
+    if (!name || String(name).trim().toLowerCase() === 'list') {
+        showCompanionPicker();
         return;
     }
-    const file = 'Jaguar-web.glb';
-    logMsg("A Magma Pup bounds out of the shadows and joins you!");
-    spawnFloatingText("✦ MAGMA PUP!", window.innerWidth / 2, window.innerHeight / 2 - 80, '#ff6622', 28);
 
-    loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
+    const nameLower = String(name).trim().toLowerCase();
+
+    // Match: exact filename → display name → normalized stem (camelCase collapsed)
+    const match = WANDERER_MODELS.find(f => {
+        if (f.toLowerCase() === nameLower) return true;
+        if (parsePetDisplayName(f).toLowerCase() === nameLower) return true;
+        const stem = f.replace(/-web\.glb$/, '').replace(/-true$/, '')
+            .replace(/^a-/, '').replace(/[-_ ]/g, '').toLowerCase();
+        const query = nameLower.replace(/[\s\-_]/g, '');
+        return stem === query || stem.startsWith(query);
+    });
+
+    if (!match) {
+        logMsg(`No companion found for "${name}". Choose one from the list.`);
+        showCompanionPicker();
+        return;
+    }
+
+    // Dismiss existing companion before spawning the new one
+    if (playerPet) {
+        if (playerPet.mesh) scene.remove(playerPet.mesh);
+        playerPet = null;
+    }
+
+    const displayName = parsePetDisplayName(match);
+    logMsg(`${displayName} stirs from the shadows and joins you.`);
+    spawnFloatingText(`✦ ${displayName.toUpperCase()}`, window.innerWidth / 2, window.innerHeight / 2 - 80, '#44cc66', 26);
+
+    loadGLB(`assets/images/glb/wanderers/${match}`, (model, animations) => {
+        // LOD: full model always visible in normal play; placeholder box only at absurd distance
         const lod = new THREE.LOD();
         lod.autoUpdate = false;
-        lod.addLevel(model, 60);
-        const box = new THREE.Mesh(
-            new THREE.BoxGeometry(1.6, 1.8, 1.6),
-            new THREE.MeshBasicMaterial({ color: 0xff4400 })
+        lod.addLevel(model, 0);
+        const placeholder = new THREE.Mesh(
+            new THREE.BoxGeometry(0.8, 1.8, 0.8),
+            new THREE.MeshBasicMaterial({ color: 0x002200 })
         );
-        lod.addLevel(box, 90);
+        lod.addLevel(placeholder, 300);
+
+        // Green companion tint via emissive — no green enemies, so unambiguous
+        model.traverse(child => {
+            if (!child.isMesh || !child.material) return;
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach(m => {
+                if (m.emissive !== undefined) {
+                    m.emissive.setHex(0x002800);
+                    m.emissiveIntensity = 0.5;
+                }
+            });
+        });
 
         // Place beside the player
         const startPos = playerMesh
@@ -5595,16 +5742,22 @@ function spawnPet() {
 
         const mixer = new THREE.AnimationMixer(model);
 
-        // MagmaDog has exactly one animation — just loop it always
+        const findAnim = (terms) => {
+            for (const term of terms) {
+                const clip = animations.find(a => a.name.toLowerCase().includes(term));
+                if (clip) return clip;
+            }
+            return null;
+        };
+        const mainClip = findAnim(['walk', 'idle', 'run', 'stand']) || animations[0];
         const actions = {};
-        if (animations.length > 0) {
-            const clip = animations[0];
-            actions.main = mixer.clipAction(clip);
+        if (mainClip) {
+            actions.main = mixer.clipAction(mainClip);
             actions.main.setLoop(THREE.LoopRepeat);
             actions.main.play();
         }
 
-        playerPet = { mesh: lod, mixer, actions, _followTimer: 0 };
+        playerPet = { mesh: lod, mixer, actions, _followTimer: 0, name: displayName };
     }, 0.8);
 }
 
@@ -5636,24 +5789,24 @@ function spawnHelperWanderer(helperDef, anchor, getIslandY, callback) {
         const actions = {};
         if (walkClip) { actions.walk = mixer.clipAction(walkClip); actions.walk.play(); }
 
-        const hpVal = helperDef.hp + Math.floor(game.floor * 2);
+        const hpVal  = helperDef.hp  + Math.floor(game.floor * 2);
         const strVal = helperDef.str + Math.floor(game.floor / 2);
 
         const wanderer = {
             mesh: lod, mixer, actions, filename: file,
             stats: {
-                name: helperDef.name,
+                name:  helperDef.name,
                 hp: hpVal, maxHp: hpVal,
-                ac: helperDef.ac,
+                ac:  helperDef.ac,
                 str: strVal,
-                xp: 25 + game.floor * 5,
+                xp:  25 + game.floor * 5,
                 bleed: 0, blinded: false, gutsCharge: 0, gutsStacks: 0
             },
             state: 'idle', tween: null, target: null,
             isJumping: false, yLift: WANDERER_Y_LIFT,
-            isHelper: true,
-            isBulwark: helperDef.role === 'Bulwark',
-            isFanatic: helperDef.role === 'Fanatic',
+            isHelper:    true,
+            isBulwark:   helperDef.role === 'Bulwark',
+            isFanatic:   helperDef.role === 'Fanatic',
             isArchitect: helperDef.role === 'Architect',
         };
 
@@ -5828,9 +5981,9 @@ function bossVictory() {
     document.getElementById('combatMessage').innerText = `Guardian Defeated! Descending to Floor ${game.floor + 1}...`;
     document.getElementById('enemyArea').innerHTML =
         '<div style="color:#ffd700;font-size:1.5em;text-align:center;padding:24px;">⚔ VICTORY!</div>';
-    document.getElementById('exitCombatBtn').style.display = 'none';
-    document.getElementById('descendBtn').style.display = 'none';
-    document.getElementById('modalAvoidBtn').style.display = 'none';
+    document.getElementById('exitCombatBtn').style.display  = 'none';
+    document.getElementById('descendBtn').style.display     = 'none';
+    document.getElementById('modalAvoidBtn').style.display  = 'none';
 
     setTimeout(() => { closeCombat(); startIntermission(); }, 3500);
 }
@@ -5842,9 +5995,9 @@ function enterHelixZone() {
     const helix = createHelixCA(scene, game.floor, loadGLB, loadTexture, getClonedTexture);
     addHelixWalls(helix.group);
 
-    helixGroup = helix.group;
-    helixFloorGroup = helix.floorGroup;
-    helixExitPos = helix.exitPos;
+    helixGroup           = helix.group;
+    helixFloorGroup      = helix.floorGroup;
+    helixExitPos         = helix.exitPos;
     _helixExitPromptShown = false;
 
     // Teleport player to bottom of spiral
@@ -5862,14 +6015,14 @@ function enterHelixZone() {
     if (controls) {
         // Save current controls state so we can restore it on exit
         _helixSavedControls = {
-            target: controls.target.clone(),
-            mouseButtons: { ...controls.mouseButtons },
-            enablePan: controls.enablePan,
-            minDistance: controls.minDistance,
-            maxDistance: controls.maxDistance,
+            target:        controls.target.clone(),
+            mouseButtons:  { ...controls.mouseButtons },
+            enablePan:     controls.enablePan,
+            minDistance:   controls.minDistance,
+            maxDistance:   controls.maxDistance,
             minPolarAngle: controls.minPolarAngle,
             maxPolarAngle: controls.maxPolarAngle,
-            fogDensity: scene.fog ? scene.fog.density : 0,
+            fogDensity:    scene.fog ? scene.fog.density : 0,
         };
 
         // The island is 40+ units across — helix wall provides the boundary,
@@ -5877,7 +6030,7 @@ function enterHelixZone() {
         if (scene.fog) scene.fog.density = 0.003;
 
         // Island centre, mid-height between base (botPos.y) and apex (exitPos.y)
-        const isoY = (helix.botPos.y + helix.exitPos.y) * 0.5;
+        const isoY   = (helix.botPos.y + helix.exitPos.y) * 0.5;
         const isoCtr = new THREE.Vector3(helix.group.position.x, isoY, helix.group.position.z);
 
         // Tilt slightly south so the spiral reads as 3D, not a flat circle
@@ -5886,9 +6039,9 @@ function enterHelixZone() {
 
         // Right-drag rotates, scroll zooms, left is reserved for movement
         controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
-        controls.enablePan = false;
-        controls.minDistance = 18;
-        controls.maxDistance = 80;
+        controls.enablePan     = false;
+        controls.minDistance   = 18;
+        controls.maxDistance   = 80;
         controls.minPolarAngle = 0;
         controls.maxPolarAngle = Math.PI * 0.42; // ~75° — can't flip below horizon
 
@@ -5904,11 +6057,11 @@ function enterHelixZone() {
 
 /** Spawns a single guardian wanderer at worldPos on the helix. */
 function _spawnHelixGuardian(worldPos, getIslandY) {
-    const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
-    const base = getEnemyStats(file) || {};
-    const hp = (base.hp || 8) + game.floor * 2;
-    const ac = Math.max(1, (base.ac || 1) + Math.floor(game.floor / 3));
-    const str = (base.str || 2) + Math.floor(game.floor / 2);
+    const file  = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
+    const base  = getEnemyStats(file) || {};
+    const hp    = (base.hp  || 8)  + game.floor * 2;
+    const ac    = Math.max(1, (base.ac  || 1)  + Math.floor(game.floor / 3));
+    const str   = (base.str || 2)  + Math.floor(game.floor / 2);
     const stats = {
         name: base.name || file.replace('-web.glb', '').replace(/-/g, ' '),
         hp, maxHp: hp, ac, str,
@@ -5930,7 +6083,7 @@ function _spawnHelixGuardian(worldPos, getIslandY) {
         lod.position.set(worldPos.x, y + WANDERER_Y_LIFT, worldPos.z);
         scene.add(lod);
 
-        const mixer = new THREE.AnimationMixer(model);
+        const mixer    = new THREE.AnimationMixer(model);
         const walkClip = animations.find(a => {
             const n = a.name.toLowerCase();
             return n.includes('walk') || n.includes('run') || n.includes('move');
@@ -6056,20 +6209,20 @@ function cleanupHelixZone() {
     });
     wanderers = wanderers.filter(w => !w._isHelixWanderer);
 
-    helixGroup = null;
-    helixFloorGroup = null;
-    helixExitPos = null;
-    helixPathWaypoints = null;
-    inHelixZone = false;
+    helixGroup           = null;
+    helixFloorGroup      = null;
+    helixExitPos         = null;
+    helixPathWaypoints   = null;
+    inHelixZone          = false;
     _helixExitPromptShown = false;
 
     // Restore OrbitControls and fog to pre-helix state
     if (controls && _helixSavedControls) {
         controls.target.copy(_helixSavedControls.target);
-        controls.mouseButtons = { ..._helixSavedControls.mouseButtons };
-        controls.enablePan = _helixSavedControls.enablePan;
-        controls.minDistance = _helixSavedControls.minDistance;
-        controls.maxDistance = _helixSavedControls.maxDistance;
+        controls.mouseButtons  = { ..._helixSavedControls.mouseButtons };
+        controls.enablePan     = _helixSavedControls.enablePan;
+        controls.minDistance   = _helixSavedControls.minDistance;
+        controls.maxDistance   = _helixSavedControls.maxDistance;
         controls.minPolarAngle = _helixSavedControls.minPolarAngle;
         controls.maxPolarAngle = _helixSavedControls.maxPolarAngle;
         controls.update();
@@ -6475,9 +6628,9 @@ function spawn3DProjectile(startPos, targetPos, val) {
     let texName = 'flame_01.png';
     let color = 0xffaa00;
 
-    if (val === 'rock') {
-        texName = 'circle_03.png';
-        color = 0x888888;
+    if (val === 'rock') { 
+        texName = 'circle_03.png'; 
+        color = 0x888888; 
     }
     else if (val === 3) { texName = 'spark_06.png'; color = 0x00ffff; } // Ice
     else if (val === 4) { texName = 'smoke_05.png'; color = 0x00ff00; } // Poison
@@ -7570,8 +7723,8 @@ window.applyAndSaveProfile = function (profileName) {
     saveSettings();
 };
 
-window.resetSettings = function () {
-    if (!confirm("Reset all graphics and audio settings to default?")) return;
+window.resetSettings = function() {
+    if(!confirm("Reset all graphics and audio settings to default?")) return;
     localStorage.removeItem('scoundrelSettings');
     location.reload();
 };
@@ -8562,12 +8715,12 @@ function hideLoading() {
     if (loader) loader.style.display = 'none';
 }
 
-window.enterTrueDungeon = function () {
+window.enterTrueDungeon = function() {
     closeCombat();
-
+    
     // Roll for Duck Dungeon (10% Chance)
     const isDuck = Math.random() < 0.1;
-
+    
     if (isDuck) {
         showLoading("What the Duck?!", "assets/images/quack.png");
     } else {
@@ -8597,7 +8750,7 @@ window.enterTrueDungeon = function () {
         game.inTrueDungeon = true;
         game.inDuckDungeon = isDuck;
         game.floor = isDuck ? 100 : 99; // 100 = Duck, 99 = Cursed
-
+        
         // Apply Benchmark Math ONLY for True Dungeon
         const fps = gameSettings.benchmarkFPS || 30;
         let roomCount = Math.max(8, Math.floor(fps / 3)); // Reduced room count (FPS / 3)
@@ -8626,7 +8779,7 @@ window.enterTrueDungeon = function () {
                 game.ducksToFind++;
             }
         }
-
+        
         // 3. Re-init Scene
         clear3DScene();
         init3D();
@@ -8640,15 +8793,15 @@ window.enterTrueDungeon = function () {
 
         updateUI();
         logMsg(isDuck ? "Collect all the ducks!" : "You have entered the Cursed Realm.");
-
+        
         hideLoading();
         enterRoom(0);
     }, 100);
 };
 
-window.exitTrueDungeon = function () {
+window.exitTrueDungeon = function() {
     logMsg("Escaping the Cursed Realm...");
-
+    
     // 1. Restore State
     game.inTrueDungeon = false;
     game.inDuckDungeon = false;
@@ -8679,7 +8832,7 @@ window.exitTrueDungeon = function () {
         room.isLocked = false;
         room.state = 'cleared';
         // Maybe give a reward here?
-        spawnFloatingText("CURSE BROKEN", window.innerWidth / 2, window.innerHeight / 2, '#d4af37');
+        spawnFloatingText("CURSE BROKEN", window.innerWidth/2, window.innerHeight/2, '#d4af37');
         logMsg("The Cursed Chest opens. (Reward pending)");
     }
 
@@ -9325,7 +9478,7 @@ function initWandererForCombat(wanderer) {
         const barMat = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
         const healthBarMesh = new THREE.Mesh(barGeo, barMat);
         healthBarMesh.position.y = 2.2;
-        healthBarMesh.onBeforeRender = function (_r, _s, cam) { this.quaternion.copy(cam.quaternion); };
+        healthBarMesh.onBeforeRender = function(_r, _s, cam) { this.quaternion.copy(cam.quaternion); };
         wanderer.mesh.add(healthBarMesh);
         wanderer.healthBar = healthBarMesh;
     }
@@ -9492,14 +9645,14 @@ function rollInitiative() {
 
     // Pick the highest-rolling enemy for the dice display
     const topEntry = entries.find(e => !e.isPlayer);
-    const enemyRoll = topEntry ? topEntry.roll : 10;
+    const enemyRoll  = topEntry ? topEntry.roll : 10;
     const enemyLabel = topEntry ? topEntry.label : 'Enemy';
 
     logCombat(`⚡ Initiative: You (${playerRoll}) vs ${enemyLabel} (${enemyRoll})`, '#ffdd44');
 
     // Spawn both d20s simultaneously — player left (green), enemy right (red)
-    spawnDice3D(20, playerRoll, 0x00cc44, { x: -1.5, y: 0.5 }, 'You', () => { });
-    spawnDice3D(20, enemyRoll, 0xff4400, { x: 1.5, y: 0.5 }, enemyLabel, () => {
+    spawnDice3D(20, playerRoll, 0x00cc44, { x: -1.5, y: 0.5 }, 'You', () => {});
+    spawnDice3D(20, enemyRoll,  0xff4400, { x:  1.5, y: 0.5 }, enemyLabel, () => {
         if (combatState.playerGoesFirst) {
             logCombat('You win initiative — strike first!', '#00cc44');
             spawnFloatingText('⚡ YOU GO FIRST!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#00cc44', 24);
@@ -9732,7 +9885,7 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
         const tex2 = new THREE.CanvasTexture(canvas2);
         const labelSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex2, transparent: true }));
         labelSprite.scale.set(2, 0.5, 1);
-
+        
         labelSprite.position.copy(spawnPos).add(new THREE.Vector3(0, 0.8, 0));
         scene.add(labelSprite);
         dice.userData.nameLabel = labelSprite;
@@ -9751,9 +9904,9 @@ function spawnDice3D(sides, finalValue, colorHex, positionOffset, labelText, cal
             // Show Number Result
             drawNum(finalValue);
             tex.needsUpdate = true;
-
+            
             // Pop effect
-            new TWEEN.Tween(dice.scale).to({ x: 1.3, y: 1.3, z: 1.3 }, 150).yoyo(true).repeat(1).start();
+            new TWEEN.Tween(dice.scale).to({x: 1.3, y: 1.3, z: 1.3}, 150).yoyo(true).repeat(1).start();
 
             // Cleanup
             setTimeout(() => {
@@ -9887,7 +10040,7 @@ function logCombat(msg, color = '#ccc') {
 function updateMovementIndicator() {
     if (!movementRangeIndicator) return;
     const isPlayerTurn = isCombatView && combatState.turn === 'player';
-
+    
     if (isPlayerTurn && combatState.currentMove > 0.5) {
         movementRangeIndicator.visible = true;
         movementRangeIndicator.scale.setScalar(combatState.currentMove);
@@ -9977,7 +10130,7 @@ window.commandSkill = function () {
     logMsg(`Skill selected: ${skill.name}. Select target.`);
 };
 
-window.commandGuts = function () {
+window.commandGuts = function() {
     if (combatState.turn !== 'player') return;
     if (combatState.gutsStacks >= 2) {
         logMsg("Guts power is already at maximum!");
@@ -9990,7 +10143,7 @@ window.commandGuts = function () {
     }
 
     combatState.turn = 'busy';
-
+    
     // Show charging text
     const chargeText = combatState.gutsStacks === 0 ? "Player is charging Guts!" : "Player increases Guts charge!";
     spawnFloatingText(chargeText, window.innerWidth / 2, window.innerHeight / 2 + 50, '#ffaa00');
@@ -9998,7 +10151,7 @@ window.commandGuts = function () {
     const playerStr = (game.stats.str || 1);
     const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 1;
     const randomBonus = DiceRoller.roll(playerStr);
-
+    
     // Add to existing charge if stacking
     combatState.gutsCharge += playerStr + weaponVal + randomBonus;
     combatState.gutsStacks++;
@@ -10012,7 +10165,7 @@ window.commandGuts = function () {
     setTimeout(startEnemyTurn, 500);
 };
 
-window.commandShove = function () {
+window.commandShove = function() {
     if (combatState.turn !== 'player') return;
     if (!combatState.canAttack) {
         logMsg("Cannot Shove after Dashing.");
@@ -10024,7 +10177,7 @@ window.commandShove = function () {
     logMsg("Select target to Shove.");
 };
 
-window.commandFeint = function () {
+window.commandFeint = function() {
     if (combatState.turn !== 'player') return;
     if (!combatState.canAttack) {
         logMsg("Cannot Feint after Dashing.");
@@ -10036,17 +10189,17 @@ window.commandFeint = function () {
     logMsg("Select target to Feint.");
 };
 
-window.commandDash = function () {
+window.commandDash = function() {
     if (combatState.turn !== 'player') return;
     if (combatState.isDashing) {
         logMsg("Already dashed this turn.");
         return;
     }
-
+    
     combatState.isDashing = true;
     combatState.canAttack = false;
     combatState.currentMove += combatState.maxMove;
-
+    
     spawnFloatingText("DASH!", window.innerWidth / 2, window.innerHeight / 2, '#00ffff');
     logMsg("Dashed! Movement increased. Attack disabled.");
     updateMovementIndicator();
@@ -10116,7 +10269,7 @@ function executePlayerSkill(target) {
     combatState.activeSkill = null;
 
     logMsg(`Used ${skill.name}!`);
-
+    
     // Animation
     if (actions.attack) {
         actions.attack.reset().play();
@@ -10137,14 +10290,14 @@ function executePlayerSkill(target) {
             // +3 Power
             const str = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1) + 3;
             const res = CombatResolver.resolveClash(str, 4, 10, target.stats.ac || 10, _lck);
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Power Strike", () => { });
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Power Strike", () => {});
             if (res.attacker.total > res.defender.total) {
                 damage = res.damage;
                 msg = `Power Strike hits for ${damage}!`;
             } else {
                 msg = "Power Strike missed!";
             }
-        }
+        } 
         else if (skill.id === 'cheap_shot') { // Rogue
             const hpPct = target.stats.hp / target.stats.maxHp;
             if (hpPct < 0.5) {
@@ -10165,7 +10318,7 @@ function executePlayerSkill(target) {
             damage = 2;
             game.hp = Math.min(game.maxHp, game.hp + 2);
             msg = `Smite! 2 Dmg, +2 HP.`;
-            spawnFloatingText("+2 HP", window.innerWidth / 2, window.innerHeight / 2 + 50, '#00ff00');
+            spawnFloatingText("+2 HP", window.innerWidth/2, window.innerHeight/2 + 50, '#00ff00');
         }
         else if (skill.id === 'holy_bash') { // Paladin
             damage = (game.equipment.weapon ? game.equipment.weapon.val : 1);
@@ -10177,23 +10330,23 @@ function executePlayerSkill(target) {
             const playerStr = (game.stats.str || 1) + (game.equipment.weapon ? game.equipment.weapon.val : 1);
             const enemyStr = (target.stats.str || 1) + 4;
             const res = CombatResolver.resolveClash(playerStr, enemyStr, 0, 0, _lck); // No AC
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Shove", () => { });
-
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Shove", () => {});
+            
             if (res.attacker.total > res.defender.total) {
                 msg = "Shove successful!";
-                spawnFloatingText("SHOVED!", window.innerWidth / 2, window.innerHeight / 2, '#ffffff');
+                spawnFloatingText("SHOVED!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
                 // Push Logic
                 const pushDir = new THREE.Vector3().subVectors(target.mesh.position, (playerMesh).position).normalize();
                 pushDir.y = 0;
                 const newPos = target.mesh.position.clone().add(pushDir.multiplyScalar(1.5)); // Push 1.5m
-
+                
                 new TWEEN.Tween(target.mesh.position)
                     .to({ x: newPos.x, z: newPos.z }, 300)
                     .easing(TWEEN.Easing.Cubic.Out)
                     .start();
             } else {
                 msg = "Shove failed.";
-                spawnFloatingText("RESISTED", window.innerWidth / 2, window.innerHeight / 2, '#aaa');
+                spawnFloatingText("RESISTED", window.innerWidth/2, window.innerHeight/2, '#aaa');
             }
         }
         else if (skill.id === 'feint') {
@@ -10201,8 +10354,8 @@ function executePlayerSkill(target) {
             const playerDex = (game.stats.dex || 1) + 2;
             const enemyWis = (target.stats.str || 1) + 2;
             const res = CombatResolver.resolveClash(playerDex, enemyWis, 0, 0, _lck);
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Feint", () => { });
-
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Feint", () => {});
+            
             if (res.attacker.total > res.defender.total) {
                 msg = "Feint successful! Next attack crits.";
                 combatState.isPlayerFlank = true; // Reuse flank logic for 1.5x dmg
@@ -10218,7 +10371,7 @@ function executePlayerSkill(target) {
 
             spawn3DProjectile(playerMesh.position, target.mesh.position, 'rock');
             const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, target.stats.ac || 10, _lck);
-            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Snipe", () => { });
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Snipe", () => {});
 
             if (res.attacker.total > res.defender.total) {
                 // Precision shot: always hits with 1.5× aimed multiplier
@@ -10297,7 +10450,7 @@ function executePlayerSkill(target) {
             if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
             if (target.actions && target.actions.hit) target.actions.hit.reset().play();
         }
-
+        
         logCombat(msg, color);
         updateUI();
         checkCombatEnd(target);
@@ -10477,7 +10630,7 @@ function executePlayerAttack(target) {
         const damage = combatState.gutsCharge;
         logCombat(`Unleashing GUTS STRIKE for ${damage} damage!`, '#ffaa00');
         spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ffaa00');
-
+        
         target.stats.hp -= damage;
         applySiphonDrain(damage, false); // Guts counts as melee for siphon
 
@@ -10508,7 +10661,7 @@ function executePlayerAttack(target) {
     // 1.5 Range Check & Throw Rock Logic
     const playerObj = playerMesh;
     const dist = playerObj.position.distanceTo(target.mesh.position);
-
+    
     const isSpell = game.equipment.weapon && game.equipment.weapon.isSpell;
     const isRanger = game.classId === 'ranger';
     const maxRange = isSpell ? 5.0 : (isRanger ? 6.0 : 1.5);
@@ -10516,14 +10669,14 @@ function executePlayerAttack(target) {
     if (dist > maxRange) {
         if (isSpell) {
             logMsg("Target out of range!");
-            spawnFloatingText("TOO FAR", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+            spawnFloatingText("TOO FAR", window.innerWidth/2, window.innerHeight/2, '#ff0000');
             combatState.isTargeting = false;
             combatState.turn = 'player'; // Refund turn
             return;
         } else if (isRanger) {
             // Ranger fires crossbow — permanent ranged weapon, DEX-based, more powerful than a rock
             logMsg("Ranger fires crossbow!");
-            spawnFloatingText("CROSSBOW", window.innerWidth / 2, window.innerHeight / 2 - 100, '#00cc44');
+            spawnFloatingText("CROSSBOW", window.innerWidth/2, window.innerHeight/2 - 100, '#00cc44');
             spawn3DProjectile(playerObj.position, target.mesh.position, 'rock');
 
             setTimeout(() => {
@@ -10534,28 +10687,28 @@ function executePlayerAttack(target) {
                 const enemyAC = target.stats.ac || 10;
 
                 const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC, Math.floor((game.stats.lck || 0) / 2));
-                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Crossbow", () => { });
+                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Crossbow", () => {});
                 spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
                     if (res.winner === 'attacker') {
                         const isCrit = res.attacker.roll === res.attacker.config.sides;
                         if (isCrit) {
-                            spawnFloatingText("CRITICAL!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
+                            spawnFloatingText("CRITICAL!", window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
                             triggerShake(15, 25);
                             inflictBleed(target, 2, 3); // Arrow bleed on crit
                         }
                         target.stats.hp -= res.damage;
-                        spawnFloatingText(`-${res.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
+                        spawnFloatingText(`-${res.damage}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
                         logCombat(`Crossbow hits! (Roll ${res.attacker.total} vs ${res.defender.total})`, '#00cc44');
                         logCombat(`> Dealt ${res.damage} dmg`, '#fff');
                         if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
                         if (target.actions && target.actions.hit) target.actions.hit.reset().play();
                     } else if (res.winner === 'defender') {
                         takeDamage(res.damage);
-                        spawnFloatingText(`-${res.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2 + 50, '#ff0000');
+                        spawnFloatingText(`-${res.damage}`, window.innerWidth/2 - 100, window.innerHeight/2 + 50, '#ff0000');
                         logCombat(`Enemy counters! (Roll ${res.defender.total} vs ${res.attacker.total})`, '#f44');
                         if (actions.hit) actions.hit.reset().play();
                     } else {
-                        spawnFloatingText("CLASH!", window.innerWidth / 2, window.innerHeight / 2, '#ffffff');
+                        spawnFloatingText("CLASH!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
                         logCombat("Clash! Arrow deflected.", '#aaa');
                     }
                     updateUI();
@@ -10566,39 +10719,39 @@ function executePlayerAttack(target) {
         } else {
             // Throw Rock Logic
             logMsg("Too far for melee! Throwing rock...");
-            spawnFloatingText("THROW ROCK", window.innerWidth / 2, window.innerHeight / 2 - 100, '#aaaaaa');
-
+            spawnFloatingText("THROW ROCK", window.innerWidth/2, window.innerHeight/2 - 100, '#aaaaaa');
+            
             // Spawn Rock Projectile
             spawn3DProjectile(playerObj.position, target.mesh.position, 'rock');
-
+            
             setTimeout(() => {
                 // Rock Mechanics: DEX + 1 vs Enemy Power
                 const playerDex = game.stats.dex || 1;
                 const rockPower = playerDex + 1;
                 const enemyStr = target.stats.str || 1;
                 const enemyPower = enemyStr + 4; // Standard enemy power
-
+                
                 const res = CombatResolver.resolveClash(rockPower, enemyPower, 0, target.stats.ac || 10);
-
-                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xaaaaaa, { x: -1.5, y: -0.5 }, "Rock", () => { });
+                
+                spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xaaaaaa, { x: -1.5, y: -0.5 }, "Rock", () => {});
                 spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
-
+                    
                     if (res.attacker.total > res.defender.total) {
                         // Hit - Fixed 1d4 damage
                         const dmg = DiceRoller.roll(4);
                         target.stats.hp -= dmg;
                         applySiphonDrain(dmg, true); // Rock = capped at 1 HP drain
-                        spawnFloatingText(`-${dmg}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000');
+                        spawnFloatingText(`-${dmg}`, window.innerWidth/2 + 100, window.innerHeight/2, '#ff0000');
                         logCombat(`Rock hits! ${dmg} dmg.`, '#fff');
-
+                        
                         if (target.healthBar) target.healthBar.scale.x = Math.max(0, target.stats.hp / target.stats.maxHp);
                         if (target.actions && target.actions.hit) target.actions.hit.reset().play();
                     } else {
                         // Miss
-                        spawnFloatingText("MISSED", window.innerWidth / 2, window.innerHeight / 2, '#aaa');
+                        spawnFloatingText("MISSED", window.innerWidth/2, window.innerHeight/2, '#aaa');
                         logCombat("Rock missed.", '#aaa');
                     }
-
+                    
                     updateUI();
                     checkCombatEnd(target);
                 });
@@ -10643,7 +10796,7 @@ function executePlayerAttack(target) {
         if (result.winner === 'attacker') {
             // Critical Hit Check
             const isCrit = (result.attacker.roll === result.attacker.config.sides);
-
+            
             // --- NEW FLANKING BONUS ---
             if (combatState.isPlayerFlank) {
                 const originalDamage = result.damage;
@@ -10654,9 +10807,9 @@ function executePlayerAttack(target) {
                     logCombat(`Flank attack! (+${bonus} Dmg)`, '#ffd700');
                     spawnFloatingText("BACKSTAB!", window.innerWidth / 2, window.innerHeight / 2 - 100, '#ffd700');
                 }
-
+                
                 // Bonus only applies to the first attack of the combat encounter.
-                combatState.isPlayerFlank = false;
+                combatState.isPlayerFlank = false; 
             }
             // --- END FLANKING BONUS ---
 
@@ -10666,7 +10819,7 @@ function executePlayerAttack(target) {
                 // Crits cause bleed unless weapon is blunt
                 if (!isBluntWeapon()) inflictBleed(target, 2, 3);
                 // Spawn extra particles
-                spawnAboveModalTexture('spark_01.png', window.innerWidth / 2, window.innerHeight / 2, 30, {
+                spawnAboveModalTexture('spark_01.png', window.innerWidth/2, window.innerHeight/2, 30, {
                     tint: '#ffd700', blend: 'lighter', sizeRange: [20, 60], spread: 80, decay: 0.03
                 });
             } else if (!isBluntWeapon() && Math.random() < 0.15) {
@@ -10787,7 +10940,7 @@ function showLevelUpModal() {
         { key: 'str', label: 'STRENGTH', color: '#e88', desc: '+1 max HP and melee power' },
         { key: 'dex', label: 'DEXTERITY', color: '#8e8', desc: '+1 initiative and evasion' },
         { key: 'int', label: 'INTELLECT', color: '#88e', desc: '+1 spell potency and lore' },
-        { key: 'lck', label: 'LUCK', color: '#ee8', desc: '+1 fortune and rare finds' },
+        { key: 'lck', label: 'LUCK',      color: '#ee8', desc: '+1 fortune and rare finds' },
     ];
 
     // Shuffle and pick 3
@@ -11010,9 +11163,9 @@ function startEnemyTurn() {
     const canUseGuts = (enemy.stats.gutsStacks || 0) < 2;
     // 30% chance to use Guts if far away and healthy
     if (canUseGuts && dist > attackRange * 2 && hpPct > 0.5 && Math.random() < 0.3) {
-        spawnFloatingText(`${enemyDisplayName(enemy)} is charging Guts!`, window.innerWidth / 2, window.innerHeight / 2 + 50, '#ffaa00');
+        spawnFloatingText(`${enemyDisplayName(enemy)} is charging Guts!`, window.innerWidth/2, window.innerHeight/2 + 50, '#ffaa00');
         logCombat(`${enemyDisplayName(enemy)} is gathering power!`, '#ffaa00');
-        spawnFloatingText("GUTS!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+        spawnFloatingText("GUTS!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
 
         if (!enemy.stats.gutsCharge) enemy.stats.gutsCharge = 0;
         if (!enemy.stats.gutsStacks) enemy.stats.gutsStacks = 0;
@@ -11030,8 +11183,8 @@ function startEnemyTurn() {
     // Flee if HP < 15% and NOT in True Dungeon or boss arena (bosses/helpers never retreat)
     if (hpPct <= 0.15 && !game.inTrueDungeon && !enemy.isBoss && !enemy.isHelper && !inBattleIsland) {
         logMsg(`${enemyDisplayName(enemy)} is trying to escape!`);
-        spawnFloatingText("FLEEING!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
-
+        spawnFloatingText("FLEEING!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
+        
         // Flee directly away from the player (works on main map and any arena)
         const fleeDir = new THREE.Vector3()
             .subVectors(enemy.mesh.position, playerObj.position)
@@ -11174,10 +11327,10 @@ function spawn3DSpell(fromPos, toPos) {
 function executeEnemyRangedAttack(enemy) {
     logCombat(`${enemyDisplayName(enemy)} weaves a dark spell!`, '#aa55ff');
 
-    const enemyStr = enemy.stats.str || 1;
+    const enemyStr  = enemy.stats.str || 1;
     const spellPower = enemyStr + 6; // Amplified — boss spells hit hard
     const spellConfig = DND_CONFIG.getDiceConfig(spellPower);
-    const spellRoll = DiceRoller.roll(spellConfig.sides);
+    const spellRoll  = DiceRoller.roll(spellConfig.sides);
     const spellTotal = spellRoll + spellConfig.bonus;
 
     let playerAC = (CLASS_DATA[game.classId].stats.ac || 0);
@@ -11214,9 +11367,9 @@ function executeEnemyAttack(enemy) {
             const damage = enemy.stats.gutsCharge;
             logCombat(`${enemyDisplayName(enemy)} unleashes its power for ${damage} damage!`, '#ff4400');
             spawnFloatingText(`GUTS! -${damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#ff4400');
-
+            
             takeDamage(damage);
-
+            
             enemy.stats.gutsCharge = 0;
             enemy.stats.gutsStacks = 0;
 
@@ -11271,7 +11424,7 @@ function executeEnemyAttack(enemy) {
                 spawnFloatingText("COUNTER!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for counter
                 enemy.stats.hp -= result.damage;
                 spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff0000'); // Enemy's side, red for damage taken
-
+                
                 if (enemy.healthBar) {
                     const hpPercent = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
                     enemy.healthBar.scale.x = hpPercent;
@@ -11335,8 +11488,8 @@ function endEnemyTurn() {
                 if (maxHeal > 0) {
                     const healAmt = Math.max(1, Math.floor(Math.random() * maxHeal) + 1);
                     game.hp = Math.min(game.maxHp, game.hp + healAmt);
-                    logCombat(`Magma Pup nuzzles you — healed ${healAmt} HP! 🐾`, '#ff6622');
-                    spawnFloatingText(`🐾 +${healAmt}`, window.innerWidth / 2 - 80, window.innerHeight / 2 + 40, '#ff6622', 22);
+                    logCombat(`${playerPet.name || 'Companion'} stays close — healed ${healAmt} HP! 🐾`, '#44cc66');
+                    spawnFloatingText(`🐾 +${healAmt}`, window.innerWidth / 2 - 80, window.innerHeight / 2 + 40, '#44cc66', 22);
                     updateUI();
                 }
             }
@@ -11436,7 +11589,7 @@ function handleEditClick(event) {
 
     for (let i = 0; i < intersects.length; i++) {
         let obj = intersects[i].object;
-
+        
         // Traverse up to find the GLB root (the object that has the configKey)
         let glbRoot = null;
         let curr = obj;
@@ -11578,13 +11731,13 @@ window.saveRoomConfig = function () {
     link.click();
 };
 
-window.spawnGallery = function () {
+window.spawnGallery = function() {
     console.log("Starting Gallery Mode for Configuration...");
     // Force edit mode off first to clean up UI
     if (isEditMode) editmap(false);
-
+    
     clear3DScene();
-
+    
     // Create a flat floor for the gallery
     const gallerySize = 100;
     const floorGeo = new THREE.PlaneGeometry(gallerySize * 2, gallerySize * 2);
@@ -11593,7 +11746,7 @@ window.spawnGallery = function () {
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
-    globalFloorMesh = floor;
+    globalFloorMesh = floor; 
 
     // Add lights
     const amb = new THREE.AmbientLight(0xffffff, 0.8);
@@ -11614,16 +11767,16 @@ window.spawnGallery = function () {
     models.forEach((file) => {
         const path = `assets/images/glb/${file}`;
         const configKey = file;
-
+        
         // Create a placeholder parent
-        const parent = new THREE.Mesh(new THREE.BoxGeometry(1, 0.1, 1), new THREE.MeshBasicMaterial({ color: 0x444444, wireframe: true }));
+        const parent = new THREE.Mesh(new THREE.BoxGeometry(1,0.1,1), new THREE.MeshBasicMaterial({color: 0x444444, wireframe:true}));
         parent.position.set(x, 0, z);
         parent.userData = { roomId: 9000 + count }; // Fake ID to allow selection logic if needed
         scene.add(parent);
 
         loadGLB(path, (model) => {
             parent.add(model);
-
+            
             // Add label
             const canvas = document.createElement('canvas');
             canvas.width = 512; canvas.height = 64;
@@ -11633,7 +11786,7 @@ window.spawnGallery = function () {
             ctx.textAlign = 'center';
             ctx.fillText(file, 256, 40);
             const tex = new THREE.CanvasTexture(canvas);
-            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+            const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent:true}));
             sprite.position.set(0, 8, 0);
             sprite.scale.set(10, 1.25, 1);
             parent.add(sprite);
@@ -11652,7 +11805,7 @@ window.spawnGallery = function () {
     camera.position.set(0, 60, 60);
     controls.target.set(0, 0, 0);
     controls.update();
-
+    
     // Enable edit mode automatically
     setTimeout(() => editmap(true), 500);
 };
@@ -11685,7 +11838,7 @@ loadRoomConfig().then(() => {
 });
 
 // --- DEBUG TOGGLE ---
-window.showVisuals = function (show) {
+window.showVisuals = function(show) {
     // Clear existing
     debugHelpers.forEach(h => scene.remove(h));
     debugHelpers = [];
@@ -11693,16 +11846,16 @@ window.showVisuals = function (show) {
     if (show) window.debugTriggerZones();
 };
 
-window.showWandererDebug = function (show) {
+window.showWandererDebug = function(show) {
     // Clear existing
     debugHelpers.forEach(h => scene.remove(h));
     debugHelpers = [];
-
+    
     isDebugWandererActive = show;
     if (!show) return;
 
     console.log("%c--- WANDERER DEBUG ---", "color: #ffaa00; font-weight: bold;");
-
+    
     // Create persistent helpers
     const playerObj = playerMesh;
 
@@ -11743,10 +11896,10 @@ window.showWandererDebug = function (show) {
 
 function updateWandererDebug() {
     const playerObj = playerMesh;
-
+    
     wanderers.forEach((w, idx) => {
         if (!w.mesh) return;
-
+        
         // Update Rings
         if (w.debugCombatRing) {
             w.debugCombatRing.position.copy(w.mesh.position);
@@ -11770,19 +11923,19 @@ function updateWandererDebug() {
 }
 
 // --- DEBUG TOOLS ---
-window.debugTriggerZones = function () {
+window.debugTriggerZones = function() {
     console.log("%c--- DEBUG TRIGGER ZONES ---", "color: #00ffff; font-weight: bold;");
     const playerObj = playerMesh;
-
+    
     game.rooms.forEach(r => {
         // Check markers
         if (r.isLocked || r.isTrap || r.isAlchemy || r.isShrine || r.isSecret || r.isSpecial) {
             const mesh = roomMeshes.get(r.id);
-
+            
             // Logic Threshold
             let threshold = 0.6;
             if (r.isSpecial) threshold = ((Math.max(r.w, r.h) / 2) + 1.5) * 1.5;
-
+            
             // Visuals
             // 1. Logic Radius (Yellow Ring)
             const ringGeo = new THREE.RingGeometry(threshold - 0.05, threshold, 32);
