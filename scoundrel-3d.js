@@ -1871,7 +1871,9 @@ function pickWandererTarget(wanderer) {
 
                     // 1. Snap to floor (Always snap to handle slopes, even in True Dungeon if terrain varies)
                     // Use the Battle Island mesh if in combat, otherwise global floor
-                    const targetMesh = (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup : globalFloorMesh;
+                    const targetMesh = inHelixZone ? helixFloorGroup
+                        : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
+                        : globalFloorMesh;
                     
                     terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
                     const hits = terrainRaycaster.intersectObject(targetMesh, true);
@@ -1889,7 +1891,7 @@ function pickWandererTarget(wanderer) {
                     const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
 
                     let stop = false;
-                    if (game.useBSP && isBSPWallAt(aheadPos.x, aheadPos.z)) stop = true;
+                    if (game.useBSP && targetMesh === globalFloorMesh && isBSPWallAt(aheadPos.x, aheadPos.z)) stop = true;
                     if (aheadHits.length > 0) {
                         const nextY = aheadHits[0].point.y;
                         if (Math.abs(nextY - currentY) > 1.5) stop = true; // Wall or Cliff
@@ -1905,7 +1907,7 @@ function pickWandererTarget(wanderer) {
                         let landY = null;
                         for (let scanD = lookAheadDist + 0.3; scanD <= lookAheadDist + maxScan; scanD += 0.3) {
                             const farPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(scanD));
-                            if (game.useBSP && isBSPWallAt(farPos.x, farPos.z)) break; // Wall tile — can't jump through
+                            if (game.useBSP && targetMesh === globalFloorMesh && isBSPWallAt(farPos.x, farPos.z)) break; // Wall tile — can't jump through
                             terrainRaycaster.set(new THREE.Vector3(farPos.x, rayOriginHeight, farPos.z), down);
                             const farHits = terrainRaycaster.intersectObject(targetMesh, true);
                             if (farHits.length > 0) {
@@ -3523,7 +3525,7 @@ function animate3D() {
                     }
 
                     // BSP wall occlusion — clear sight if a wall tile crosses the line
-                    if (canSee && game.useBSP) {
+                    if (canSee && game.useBSP && !inHelixZone && !inBattleIsland) {
                         if (bspWallBlocksLOS(wandererPos, playerPos)) canSee = false;
                     }
 
@@ -3960,7 +3962,8 @@ function movePlayerTo(targetVec, isRunning = false) {
                 const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
                 // BSP wall collision — tile grid check is cheaper than raycasting
-                if (game.useBSP && isBSPWallAt(aheadPos.x, aheadPos.z)) {
+                // Only check BSP walls if we are navigating the main dungeon floor
+                if (game.useBSP && targetMesh === globalFloorMesh && isBSPWallAt(aheadPos.x, aheadPos.z)) {
                     stopMovement();
                     return;
                 }

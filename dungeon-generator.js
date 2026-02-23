@@ -277,7 +277,7 @@ function countNeighbors(grid, x, z, b) {
     return count;
 }
 
-export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null, isFlat = false) {
+export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null, isFlat = false, textureOverride = null) {
     const theme = getThemeForFloor(floor);
     // Larger Map: 2.5x base size + scaling
     // Cap bounds to prevent massive geometry generation on high floors (e.g. Floor 99)
@@ -485,7 +485,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
 
     // If the theme has a dedicated sheet, all 9 cells are in-theme — pick any freely.
     // Otherwise fall back to the old column-based variation within block.png.
-    const hasThemedSheet = !!theme.sheet;
+    const hasThemedSheet = !!theme.sheet || !!textureOverride;
 
     for (let x = -bounds; x <= bounds; x++) {
         for (let z = -bounds; z <= bounds; z++) {
@@ -535,7 +535,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     mergedGeometry.computeVertexNormals();
 
     // Load texture — use themed sheet if available, fall back to block.png
-    const blockTex = getClonedTexture(theme.sheet || 'assets/images/block.png');
+    const texPath = textureOverride || theme.sheet || 'assets/images/block.png';
+    const blockTex = getClonedTexture(texPath);
     blockTex.repeat.set(1, 1);
     blockTex.offset.set(0, 0);
     blockTex.wrapS = THREE.RepeatWrapping;
@@ -562,12 +563,14 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     // Create material
     const floorMaterial = new THREE.MeshStandardMaterial({
         map: blockTex,
-        color: 0xffffff,
+        color: textureOverride ? theme.color : 0xffffff,
         roughness: 0.9,
         metalness: 0.1,
         side: THREE.FrontSide,  // Only render front faces
         emissive: emissiveColor,
-        emissiveIntensity: emissiveIntensity
+        emissiveIntensity: emissiveIntensity,
+        transparent: !!textureOverride,
+        opacity: 1.0
     });
 
     // Create ONE mesh for the entire floor
@@ -666,6 +669,7 @@ export function generateBattleArena(scene, floor, loadTexture, getClonedTexture)
         loadTexture, 
         getClonedTexture, 
         size, // Battle Island Size
-        false // isFlat = false (Restore hills/valleys)
+        false, // isFlat = false (Restore hills/valleys)
+        'assets/images/boss-runes-sheet.png' // textureOverride
     );
 }
