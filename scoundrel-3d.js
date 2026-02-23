@@ -214,6 +214,7 @@ window.testDungeon       = function (floor = 1) {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     spawnBSPDoors(bsp.doorPositions);
+    createDungeonDustMotes();
     updateAtmosphere(floor);
     initWanderers();
     updateUI();
@@ -422,6 +423,48 @@ function spawnBSPDoors(doorPositions) {
         }, 1.0, 'door-web.glb');
     });
 }
+// Floating dust motes — created once per floor, drifts slowly through the dungeon
+function createDungeonDustMotes() {
+    if (dungeonDustMotes) {
+        scene.remove(dungeonDustMotes);
+        dungeonDustMotes.geometry.dispose();
+        dungeonDustMotes.material.dispose();
+        dungeonDustMotes = null;
+    }
+
+    const count = 350;
+    const spread = 35; // Rough half-width of BSP dungeon in world units
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3); // Stored in userData
+
+    for (let i = 0; i < count; i++) {
+        positions[i * 3]     = (Math.random() - 0.5) * spread * 2;
+        positions[i * 3 + 1] = Math.random() * 3.2; // Float 0–3.2 units high
+        positions[i * 3 + 2] = (Math.random() - 0.5) * spread * 2;
+        // Very slow drift: mostly upward, tiny horizontal wander
+        velocities[i * 3]     = (Math.random() - 0.5) * 0.0015;
+        velocities[i * 3 + 1] = 0.0008 + Math.random() * 0.0012;
+        velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.0015;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    const mat = new THREE.PointsMaterial({
+        size: 0.06,
+        color: 0xbbaadd, // Cool blue-lavender — catches warm torch light nicely
+        transparent: true,
+        opacity: 0.55,
+        sizeAttenuation: true,
+        depthWrite: false,
+    });
+
+    dungeonDustMotes = new THREE.Points(geo, mat);
+    dungeonDustMotes.userData.velocities = velocities;
+    dungeonDustMotes.userData.spread = spread;
+    scene.add(dungeonDustMotes);
+}
+
 // Audio State
 const audio = new SoundManager();
 const magicFX = new MagicCircleFX();
@@ -491,6 +534,8 @@ let activeWanderer = null; // Track current enemy
 let playerPet = null; // { mesh, mixer, actions } — friendly companion, follows player
 
 let savedCamState = { pos: new THREE.Vector3(), target: new THREE.Vector3(), zoom: 1 };
+let dungeonDustMotes = null; // Atmospheric floating dust — THREE.Points, updated each frame
+let torchFlashBoost = 0;    // Temporary intensity spike on refuel/loot — decays each frame
 let combatEntities = []; // Track standees/chests for updates
 let combatState = {
     active: false,
@@ -1365,12 +1410,12 @@ function init3D() {
     if (renderer) {
         // Already initialized, just need new scene/camera
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0a0a0a);
-        scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
+        scene.background = new THREE.Color(0x080616);
+        scene.fog = new THREE.FogExp2(0x080616, 0.04);
     } else {
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x0a0a0a);
-        scene.fog = new THREE.FogExp2(0x0a0a0a, 0.04);
+        scene.background = new THREE.Color(0x080616);
+        scene.fog = new THREE.FogExp2(0x080616, 0.04);
 
         renderer = new THREE.WebGLRenderer({ 
             antialias: true,
@@ -1428,17 +1473,18 @@ function init3D() {
     mouse = new THREE.Vector2();
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-    // Hemisphere light — soft global fill to keep scenes readable under heavy fog
-    hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x222222, 0.6);
+    // Cool purple-blue ambient: shadows feel cold and ancient, warm torch pops against it
+    scene.add(new THREE.AmbientLight(0x2a1a4a, 0.45));
+    // Hemisphere — deep indigo sky (cave ceiling), near-black ground
+    hemisphereLight = new THREE.HemisphereLight(0x1a0d30, 0x050010, 0.55);
     scene.add(hemisphereLight);
     // Initial Torch
     torchLight = new THREE.PointLight(0xffaa44, 300, 40);
     torchLight.castShadow = false; // Shadows owned by DirectionalLight — PointLight shadow = 6 cubemap passes/frame
     scene.add(torchLight);
 
-    // Fog of War
-    scene.fog = new THREE.FogExp2(0x000000, 0.05);
+    // Fog of War — deep indigo, not pure black; has color depth without being bright
+    scene.fog = new THREE.FogExp2(0x0a0818, 0.05);
 
     // Load 3D Player Model
     loadPlayerModel();
@@ -2408,6 +2454,26 @@ function update3DScene() {
     if (!scene) return;
     const currentRoom = game.rooms.find(room => room.id === game.currentRoomIdx);
 
+    // Dust mote drift — only in dungeon, skip during combat/helix to save cycles
+    if (dungeonDustMotes && game.useBSP && !isCombatView && !inHelixZone && !isAttractMode) {
+        const pos = dungeonDustMotes.geometry.attributes.position;
+        const vel = dungeonDustMotes.userData.velocities;
+        const spread = dungeonDustMotes.userData.spread;
+        const arr = pos.array;
+        for (let i = 0, n = pos.count; i < n; i++) {
+            arr[i * 3]     += vel[i * 3];
+            arr[i * 3 + 1] += vel[i * 3 + 1];
+            arr[i * 3 + 2] += vel[i * 3 + 2];
+            // Wrap vertically; scatter horizontally when recycled
+            if (arr[i * 3 + 1] > 3.2) {
+                arr[i * 3]     = (Math.random() - 0.5) * spread * 2;
+                arr[i * 3 + 1] = 0;
+                arr[i * 3 + 2] = (Math.random() - 0.5) * spread * 2;
+            }
+        }
+        pos.needsUpdate = true;
+    }
+
     const playerObj = playerMesh;
     if (playerObj && torchLight) {
         // --- Attract Mode Overrides ---
@@ -2435,23 +2501,29 @@ function update3DScene() {
 
         if (game.equipment.weapon) {
             if (game.equipment.weapon.val >= 8 || hasLantern) {
-                torchLight.color.setHex(0x00ccff); torchLight.intensity = (viewMode !== 0 ? baseInt * 1.5 : baseInt * 2.5);
+                torchLight.color.setHex(0x00ccff); torchLight.intensity = baseInt * 1.6;
                 torchLight.distance = baseDist * 1.5; vRad = 8.0;
             } else if (game.equipment.weapon.val >= 6 || hasLantern) {
-                torchLight.color.setHex(0xd4af37); torchLight.intensity = (viewMode !== 0 ? baseInt * 1.2 : baseInt * 2.0);
+                torchLight.color.setHex(0xd4af37); torchLight.intensity = baseInt * 1.3;
                 torchLight.distance = baseDist * 1.2; vRad = 5.0;
             } else {
-                torchLight.color.setHex(0xffaa44); torchLight.intensity = (viewMode !== 0 ? baseInt : baseInt * 1.5);
+                torchLight.color.setHex(0xffaa44); torchLight.intensity = baseInt * 1.1;
                 torchLight.distance = baseDist; vRad = 3.5;
             }
         } else {
-            torchLight.color.setHex(0xffaa44); torchLight.intensity = (viewMode !== 0 ? baseInt * 0.8 : baseInt * 1.2);
+            torchLight.color.setHex(0xffaa44); torchLight.intensity = baseInt;
             torchLight.distance = baseDist * 0.8; vRad = 2.5;
         }
 
-        // Torch Flicker Juice
-        const flicker = 1.0 + (Math.random() - 0.5) * 0.15;
+        // Torch Flicker — more dramatic against cool ambient; occasional deep dip
+        const flicker = 1.0 + (Math.random() - 0.5) * 0.28 + (Math.random() < 0.04 ? -0.18 : 0);
         torchLight.intensity *= flicker;
+
+        // Refuel flash — additive boost that decays over ~1.5s after a refuel/corpse loot event
+        if (torchFlashBoost > 0) {
+            torchLight.intensity += torchFlashBoost;
+            torchFlashBoost = Math.max(0, torchFlashBoost * 0.93);
+        }
 
         // Start torch sound if not playing
         // Note: This check is cheap in the loop map
@@ -3147,6 +3219,7 @@ function animate3D() {
                     if (game.torchCharge < 100) {
                         const gained = Math.min(c.fuelReward, 100 - game.torchCharge);
                         game.torchCharge = Math.min(100, game.torchCharge + c.fuelReward);
+                        torchFlashBoost = Math.max(torchFlashBoost, gained * 40); // Flash proportional to fuel gained
                         spawnFloatingText(`+${gained}% TORCH`, window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 28);
                         logMsg(`Looted ${c.name}'s remains. (+${gained}% torch fuel)`);
                     } else {
@@ -4192,17 +4265,20 @@ function takeDamage(amount) {
 function updateAtmosphere(floor) {
     const theme = getThemeForFloor(floor);
 
-    // Default to black, but use Red for Cursed Realm
-    let bg = new THREE.Color(0x050505);
-    let fogColor = new THREE.Color(0x000000);
+    // Default: deep cool indigo — not black, has subtle color depth
+    let bg = new THREE.Color(0x08061a);
+    let fogColor = new THREE.Color(0x0a0818);
 
     if (floor === 99) {
-        bg = new THREE.Color(0x220000); // Dark Red Background
-        fogColor = new THREE.Color(0x440000); // Red Fog
+        bg = new THREE.Color(0x220000);
+        fogColor = new THREE.Color(0x440000);
     } else if (floor === 100) {
-        // Duck Pond Theme
-        bg = new THREE.Color(0x002244); // Deep Blue
-        fogColor = new THREE.Color(0x004488); // Blue Fog
+        bg = new THREE.Color(0x002244);
+        fogColor = new THREE.Color(0x004488);
+    } else if (floor >= 5) {
+        // Deeper floors: slightly more saturated indigo — feels older, colder
+        bg = new THREE.Color(0x060516);
+        fogColor = new THREE.Color(0x08061a);
     }
     scene.background = bg;
 
@@ -4219,19 +4295,22 @@ function updateAtmosphere(floor) {
     scene.fog = new THREE.FogExp2(fogColor, isEditMode ? 0 : density);
     // --- END DYNAMIC FOG ---
 
-    // Update ambient and hemisphere lights to match mood
+    // Ambient stays cool purple — theme tint bleeds in slightly but never goes white
     const amb = scene.children.find(c => c.isAmbientLight);
     if (amb) {
-        amb.color.setHex(theme.color).lerp(new THREE.Color(0xffffff), 0.1);
-        amb.intensity = (theme.ambientIntensity || 0.15) + 0.35; // Significant boost
+        const coolBase = new THREE.Color(0x2a1a4a);
+        const themeHint = new THREE.Color(theme.color);
+        amb.color.copy(coolBase).lerp(themeHint, 0.15); // 15% theme tint on top of cool base
+        amb.intensity = (theme.ambientIntensity || 0.15) + 0.30;
     }
 
     if (typeof hemisphereLight !== 'undefined' && hemisphereLight) {
-        const sky = new THREE.Color(theme.color).lerp(new THREE.Color(0xffffff), 0.6);
-        const ground = new THREE.Color(theme.color).multiplyScalar(0.25);
+        // Sky: cool indigo + slight theme tint. Ground: near-black with a whisper of cool.
+        const sky = new THREE.Color(0x1a0d30).lerp(new THREE.Color(theme.color), 0.2);
+        const ground = new THREE.Color(0x050010).lerp(new THREE.Color(theme.color), 0.05);
         hemisphereLight.color.copy(sky);
         hemisphereLight.groundColor.copy(ground);
-        hemisphereLight.intensity = (theme.hemiIntensity || 0.35) + 0.25; // Significant boost
+        hemisphereLight.intensity = (theme.hemiIntensity || 0.35) + 0.20;
     }
 
     // Update Battle Island Theme
@@ -4244,8 +4323,8 @@ function clear3DScene() {
     if (!scene) return;
     while (scene.children.length > 0) scene.remove(scene.children[0]);
 
-    // New Ambient Light handling in updateAtmosphere, but need base
-    const amb = new THREE.AmbientLight(0xffffff, 0.5);
+    // Base cool ambient — updateAtmosphere refines it per floor
+    const amb = new THREE.AmbientLight(0x2a1a4a, 0.45);
     scene.add(amb);
 
     roomMeshes.clear(); waypointMeshes.clear(); corridorMeshes.clear(); doorMeshes.clear(); markerRings.clear();
@@ -4265,6 +4344,7 @@ function clear3DScene() {
     hiddenStaticMeshes = [];
     globalFloorMesh = null;
     bspGrid = null; bspCols = 0; bspRows = 0;
+    dungeonDustMotes = null; // scene.remove already happened via while loop above
 
     wanderers.forEach(w => {
         if (w.tween) w.tween.stop();
@@ -4515,7 +4595,7 @@ function finalizeStartDive() {
     game.level = 1; game.xp = 0;
     game.weapon = null; game.weaponDurability = Infinity; game.slainStack = [];
     game.soulCoins = 0; game.ap = 0; game.maxAp = 0;
-    game.torchCharge = 20;
+    game.torchCharge = 60;
     game.equipment = { head: null, chest: null, hands: null, legs: null, weapon: null };
     game.backpack = new Array(24).fill(null); game.hotbar = new Array(6).fill(null);
     game.currentRoomIdx = 0; game.lastAvoided = false;
@@ -4573,6 +4653,7 @@ function finalizeStartDive() {
     globalFloorMesh = bspNew.mesh;
     bspGrid = bspNew.tileGrid; bspCols = bspNew.cols; bspRows = bspNew.rows;
     spawnBSPDoors(bspNew.doorPositions);
+    createDungeonDustMotes();
 
     updateAtmosphere(game.floor);
 
@@ -4768,6 +4849,7 @@ function descendToNextFloor() {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     spawnBSPDoors(bsp.doorPositions);
+    createDungeonDustMotes();
 
     // Map Item: reveal all rooms
     const hasMap = game.hotbar.some(i => i && i.type === 'item' && i.id === 3);
@@ -5053,6 +5135,7 @@ window.handleAzureFlameChoice = function(choice) {
 
     if (choice === 'refuel') {
         game.torchCharge = 100;
+        torchFlashBoost = 5000; // Visible burst as the flame surges back to full
         logMsg("The Azure Flame restores your torch. The darkness retreats.");
         spawnFloatingText("TORCH REFUELED!", window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 36);
         updateUI();
@@ -5394,6 +5477,10 @@ function startBossEncounter() {
     // This is a blocking prompt — restore pointer events so buttons work.
     modal.style.pointerEvents = 'auto';
     modal.style.background = 'rgba(0,0,0,0.75)';
+    // showCombat() sets enemyArea pointerEvents:none as an inline style.
+    // That inline style overrides inheritance, so buttons inside are unclickable
+    // unless we explicitly reset it here.
+    document.getElementById('enemyArea').style.pointerEvents = 'auto';
 
     document.getElementById('combatMessage').innerText = "The Guardian stirs within.";
     document.getElementById('enemyArea').innerHTML = `
@@ -7915,6 +8002,7 @@ function loadGame() {
     globalFloorMesh = bspLoad.mesh;
     bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
     spawnBSPDoors(bspLoad.doorPositions);
+    createDungeonDustMotes();
 
     updateAtmosphere(game.floor);
     initWanderers();
@@ -9737,6 +9825,7 @@ window.reloadScene = function () {
     globalFloorMesh = bspReload.mesh;
     bspGrid = bspReload.tileGrid; bspCols = bspReload.cols; bspRows = bspReload.rows;
     spawnBSPDoors(bspReload.doorPositions);
+    createDungeonDustMotes();
     updateAtmosphere(game.floor);
     if (currentRoom && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
 

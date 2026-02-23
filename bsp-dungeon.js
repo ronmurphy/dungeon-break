@@ -380,11 +380,11 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
         map: floorTex, roughness: 0.85, metalness: 0.05, side: THREE.FrontSide,
     });
     const wallMat = new THREE.MeshStandardMaterial({
-        map: wallTex, color: 0x888888, roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide,
+        map: wallTex, color: 0x72728c, roughness: 1.0, metalness: 0.0, side: THREE.DoubleSide,
     });
-    // Void cap: same texture but darker tint so gaps read as solid rock, not walkable
+    // Void cap: deep cool indigo so gaps read as solid ancient rock
     const voidMat = new THREE.MeshStandardMaterial({
-        map: voidTex, color: 0x444444, roughness: 1.0, metalness: 0.0, side: THREE.FrontSide,
+        map: voidTex, color: 0x181828, roughness: 1.0, metalness: 0.0, side: THREE.FrontSide,
     });
 
     // ── Build meshes ──────────────────────────────────────────────────────────
