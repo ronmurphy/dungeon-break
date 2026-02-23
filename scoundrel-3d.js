@@ -334,7 +334,7 @@ const WANDERER_MODELS = [
     'a-sand-assassin-web.glb',
     'a-sorcoress-web.glb',
     'a-skeleton-king-web.glb',
-    'Magma_dog-web.glb',
+    'MagmaDog-web.glb',
     'gremlinn-web.glb',
     'demoness-web.glb'
 ];
@@ -2684,7 +2684,7 @@ function update3DScene() {
                     const bspNeedsRing = (r.isFountain || r.isAlchemy || r.isSpecial || r.isTrap || r.isLocked || r.isBonfire || r.id === 0) && !r.isFinal;
                     if (bspNeedsRing && !markerRings.has(r.id)) {
                         const ringGeo = new THREE.PlaneGeometry(3, 3);
-                        const ringTex = loadTexture('assets/images/circle_04.png');
+                        const ringTex = loadTexture('assets/images/textures/circle_04.png');
                         const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
                         const ring = new THREE.Mesh(ringGeo, ringMat);
                         ring.rotation.x = -Math.PI / 2;
@@ -5579,7 +5579,7 @@ function spawnPet() {
         lod.autoUpdate = false;
         lod.addLevel(model, 60);
         const box = new THREE.Mesh(
-            new THREE.BoxGeometry(0.6, 0.8, 0.6),
+            new THREE.BoxGeometry(1.6, 1.8, 1.6),
             new THREE.MeshBasicMaterial({ color: 0xff4400 })
         );
         lod.addLevel(box, 90);
