@@ -553,6 +553,21 @@ function updateMapHUD() {
             } else if (crossbowBadge) {
                 crossbowBadge.remove();
             }
+
+            // Pet Badge
+            let petBadge = mapWepBtn.querySelector('.pet-badge');
+            if (!petBadge) {
+                petBadge = document.createElement('div');
+                petBadge.className = 'pet-badge';
+                petBadge.title = 'Companions';
+                petBadge.style.cssText = 'position:absolute; bottom:-24px; right:90px; width:44px; height:44px; background:rgba(0,0,0,0.75); border:1px solid #44cc66; border-radius:2px; cursor:pointer; pointer-events:auto;';
+                petBadge.innerHTML = '<img src="assets/images/pets.png" style="width:100%; height:100%; object-fit:contain;">';
+                petBadge.onclick = (e) => {
+                    e.stopPropagation();
+                    if (window.spawnPet) window.spawnPet();
+                };
+                mapWepBtn.appendChild(petBadge);
+            }
         }
 
         // Hotbar

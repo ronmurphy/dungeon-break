@@ -5644,22 +5644,47 @@ function showCompanionPicker() {
         grid.appendChild(btn);
     });
 
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = "display:flex; gap:10px; margin-top:10px;";
+
+    const dismissBtn = document.createElement('button');
+    dismissBtn.style.cssText = `
+        flex:1; background:rgba(40,0,0,0.5); border:1px solid rgba(255,50,50,0.15);
+        color:#aa4444; font-family:'Cinzel',serif; font-size:0.6rem;
+        letter-spacing:1px; padding:9px; cursor:pointer; text-transform:uppercase;
+        transition:all 0.12s;
+    `;
+    dismissBtn.textContent = 'Dismiss Pet';
+    dismissBtn.onmouseenter = () => { dismissBtn.style.background = 'rgba(60,0,0,0.7)'; dismissBtn.style.color = '#ff6666'; dismissBtn.style.borderColor = 'rgba(255,50,50,0.4)'; };
+    dismissBtn.onmouseleave = () => { dismissBtn.style.background = 'rgba(40,0,0,0.5)'; dismissBtn.style.color = '#aa4444'; dismissBtn.style.borderColor = 'rgba(255,50,50,0.15)'; };
+    dismissBtn.onclick = () => {
+        if (playerPet) {
+            if (playerPet.mesh) scene.remove(playerPet.mesh);
+            playerPet = null;
+            logMsg("Companion dismissed.");
+        }
+        panel.remove();
+    };
+
     const closeBtn = document.createElement('button');
     closeBtn.style.cssText = `
-        width:100%; background:transparent; border:1px solid rgba(255,255,255,0.08);
-        color:#444; font-family:'Cinzel',serif; font-size:0.6rem;
-        letter-spacing:3px; padding:9px; cursor:pointer; text-transform:uppercase;
-        transition:color 0.12s, border-color 0.12s;
+        flex:1; background:transparent; border:1px solid rgba(255,255,255,0.08);
+        color:#666; font-family:'Cinzel',serif; font-size:0.6rem;
+        letter-spacing:1px; padding:9px; cursor:pointer; text-transform:uppercase;
+        transition:all 0.12s;
     `;
-    closeBtn.textContent = 'DISMISS';
-    closeBtn.onmouseenter = () => { closeBtn.style.color = '#888'; closeBtn.style.borderColor = 'rgba(255,255,255,0.2)'; };
-    closeBtn.onmouseleave = () => { closeBtn.style.color = '#444'; closeBtn.style.borderColor = 'rgba(255,255,255,0.08)'; };
+    closeBtn.textContent = 'Close';
+    closeBtn.onmouseenter = () => { closeBtn.style.color = '#fff'; closeBtn.style.borderColor = 'rgba(255,255,255,0.2)'; };
+    closeBtn.onmouseleave = () => { closeBtn.style.color = '#666'; closeBtn.style.borderColor = 'rgba(255,255,255,0.08)'; };
     closeBtn.onclick = () => panel.remove();
+
+    btnRow.appendChild(dismissBtn);
+    btnRow.appendChild(closeBtn);
 
     box.appendChild(title);
     box.appendChild(sub);
     box.appendChild(grid);
-    box.appendChild(closeBtn);
+    box.appendChild(btnRow);
     panel.appendChild(box);
     panel.onclick = e => { if (e.target === panel) panel.remove(); };
     document.body.appendChild(panel);
@@ -5714,12 +5739,12 @@ function spawnPet(name) {
         // LOD: full model always visible in normal play; placeholder box only at absurd distance
         const lod = new THREE.LOD();
         lod.autoUpdate = false;
-        lod.addLevel(model, 0);
+        lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
         const placeholder = new THREE.Mesh(
             new THREE.BoxGeometry(0.8, 1.8, 0.8),
             new THREE.MeshBasicMaterial({ color: 0x002200 })
         );
-        lod.addLevel(placeholder, 300);
+        lod.addLevel(placeholder, (gameSettings.lod && gameSettings.lod.far) || 80);
 
         // Green companion tint via emissive — no green enemies, so unambiguous
         model.traverse(child => {
