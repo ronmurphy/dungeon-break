@@ -384,6 +384,14 @@ function isBSPWallAt(wx, wz) {
     return bspGrid[row][col] === 3; // TILE_WALL
 }
 
+function isBSPVoidAt(wx, wz) {
+    if (!bspGrid) return true;
+    const col = Math.round(wx + bspCols / 2);
+    const row = Math.round(wz + bspRows / 2);
+    if (col < 0 || col >= bspCols || row < 0 || row >= bspRows) return true;
+    return bspGrid[row][col] === 0; // TILE_EMPTY
+}
+
 // Bresenham grid scan — returns true if a TILE_WALL tile lies between fromPos and toPos
 function bspWallBlocksLOS(fromPos, toPos) {
     if (!bspGrid) return false;
@@ -1658,7 +1666,7 @@ function loadPlayerModel() {
 
             if (walkClip) {
                 actions.walk = mixer.clipAction(walkClip);
-                actions.walk.timeScale = 0.8; // Slower, weightier walk
+                actions.walk.timeScale = 1.4;
                 actions.walk.setLoop(THREE.LoopRepeat);
             }
             if (idleClip) {
@@ -1733,6 +1741,7 @@ function initWanderers() {
         loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
             // --- NEW LOD LOGIC ---
             const lod = new THREE.LOD();
+            lod.autoUpdate = false; // Manual player-distance LOD — prevents camera-distance override
 
             // Level 0: Full model
             lod.addLevel(model, gameSettings.lod.near || 40);
@@ -1766,8 +1775,13 @@ function initWanderers() {
                 }
                 if (nearCorr) continue;
 
-                // Raycast to ensure we are on the floor mesh
-                if (globalFloorMesh) {
+                // Validate spawn position — BSP uses grid (flat floor), others use raycast
+                if (game.useBSP) {
+                    if (!isBSPWallAt(sx, sz) && !isBSPVoidAt(sx, sz)) {
+                        sy = WANDERER_Y_LIFT; // BSP floor is flat at Y=0
+                        valid = true;
+                    }
+                } else if (globalFloorMesh) {
                     terrainRaycaster.set(new THREE.Vector3(sx, 50, sz), new THREE.Vector3(0, -1, 0));
                     const hits = terrainRaycaster.intersectObject(globalFloorMesh);
                     if (hits.length > 0) {
@@ -1805,6 +1819,25 @@ function initWanderers() {
 
             // Store the LOD object as the mesh
             const wanderer = { mesh: lod, mixer: mixer, actions: actions, filename: file };
+
+            // ~15% chance of spawning as a Shade (ghost) on floor 2+
+            // Shades use the same models but are semi-transparent — lower HP, eerie look.
+            if (game.floor >= 2 && Math.random() < 0.15) {
+                wanderer.isGhost = true;
+                model.traverse(child => {
+                    if (!child.isMesh || !child.material) return;
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    const ghosted = mats.map(m => {
+                        const c = m.clone();
+                        c.transparent = true;
+                        c.opacity = 0.35;
+                        c.depthWrite = false;
+                        return c;
+                    });
+                    child.material = Array.isArray(child.material) ? ghosted : ghosted[0];
+                });
+            }
+
             wanderers.push(wanderer);
             pickWandererTarget(wanderer);
         }, 0.7);
@@ -1866,7 +1899,7 @@ function pickWandererTarget(wanderer) {
             .onUpdate(() => {
                 // Snap to floor mesh during movement
                 if (globalFloorMesh) {
-                    const rayOriginHeight = 50;
+                    const rayOriginHeight = wanderer.mesh.position.y + 50; // Relative to wanderer — works at any world Y (dungeon Y≈0, Battle Island Y≈2000)
                     const down = new THREE.Vector3(0, -1, 0);
 
                     // 1. Snap to floor (Always snap to handle slopes, even in True Dungeon if terrain varies)
@@ -1875,28 +1908,39 @@ function pickWandererTarget(wanderer) {
                         : (isCombatView && CombatManager.battleGroup) ? CombatManager.battleGroup
                         : globalFloorMesh;
                     
-                    terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
-                    const hits = terrainRaycaster.intersectObject(targetMesh, true);
                     let currentY = wanderer.mesh.position.y;
-                    if (hits.length > 0 && !wanderer.isJumping) {
-                        currentY = hits[0].point.y + WANDERER_Y_LIFT;
-                        wanderer.mesh.position.y = currentY;
+
+                    // OPTIMIZATION: In BSP mode, floor is flat at Y=0. Skip raycast.
+                    if (game.useBSP && targetMesh === globalFloorMesh) {
+                        currentY = WANDERER_Y_LIFT;
+                        if (!wanderer.isJumping) wanderer.mesh.position.y = currentY;
+                    } else {
+                        terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
+                        const hits = terrainRaycaster.intersectObject(targetMesh, true);
+                        if (hits.length > 0 && !wanderer.isJumping) {
+                            currentY = hits[0].point.y + WANDERER_Y_LIFT;
+                            wanderer.mesh.position.y = currentY;
+                        }
                     }
 
                     // 2. Look Ahead (Cliff/Wall Check)
                     const lookAheadDist = 0.6;
                     const aheadPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
-                    terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
-                    const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
-
                     let stop = false;
-                    if (game.useBSP && targetMesh === globalFloorMesh && isBSPWallAt(aheadPos.x, aheadPos.z)) stop = true;
-                    if (aheadHits.length > 0) {
+
+                    // OPTIMIZATION: Use grid check for BSP, raycast for others
+                    if (game.useBSP && targetMesh === globalFloorMesh) {
+                        if (isBSPWallAt(aheadPos.x, aheadPos.z) || isBSPVoidAt(aheadPos.x, aheadPos.z)) stop = true;
+                    } else {
+                        terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
+                        const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
+                        if (aheadHits.length > 0) {
                         const nextY = aheadHits[0].point.y;
                         if (Math.abs(nextY - currentY) > 1.5) stop = true; // Wall or Cliff
-                    } else {
-                        stop = true; // Void
+                        } else {
+                            stop = true; // Void
+                        }
                     }
 
                     if (stop && !wanderer.isJumping) {
@@ -2322,12 +2366,11 @@ function on3DClick(event, isRightClick = false) {
             return;
         }
 
-        logMsg("Select a valid target.");
-        return;
+        // Fall through to allow movement while targeting
     }
 
     // Iterate to find first CLICKABLE object (skipping particles)
-    if (!isRightClick) { // Only interact with objects on Left Click
+    if (!isRightClick && (!isCombatView || !combatState.isTargeting)) { // Only interact with objects on Left Click (and not targeting)
         for (let i = 0; i < intersects.length; i++) {
             let obj = intersects[i].object;
 
@@ -2498,8 +2541,10 @@ function update3DScene() {
         const hasMap = game.hotbar.some(i => i && i.type === 'item' && i.id === 3);
 
         // Torch Logic based on Fuel
-        const baseDist = 15 + (game.torchCharge * 1.5); // 15 base + fuel
-        const baseInt = 200 + (game.torchCharge * 50);
+        // Min baseDist 50: must reach camera (~35 units away) so floor tiles are lit even when drained
+        // Min baseInt 2000: dungeon must be readable even at 0% charge; full charge (100) gives 5200
+        const baseDist = Math.max(50, 15 + (game.torchCharge * 1.5));
+        const baseInt  = Math.max(2000, 200 + (game.torchCharge * 50));
 
         if (game.equipment.weapon) {
             if (game.equipment.weapon.val >= 8 || hasLantern) {
@@ -3861,15 +3906,14 @@ function movePlayerTo(targetVec, isRunning = false) {
     const startPos = playerObj.position.clone();
 
     // Calculate distance to determine duration (speed)
-    // Speed = 3.0 units per second (Walk), 6.0 was Run
-    const speed = isRunning ? 6.0 : 3.0;
+    const speed = isRunning ? 9.0 : 5.0;
     const dist = startPos.distanceTo(targetVec);
     const duration = (dist / speed) * 1000;
 
     // Consume Torch Fuel based on distance (Free Movement) — not during combat
     // D&D turns are ~6 seconds; a torch doesn't meaningfully deplete in a fight
     if (!isCombatView) {
-        game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.05));
+        game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.025)); // Halved — movement speed doubled
     }
     updateUI();
 
@@ -3919,7 +3963,7 @@ function movePlayerTo(targetVec, isRunning = false) {
         // Start Walk Animation
         if (actions.walk) {
             actions.walk.enabled = true;
-            actions.walk.setEffectiveTimeScale(isRunning ? 1.5 : 0.8); // Faster animation for running
+            actions.walk.setEffectiveTimeScale(isRunning ? 2.4 : 1.4);
             actions.walk.setEffectiveWeight(1.0);
             if (!actions.walk.isRunning()) {
                 actions.walk.play();
@@ -3947,13 +3991,21 @@ function movePlayerTo(targetVec, isRunning = false) {
                 const down = new THREE.Vector3(0, -1, 0);
                 const rayOriginHeight = playerObj.position.y + 3.0; // Cast from above head
 
-                // 1. Ground Snapping (Current Position)
-                // Keep player glued to the floor at their CURRENT X/Z
-                terrainRaycaster.set(new THREE.Vector3(playerObj.position.x, rayOriginHeight, playerObj.position.z), down);
-                const currentHits = terrainRaycaster.intersectObject(targetMesh, true);
-
-                if (currentHits.length > 0) {
-                    playerObj.position.y = currentHits[0].point.y + offset;
+                // 1. Ground Snapping
+                // OPTIMIZATION: Skip raycast in BSP mode (flat floor at Y=0)
+                let currentY = 0;
+                if (game.useBSP && targetMesh === globalFloorMesh) {
+                    playerObj.position.y = offset; // 0 + offset
+                    currentY = offset;
+                } else {
+                    terrainRaycaster.set(new THREE.Vector3(playerObj.position.x, rayOriginHeight, playerObj.position.z), down);
+                    const currentHits = terrainRaycaster.intersectObject(targetMesh, true);
+                    if (currentHits.length > 0) {
+                        playerObj.position.y = currentHits[0].point.y + offset;
+                        currentY = currentHits[0].point.y;
+                    } else {
+                        currentY = playerObj.position.y - offset;
+                    }
                 }
 
                 // 2. Cliff/Wall Prevention (Look Ahead)
@@ -3961,42 +4013,36 @@ function movePlayerTo(targetVec, isRunning = false) {
                 const lookAheadDist = 0.5;
                 const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
-                // BSP wall collision — tile grid check is cheaper than raycasting
-                // Only check BSP walls if we are navigating the main dungeon floor
-                if (game.useBSP && targetMesh === globalFloorMesh && isBSPWallAt(aheadPos.x, aheadPos.z)) {
-                    stopMovement();
-                    return;
-                }
-
-                terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
-                const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
-
-                if (aheadHits.length > 0) {
-                    const nextY = aheadHits[0].point.y;
-                    const currY = (currentHits.length > 0) ? currentHits[0].point.y : (playerObj.position.y - offset);
-
-                    // If the height difference is too steep (> 1.5 units), treat as Wall or Cliff
-                    if (Math.abs(nextY - currY) > 1.5) {
+                // OPTIMIZATION: Use grid check for BSP
+                if (game.useBSP && targetMesh === globalFloorMesh) {
+                    if (isBSPWallAt(aheadPos.x, aheadPos.z) || isBSPVoidAt(aheadPos.x, aheadPos.z)) {
                         stopMovement();
-                    }
-
-                    // 3. Solid Object Collision (Walls/Buildings)
-                    // Cast forward from player center
-                    collisionRaycaster.set(new THREE.Vector3(playerObj.position.x, playerObj.position.y + 1.0, playerObj.position.z), moveDir);
-                    collisionRaycaster.camera = camera; // Fix for sprite raycasting error
-                    collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
-                    const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
-                    
-                    if (wallHits.length > 0) {
-                        stopMovement();
+                        return;
                     }
                 } else {
-                    // No ground hit? We are staring into the void. STOP.
-                    if (playerMoveTween) playerMoveTween.stop();
-                    playerMoveTween = null;
-                    // Force stop animation immediately
-                    if (actions.walk) actions.walk.stop();
-                    if (actions.idle) actions.idle.play();
+                    // Raycast for non-BSP floors
+                    terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
+                    const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
+
+                    if (aheadHits.length > 0) {
+                        const nextY = aheadHits[0].point.y;
+                        if (Math.abs(nextY - currentY) > 1.5) {
+                            stopMovement();
+                        }
+                    } else {
+                        stopMovement();
+                    }
+                }
+
+                // 3. Solid Object Collision (Walls/Buildings) - Keep this for props
+                // Cast forward from player center
+                collisionRaycaster.set(new THREE.Vector3(playerObj.position.x, playerObj.position.y + 1.0, playerObj.position.z), moveDir);
+                collisionRaycaster.camera = camera; // Fix for sprite raycasting error
+                collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
+                const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
+                
+                if (wallHits.length > 0) {
+                    stopMovement();
                 }
             }
         })
@@ -4292,7 +4338,10 @@ function updateAtmosphere(floor) {
     // that's an acceptable tradeoff vs. the fog wall covering the entire screen.
     const visibilityAtFar = 0.15; // 15% visible at the far LOD distance
     const farDist = (gameSettings.lod && gameSettings.lod.far) ? gameSettings.lod.far : 80;
-    const MIN_FOG_FAR = 25; // Never let fog get denser than a 25-unit view distance
+    // MIN_FOG_FAR = 80: cap fog density so low-end profiles don't make the dungeon unplayable.
+    // At 0.024 density, camera-to-player (35 units) has ~42% visibility — always readable.
+    // Old MIN_FOG_FAR=25 allowed density 0.076, making dungeon ~7% visible at camera distance.
+    const MIN_FOG_FAR = 80;
     const effectiveFogFar = Math.max(farDist, MIN_FOG_FAR);
     const density = -Math.log(visibilityAtFar) / effectiveFogFar;
     scene.fog = new THREE.FogExp2(fogColor, isEditMode ? 0 : density);
@@ -5432,6 +5481,7 @@ function spawnBossWanderer(floor, callback) {
 
     loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
         const lod = new THREE.LOD();
+        lod.autoUpdate = false;
         lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
         const box = new THREE.Mesh(
             new THREE.BoxGeometry(0.6, 1.8, 0.6),
@@ -5526,6 +5576,7 @@ function spawnPet() {
 
     loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
         const lod = new THREE.LOD();
+        lod.autoUpdate = false;
         lod.addLevel(model, 60);
         const box = new THREE.Mesh(
             new THREE.BoxGeometry(0.6, 0.8, 0.6),
@@ -5565,6 +5616,7 @@ function spawnHelperWanderer(helperDef, anchor, getIslandY, callback) {
 
     loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
         const lod = new THREE.LOD();
+        lod.autoUpdate = false;
         lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
         const box = new THREE.Mesh(
             new THREE.BoxGeometry(0.6, 1.8, 0.6),
@@ -5864,6 +5916,7 @@ function _spawnHelixGuardian(worldPos, getIslandY) {
 
     loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
         const lod = new THREE.LOD();
+        lod.autoUpdate = false;
         lod.addLevel(model, (gameSettings.lod && gameSettings.lod.near) || 40);
         const box = new THREE.Mesh(
             new THREE.BoxGeometry(0.6, 1.8, 0.6),
@@ -6172,10 +6225,15 @@ function showCombat() {
 
     // Ensure controls are set to the correct camera for Battle Island
     if (controls) {
-        controls.object = camera; // Use Main Ortho Camera
+        controls.object = camera;
         controls.enableRotate = true;
-        controls.enablePan = true; // Allow panning on Battle Island
+        controls.enablePan = false;
         controls.enabled = true;
+        controls.mouseButtons = {
+            LEFT: THREE.MOUSE.ROTATE,
+            MIDDLE: THREE.MOUSE.DOLLY,
+            RIGHT: null  // Let contextmenu fire for right-click run movement
+        };
         controls.update();
     }
 
@@ -9250,6 +9308,13 @@ function initWandererForCombat(wanderer) {
         wanderer.stats.maxHp = wanderer.stats.hp;
         wanderer.stats.ac += Math.floor(effectiveFloor / 2);
         wanderer.stats.str += Math.floor(effectiveFloor / 3);
+        // Shades: ethereal — 60% HP, -1 AC, name becomes "Shade of X"
+        if (wanderer.isGhost) {
+            wanderer.stats.hp = Math.ceil(wanderer.stats.hp * 0.6);
+            wanderer.stats.maxHp = wanderer.stats.hp;
+            wanderer.stats.ac = Math.max(0, wanderer.stats.ac - 1);
+            wanderer.stats.name = `Shade of ${wanderer.stats.name}`;
+        }
     }
 
     // HP bar (billboard, always face camera)
@@ -9283,6 +9348,17 @@ function initWandererForCombat(wanderer) {
                 const c = m.clone();
                 c.emissive.setHex(color.hex);
                 c.emissiveIntensity = 0.35;
+                // Some GLBs use BLEND alpha mode making the mesh semi-transparent.
+                // Ghost enemies keep that translucency intentionally; non-ghosts get forced solid.
+                // alphaTest-based materials (hair/foliage cutouts) are intentionally left alone.
+                if (c.transparent && c.opacity < 1.0) {
+                    if (wanderer.isGhost) {
+                        c.opacity = 0.35;
+                        c.depthWrite = false;
+                    } else {
+                        c.opacity = 1.0;
+                    }
+                }
                 return c;
             });
             child.material = Array.isArray(child.material) ? cloned : cloned[0];
@@ -9343,10 +9419,11 @@ function startCombat(wanderer, isFlankAttack = false) {
     if (combatGroup.parent !== scene) scene.add(combatGroup);
     while (combatGroup.children.length > 0) combatGroup.remove(combatGroup.children[0]);
 
-    // Reduce fog slightly for combat visibility
+    // Clear fog significantly during combat — near-black fog at 0x0a0818 makes the scene dark
+    // at camera distances of ~35 units. 0.008 gives 76% visibility (vs 50% at 0.02).
     if (scene.fog) {
         savedFogDensity = scene.fog.density;
-        scene.fog.density = 0.02;
+        scene.fog.density = 0.008;
     }
 
     if (controls) { controls.enableRotate = true; controls.enabled = true; }
@@ -9997,6 +10074,11 @@ function inflictBleed(target, dmgPerTurn = 2, turns = 3) {
 
 function executePlayerSkill(target) {
     if (!combatState.activeSkill) return;
+    if (!combatState.canAttack) {
+        logMsg("Cannot use skill!");
+        combatState.isTargeting = false;
+        return;
+    }
 
     const skill = combatState.activeSkill;
 
@@ -10379,6 +10461,11 @@ function applySiphonDrain(damage, isRock = false) {
 }
 
 function executePlayerAttack(target) {
+    if (!combatState.canAttack) {
+        logMsg("Cannot attack!");
+        combatState.isTargeting = false;
+        return;
+    }
     combatState.isTargeting = false;
     combatState.turn = 'busy';
 
@@ -10745,6 +10832,21 @@ function showLevelUpModal() {
     modal.style.display = 'flex';
 }
 
+window.commandAnalyze = function () {
+    // Free action — no turn cost, just information
+    const enemies = combatState.enemies.filter(e => e.stats && e.stats.hp > 0);
+    if (!enemies.length) { logCombat("Nothing to analyze."); return; }
+    spawnFloatingText("ANALYZE", window.innerWidth / 2, window.innerHeight / 2 - 150, '#aaddff');
+    enemies.forEach(e => {
+        const s = e.stats;
+        const hpPct = Math.round((s.hp / s.maxHp) * 100);
+        const hpBar = hpPct >= 75 ? '████' : hpPct >= 50 ? '███░' : hpPct >= 25 ? '██░░' : '█░░░';
+        const bleedStr = s.bleed > 0 ? ` ⚔BLEED(${s.bleed})` : '';
+        const blindStr = s.blinded ? ' 🌑BLIND' : '';
+        logCombat(`${enemyDisplayName(e)}: HP ${hpBar} ${s.hp}/${s.maxHp} | AC ${s.ac || 10} | STR ${s.str || 1}${bleedStr}${blindStr}`, '#aaddff');
+    });
+};
+
 window.commandWait = function () {
     if (combatState.turn !== 'player') return;
     logCombat("Player waits.");
@@ -10883,6 +10985,7 @@ function startEnemyTurn() {
             return;
         }
         logCombat(`Architect waits, watching...`, '#888');
+        spawnFloatingText('STANDING WATCH', window.innerWidth / 2, window.innerHeight / 2 - 60, '#8888bb', 18);
         endEnemyTurn();
         return;
     }
@@ -11186,7 +11289,7 @@ function executeEnemyAttack(enemy) {
             } else if (enemy.stats.hp <= 0) {
                 logCombat("Enemy defeated by counter!", '#ffd700');
                 spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
-                spawnCorpse(enemy);
+                checkCombatEnd(enemy);
             } else {
                 endEnemyTurn();
             }

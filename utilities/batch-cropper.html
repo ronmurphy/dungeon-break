@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Image Cropper</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; background: #222; color: #eee; }
+        h1 { color: #d4af37; }
+        #drop-zone {
+            border: 2px dashed #666; padding: 40px; text-align: center;
+            margin-bottom: 20px; background: #333; color: #aaa; cursor: pointer;
+            border-radius: 8px; transition: all 0.2s;
+        }
+        #drop-zone.hover { border-color: #fff; color: #fff; background: #444; }
+        #workspace { display: none; margin-top: 20px; }
+        #editor-wrapper {
+            position: relative; display: inline-block;
+            border: 1px solid #555; user-select: none;
+            max-width: 100%;
+            box-shadow: 0 0 20px #000;
+        }
+        #master-image { display: block; max-width: 100%; pointer-events: none; }
+        #crop-selection {
+            position: absolute; border: 2px solid #00ff00;
+            background: rgba(0, 255, 0, 0.15); display: none;
+            pointer-events: none; /* Let mouse events pass to wrapper for drawing */
+        }
+        #controls { margin-top: 20px; padding: 20px; background: #333; border-radius: 8px; }
+        button {
+            padding: 12px 24px; background: #d4af37; color: #000;
+            border: none; cursor: pointer; font-size: 16px; font-weight: bold;
+            border-radius: 4px;
+        }
+        button:hover { background: #fff; }
+        #file-list { margin-top: 20px; color: #888; font-size: 14px; }
+        .status { margin-top: 10px; color: #ffd700; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<h1>Batch Image Cropper</h1>
+<div id="drop-zone">Drag & Drop Images Here<br><small>(First image sets the template)</small></div>
+
+<div id="workspace">
+    <div style="margin-bottom: 10px;">Draw a box on the image below to define the crop area:</div>
+    <div id="editor-wrapper">
+        <img id="master-image">
+        <div id="crop-selection"></div>
+    </div>
+    
+    <div id="controls">
+        <div style="margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px solid #555; display: flex; gap: 20px; flex-wrap: wrap; align-items: center;">
+            <label title="Resize the image in this editor (does not affect output quality)">
+                View Size: <input type="range" id="view-zoom" min="10" max="100" value="100"> <span id="view-zoom-val" style="color:#d4af37; font-weight:bold; width:40px; display:inline-block;">100%</span>
+            </label>
+            <label title="Scale the final saved images">
+                Output Scale: <input type="number" id="output-scale" value="100" min="1" max="100" style="width: 60px; padding: 4px; background: #222; color: #fff; border: 1px solid #555;"> %
+            </label>
+        </div>
+        <button id="crop-save-btn">Crop & Save All</button>
+        <div class="status" id="status-msg"></div>
+        <div id="file-list"></div>
+    </div>
+</div>
+
+<script>
+    const dropZone = document.getElementById('drop-zone');
+    const workspace = document.getElementById('workspace');
+    const masterImage = document.getElementById('master-image');
+    const editorWrapper = document.getElementById('editor-wrapper');
+    const cropSelection = document.getElementById('crop-selection');
+    const fileList = document.getElementById('file-list');
+    const saveBtn = document.getElementById('crop-save-btn');
+    const statusMsg = document.getElementById('status-msg');
+    const viewZoom = document.getElementById('view-zoom');
+    const outputScaleInput = document.getElementById('output-scale');
+
+    let files = [];
+    let isDrawing = false;
+    let startX = 0;
+    let startY = 0;
+    let cropRect = { x: 0, y: 0, w: 0, h: 0 };
+
+    // Drag & Drop
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('hover');
+        handleFiles(e.dataTransfer.files);
+    });
+    dropZone.addEventListener('click', () => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.multiple = true;
+        input.accept = 'image/*';
+        input.onchange = (e) => handleFiles(e.target.files);
+        input.click();
+    });
+
+    function handleFiles(fileListObj) {
+        if (fileListObj.length === 0) return;
+        
+        // Convert to array
+        const newFiles = Array.from(fileListObj).filter(f => f.type.startsWith('image/'));
+        if (newFiles.length === 0) return;
+
+        // If it's the first load, setup master image
+        if (files.length === 0) {
+            const url = URL.createObjectURL(newFiles[0]);
+            masterImage.src = url;
+            masterImage.onload = () => {
+                workspace.style.display = 'block';
+                dropZone.style.display = 'none';
+            };
+        }
+
+        files = files.concat(newFiles);
+        fileList.innerHTML = `Loaded ${files.length} images ready for processing.`;
+    }
+
+    // View Zoom Logic
+    viewZoom.addEventListener('input', (e) => {
+        const val = e.target.value;
+        document.getElementById('view-zoom-val').innerText = val + '%';
+        masterImage.style.width = val + '%';
+        // Hide selection as coordinates are now invalid relative to new size
+        cropSelection.style.display = 'none';
+        cropRect = { x: 0, y: 0, w: 0, h: 0 };
+    });
+
+    // Crop Drawing Logic
+    editorWrapper.addEventListener('mousedown', (e) => {
+        isDrawing = true;
+        const rect = editorWrapper.getBoundingClientRect();
+        startX = e.clientX - rect.left;
+        startY = e.clientY - rect.top;
+        
+        cropSelection.style.left = startX + 'px';
+        cropSelection.style.top = startY + 'px';
+        cropSelection.style.width = '0px';
+        cropSelection.style.height = '0px';
+        cropSelection.style.display = 'block';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDrawing) return;
+        const rect = editorWrapper.getBoundingClientRect();
+        let currentX = e.clientX - rect.left;
+        let currentY = e.clientY - rect.top;
+
+        // Clamp to image bounds
+        currentX = Math.max(0, Math.min(currentX, rect.width));
+        currentY = Math.max(0, Math.min(currentY, rect.height));
+
+        const width = currentX - startX;
+        const height = currentY - startY;
+
+        const left = width < 0 ? currentX : startX;
+        const top = height < 0 ? currentY : startY;
+        const w = Math.abs(width);
+        const h = Math.abs(height);
+
+        cropSelection.style.left = left + 'px';
+        cropSelection.style.top = top + 'px';
+        cropSelection.style.width = w + 'px';
+        cropSelection.style.height = h + 'px';
+
+        // Store relative coords for processing
+        cropRect = { x: left, y: top, w: w, h: h };
+    });
+
+    window.addEventListener('mouseup', () => {
+        isDrawing = false;
+    });
+
+    // Save Logic
+    saveBtn.addEventListener('click', async () => {
+        if (cropRect.w === 0 || cropRect.h === 0) {
+            alert("Please draw a crop area first.");
+            return;
+        }
+
+        statusMsg.innerText = "Processing...";
+        
+        const outScale = Math.max(1, Math.min(100, parseInt(outputScaleInput.value) || 100)) / 100;
+        
+        // Calculate scale factor (Natural size vs Displayed size)
+        const scaleX = masterImage.naturalWidth / masterImage.clientWidth;
+        const scaleY = masterImage.naturalHeight / masterImage.clientHeight;
+
+        const finalCrop = {
+            x: cropRect.x * scaleX,
+            y: cropRect.y * scaleY,
+            w: cropRect.w * scaleX,
+            h: cropRect.h * scaleY
+        };
+
+        let processed = 0;
+
+        for (const file of files) {
+            await processFile(file, finalCrop, outScale);
+            processed++;
+            statusMsg.innerText = `Saved ${processed} / ${files.length}`;
+            // Small delay to prevent browser choking on downloads
+            await new Promise(r => setTimeout(r, 200));
+        }
+        
+        statusMsg.innerText = "Done! Check your downloads folder.";
+    });
+
+    function processFile(file, crop, outScale) {
+        return new Promise((resolve) => {
+            const img = new Image();
+            const url = URL.createObjectURL(file);
+            img.src = url;
+            img.onload = () => {
+                const outW = Math.round(crop.w * outScale);
+                const outH = Math.round(crop.h * outScale);
+
+                const canvas = document.createElement('canvas');
+                canvas.width = outW;
+                canvas.height = outH;
+                const ctx = canvas.getContext('2d');
+
+                // Draw cropped portion, scaled to output size
+                ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, outW, outH);
+
+                canvas.toBlob((blob) => {
+                    const a = document.createElement('a');
+                    // Insert -cropped before the extension
+                    const newName = file.name.replace(/(\.[\w\d_-]+)$/i, '-cropped$1');
+                    a.download = newName;
+                    a.href = URL.createObjectURL(blob);
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    resolve();
+                }, file.type);
+            };
+        });
+    }
+</script>
+
+</body>
+</html>

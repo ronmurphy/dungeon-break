@@ -1399,7 +1399,7 @@ const COMBAT_PAGES = {
         { name: 'Item', icon: 'icon_item.png', fn: "window.openItemsMenu()" },
         { name: 'Defend', icon: 'icon_defend.png', fn: "window.commandDefend()" },
         { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
-        { name: 'Analyze', icon: 'icon_analyze.png', fn: "console.log('Analyze')" },
+        { name: 'Analyze', icon: 'icon_analyze.png', fn: "window.commandAnalyze()" },
         { name: 'Wait', icon: 'icon_wait.png', fn: "window.commandWait()" },
         { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
         { name: 'Tactics', icon: 'icon_tactics.png', fn: "window.openTacticsMenu()" }
@@ -1408,7 +1408,8 @@ const COMBAT_PAGES = {
         { name: 'Dash', icon: 'icon_tactics.png', fn: "window.commandDash()" },
         { name: 'Shove', icon: 'icon_attack.png', fn: "window.commandShove()" },
         { name: 'Guts', icon: 'icon_skill.png', fn: "window.commandGuts()" },
-        null, null, null, null, null,
+        { name: 'Feint', icon: 'icon_analyze.png', fn: "window.commandFeint()" },
+        null, null, null, null,
         { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" }
     ]
 };

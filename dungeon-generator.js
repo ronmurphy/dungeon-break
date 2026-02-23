@@ -7,9 +7,9 @@ export const THEMES = [
     { id: 1, name: 'Dirt',    tile: 1, sheet: 'assets/images/grass.png',     color: 0x3d2817, fogDensity: 0.05, hemiIntensity: 0.35, weather: 'dust' },
     { id: 2, name: 'Stone',   tile: 2, sheet: 'assets/images/mountains.png',  color: 0x222222, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'none' },
     { id: 3, name: 'Moss',    tile: 3, sheet: 'assets/images/grass.png',      color: 0x173d1a, fogDensity: 0.04, hemiIntensity: 0.36, weather: 'spore' },
-    { id: 4, name: 'Ancient', tile: 4, sheet: 'assets/images/mountains.png',  color: 0x3d173d, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'rain' },
-    { id: 5, name: 'Magma',   tile: 5, sheet: 'assets/images/mountains.png',  color: 0x3d1717, fogDensity: 0.06, hemiIntensity: 0.30, weather: 'ember' },
-    { id: 6, name: 'Ice',     tile: 6, sheet: 'assets/images/mountains.png',  color: 0x173d3d, fogDensity: 0.03, hemiIntensity: 0.42, weather: 'snow' },
+    { id: 4, name: 'Ancient', tile: 4, sheet: 'assets/images/ancient.png',  color: 0x3d173d, fogDensity: 0.05, hemiIntensity: 0.34, weather: 'rain' },
+    { id: 5, name: 'Magma',   tile: 5, sheet: 'assets/images/magma.png',  color: 0x3d1717, fogDensity: 0.06, hemiIntensity: 0.30, weather: 'ember' },
+    { id: 6, name: 'Ice',     tile: 6, sheet: 'assets/images/ice.png',  color: 0x173d3d, fogDensity: 0.03, hemiIntensity: 0.42, weather: 'snow' },
     { id: 7, name: 'Abyss',   tile: 7, sheet: null,                           color: 0x050505, fogDensity: 0.07, hemiIntensity: 0.22, weather: 'void' },
     { id: 8, name: 'Bone',    tile: 8, sheet: null,                           color: 0x3d3517, fogDensity: 0.04, hemiIntensity: 0.36, weather: 'dust' },
     { id: 9, name: 'Ruins',   tile: 9, sheet: null,                           color: 0x282222, fogDensity: 0.035, hemiIntensity: 0.38, weather: 'rain' },
@@ -563,13 +563,14 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     // Create material
     const floorMaterial = new THREE.MeshStandardMaterial({
         map: blockTex,
-        color: textureOverride ? theme.color : 0xffffff,
+        color: 0xffffff,
         roughness: 0.9,
         metalness: 0.1,
         side: THREE.FrontSide,  // Only render front faces
-        emissive: emissiveColor,
-        emissiveIntensity: emissiveIntensity,
+        emissive: textureOverride ? theme.color : emissiveColor,
+        emissiveIntensity: textureOverride ? 0.35 : emissiveIntensity,
         transparent: !!textureOverride,
+        alphaTest: textureOverride ? 0.05 : 0,
         opacity: 1.0
     });
 
