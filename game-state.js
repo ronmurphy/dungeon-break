@@ -163,7 +163,9 @@ export const game = {
     enemiesDefeated: 0,
     brokerPhase: 0,
     level: 1,
-    xp: 0
+    xp: 0,
+    seed: 1,
+    useBSP: false
 };
 window.game = game;
 

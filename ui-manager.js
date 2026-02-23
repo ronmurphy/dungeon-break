@@ -39,6 +39,7 @@ export function logMsg(m) {
 export function showManorPrompt() {
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
+    overlay.style.pointerEvents = 'auto';
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'none';
 
@@ -67,6 +68,7 @@ export function showManorPrompt() {
 export function showAzureFlamePrompt() {
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
+    overlay.style.pointerEvents = 'auto';
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'none';
 
@@ -90,6 +92,38 @@ export function showAzureFlamePrompt() {
                 <span style="color:#44aaff;">Restore Fuel</span>
             </button>
             <button class="v2-btn" onclick="window.handleAzureFlameChoice('leave')" style="background:#444; margin-top:20px;">Leave</button>
+        </div>
+    `;
+}
+
+export function showFountainPrompt(room) {
+    const overlay = document.getElementById('combatModal');
+    overlay.style.display = 'flex';
+    overlay.style.pointerEvents = 'auto';
+    document.getElementById('combatContainer').style.display = 'none';
+    document.getElementById('bonfireUI').style.display = 'none';
+
+    let trapUI = document.getElementById('trapUI');
+    if (!trapUI) {
+        trapUI = document.createElement('div');
+        trapUI.id = 'trapUI';
+        document.body.appendChild(trapUI);
+    }
+    trapUI.style.display = 'flex';
+
+    const missing = game.maxHp - game.hp;
+    trapUI.innerHTML = `
+        <h2 style="font-family:'Cinzel'; font-size:3rem; color:#44ffaa; text-shadow:0 0 30px #00cc88, 0 0 60px #008855; margin-bottom:20px;">HEALING FOUNTAIN</h2>
+        <div style="font-style:italic; margin-bottom:40px; color:#aaa; text-align:center; max-width:400px;">
+            Crystal-clear water wells up from deep stone. The air smells of moss and forgotten things.<br>
+            <span style="color:#88ffcc;">It calls to your wounds.</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:15px; width:320px;">
+            <button class="v2-btn trap-option-btn" onclick="window.handleFountainChoice('drink')">
+                <span>Drink Deep</span>
+                <span style="color:#44ffaa;">Restore ${missing > 0 ? missing + ' HP' : 'Full HP'}</span>
+            </button>
+            <button class="v2-btn" onclick="window.handleFountainChoice('leave')" style="background:#444; margin-top:20px;">Leave</button>
         </div>
     `;
 }
@@ -1137,7 +1171,8 @@ window.toggleInventory = function () {
     const modal = document.getElementById('inventoryModal');
     if (modal.style.display === 'flex') {
         modal.style.display = 'none';
-        updateUI(); // Refresh UI to show the map HUD again
+        if (window.saveGame) window.saveGame(); // persist inventory changes
+        updateUI();
     } else {
         modal.style.display = 'flex';
         updateUI();

@@ -20,13 +20,48 @@ import { CombatResolver, DND_CONFIG, DiceRoller } from './dnd-mechanics.js';
 import { CardDesigner } from './card-designer.js';
 import { CombatManager } from './combat-manager.js';
 import BattleIsland, { createBattleIsland, addArenaWalls } from './battle-island.js';
-import { generateDungeon, generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
+import { generateDungeon as _generateDungeon, generateFloorCA as _generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
+import { generateBSPFloor } from './bsp-dungeon.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getWeaponName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
-import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, updateInitStrip } from './ui-manager.js';
+import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, showFountainPrompt, updateInitStrip } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
-import { createHelixCA, addHelixWalls } from './helix-ca.js';
+// import { createHelixCA, addHelixWalls } from './helix-ca.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
+
+// ─── Seeded RNG ─────────────────────────────────────────────────────────────
+// mulberry32 — fast, small, excellent distribution
+function _rngMulberry32(seed) {
+    return function () {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+}
+
+// Temporarily swap Math.random with a seeded RNG, run fn, then restore
+function withSeededRandom(seed, fn) {
+    const rng = _rngMulberry32(seed >>> 0);
+    const orig = Math.random;
+    Math.random = rng;
+    try { return fn(); }
+    finally { Math.random = orig; }
+}
+
+// Derive a stable seed for a given floor from the master game seed
+function floorSeed(floor) {
+    return (((game.seed || 1) >>> 0) * 1000003 + ((floor || 1) >>> 0) * 7919) >>> 0;
+}
+
+// Seeded wrappers — all existing call sites are covered automatically
+function generateDungeon(...args) {
+    return withSeededRandom(floorSeed(args[0]), () => _generateDungeon(...args));
+}
+function generateFloorCA(...args) {
+    return withSeededRandom(floorSeed(args[1]), () => _generateFloorCA(...args));
+}
+// ────────────────────────────────────────────────────────────────────────────
 
 const INTRO_STORY_DEFAULTS = [
     "The entrance to the Gilded Depths looms before you. Legends say a great Guardian protects the treasures within.",
@@ -142,6 +177,11 @@ window.exitBattleIsland = function () {
 // spawnPet is a hoisted function declared later — expose now so console commands work immediately
 window.spawnPet = function (...args) { return spawnPet(...args); };
 
+// Expose live state objects to console for inspection
+// Using getters so reassignment of combatState is always reflected
+Object.defineProperty(window, 'game',         { get: () => game,        configurable: true });
+Object.defineProperty(window, 'combatState',  { get: () => combatState, configurable: true });
+
 // Debug helpers — available immediately from browser console
 window.debugIntermission = function (floor = 1, coins = 300) {
     game.floor      = floor;
@@ -154,6 +194,63 @@ window.debugIntermission = function (floor = 1, coins = 300) {
 };
 window.debugBoss         = function () { game.isBossFight = false; startBossEncounter(); };
 window.debugHelix        = function (floor = 1) { game.floor = floor; if (!game.classId) game.classId = 'knight'; closeCombat(); enterHelixZone(); };
+window.testDungeon       = function (floor = 1) {
+    // Drop straight into a BSP dungeon — no class select, no intro
+    if (!game.classId) game.classId = 'scoundrel';
+    if (!game.stats)   game.stats   = { str: 2, dex: 2, int: 2, lck: 2 };
+    if (!game.maxHp)   { game.maxHp = 20; game.hp = 20; }
+    game.floor = floor;
+    game.seed  = (Math.random() * 0xFFFFFFFF | 0) >>> 0 || 1;
+    game.deck  = createDeck();
+    game.currentRoomIdx = 0;
+    game.isBossFight = false;
+    game.visitedWaypoints = [];
+    isAttractMode = false;
+    game.useBSP = true;
+    closeCombat();
+    clear3DScene(); init3D(); preloadFXTextures();
+    const bsp = generateBSPFloor(scene, floor, _rngMulberry32(floorSeed(floor)), loadTexture, getClonedTexture);
+    game.rooms = bsp.rooms;
+    globalFloorMesh = bsp.mesh;
+    bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+    spawnBSPDoors(bsp.doorPositions);
+    updateAtmosphere(floor);
+    initWanderers();
+    updateUI();
+    enterRoom(0);
+    console.log(`%c[testDungeon] Floor ${floor} — ${game.rooms.filter(r=>!r.isWaypoint).length} rooms`, 'color:#d4af37;font-weight:bold');
+};
+
+window.help = function() {
+    const g = 'color:#d4af37;font-weight:bold;font-size:13px';
+    const w = 'color:#ffffff;font-weight:bold';
+    const d = 'color:#aaaaaa';
+    const h = 'color:#88ccff';
+    console.log('%c╔══════════════════════════════════════════════════════╗', g);
+    console.log('%c  DUNGEON BREAK — Console Commands', g);
+    console.log('%c╚══════════════════════════════════════════════════════╝', g);
+    console.log('%c\n── Development / Testing ─────────────────────────────', h);
+    console.log('%ctestDungeon%c(floor=1)        %cdrop into a BSP dungeon, skips class select', w, d, d);
+    console.log('%cdebugBoss%c()                 %cstart boss encounter immediately', w, d, d);
+    console.log('%cdebugIntermission%c(floor,coins)  %cjump to floor intermission', w, d, d);
+    console.log('%cdebugHelix%c(floor=1)         %ctrigger helix zone descent', w, d, d);
+    console.log('%cdebugUIFXState%c()            %cdump UI FX state to console', w, d, d);
+    console.log('%cdebugTriggerZones%c()         %cvisualise trigger zone spheres', w, d, d);
+    console.log('%c\n── Scene / Editor ────────────────────────────────────', h);
+    console.log('%creloadScene%c()               %creload current 3D scene from scratch', w, d, d);
+    console.log('%ceditmap%c(true/false)         %ctoggle placement editor mode', w, d, d);
+    console.log('%cspawnGallery%c()              %cspawn model gallery for editor', w, d, d);
+    console.log('%csetAnimSpeed%c(speed)         %coverride animation speed  (default 1.0)', w, d, d);
+    console.log('%cshowVisuals%c(true/false)     %ctoggle visual debug overlays', w, d, d);
+    console.log('%cshowWandererDebug%c(true/false) %cenemy AI debug info', w, d, d);
+    console.log('%ctestmfglb%c(filename)         %ctest-load a GLB into the scene', w, d, d);
+    console.log('%c\n── Gameplay (in-game) ────────────────────────────────', h);
+    console.log('%cspawnPet%c()                  %cspawn your pet companion', w, d, d);
+    console.log('%c\n── Also available ────────────────────────────────────', h);
+    console.log('%cgame%c                        %cthe live game state object', w, d, d);
+    console.log('%ccombatState%c                 %cthe live combat state object', w, d, d);
+    console.log('%c\n', d);
+};
 
 // Store player pos before teleporting to Battle Island
 let playerMoveTween = null; // Track movement tween to stop it during combat
@@ -268,13 +365,63 @@ const GALLERY_MODELS = [
     'Whispering_Manor-web.glb',
     'Whispering_Obelisk-marker-web.glb',
     'duck-web.glb',
-    'Stone_Wat-web.glb'
+    'Stone_Wat-web.glb',
+    'dungeon/dungeon-exit-web.glb', 'dungeon/dungeon-fountain-web.glb', 'dungeon/dungeon-holder-web.glb', 'dungeon/dungeon-obelisk-web.glb', 'dungeon/dungeon-plantir-web.glb'
 ];
 
 const terrainRaycaster = new THREE.Raycaster();
 const collisionRaycaster = new THREE.Raycaster(); // New raycaster for walls/obstacles
 
 let globalFloorMesh = null; // Reference for terrain manipulation
+let bspGrid = null, bspCols = 0, bspRows = 0; // BSP tile grid for wall collision
+
+function isBSPWallAt(wx, wz) {
+    if (!bspGrid) return false;
+    const col = Math.round(wx + bspCols / 2);
+    const row = Math.round(wz + bspRows / 2);
+    if (col < 0 || col >= bspCols || row < 0 || row >= bspRows) return true;
+    return bspGrid[row][col] === 3; // TILE_WALL
+}
+
+// Bresenham grid scan — returns true if a TILE_WALL tile lies between fromPos and toPos
+function bspWallBlocksLOS(fromPos, toPos) {
+    if (!bspGrid) return false;
+    let x0 = Math.round(fromPos.x + bspCols / 2);
+    let y0 = Math.round(fromPos.z + bspRows / 2);
+    const x1 = Math.round(toPos.x + bspCols / 2);
+    const y1 = Math.round(toPos.z + bspRows / 2);
+    const dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy;
+    const startX = x0, startY = y0;
+    while (true) {
+        // Skip origin tile; check everything in between (stop before destination)
+        if ((x0 !== startX || y0 !== startY) && (x0 !== x1 || y0 !== y1)) {
+            if (x0 < 0 || x0 >= bspCols || y0 < 0 || y0 >= bspRows) return true;
+            if (bspGrid[y0][x0] === 3) return true; // TILE_WALL blocks LOS
+        }
+        if (x0 === x1 && y0 === y1) break;
+        const e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x0 += sx; }
+        if (e2 < dx) { err += dx; y0 += sy; }
+    }
+    return false;
+}
+
+function spawnBSPDoors(doorPositions) {
+    if (!doorPositions || !doorPositions.length) return;
+    doorPositions.forEach(dp => {
+        const container = new THREE.Object3D();
+        container.position.set(dp.x, 0, dp.z);
+        scene.add(container);
+        loadGLB('assets/images/glb/door-web.glb', (model) => {
+            const box = new THREE.Box3().setFromObject(model);
+            model.position.y = -box.min.y;
+            model.rotation.y = dp.rotY;
+            container.add(model);
+        }, 1.0, 'door-web.glb');
+    });
+}
 // Audio State
 const audio = new SoundManager();
 const magicFX = new MagicCircleFX();
@@ -1267,14 +1414,14 @@ function init3D() {
     perspectiveCamera = new THREE.PerspectiveCamera(60, aspect, 0.1, 1000); // Devin's Camera
 
     controls = new OrbitControls(camera, renderer.domElement);
-    controls.enablePan = true;
+    controls.enablePan = false;   // Dungeon default: camera follows player, no manual panning
     controls.enableRotate = true; // Restore spinning for Map View
     controls.maxZoom = 2;
     controls.minZoom = 0.5;
     controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE, // Left click rotates (spins)
         MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: THREE.MOUSE.PAN    // Right click pans
+        RIGHT: THREE.MOUSE.ROTATE // Right click also rotates (pan removed)
     };
 
     raycaster = new THREE.Raycaster();
@@ -1696,6 +1843,7 @@ function pickWandererTarget(wanderer) {
                     const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
 
                     let stop = false;
+                    if (game.useBSP && isBSPWallAt(aheadPos.x, aheadPos.z)) stop = true;
                     if (aheadHits.length > 0) {
                         const nextY = aheadHits[0].point.y;
                         if (Math.abs(nextY - currentY) > 1.5) stop = true; // Wall or Cliff
@@ -1711,6 +1859,7 @@ function pickWandererTarget(wanderer) {
                         let landY = null;
                         for (let scanD = lookAheadDist + 0.3; scanD <= lookAheadDist + maxScan; scanD += 0.3) {
                             const farPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(scanD));
+                            if (game.useBSP && isBSPWallAt(farPos.x, farPos.z)) break; // Wall tile — can't jump through
                             terrainRaycaster.set(new THREE.Vector3(farPos.x, rayOriginHeight, farPos.z), down);
                             const farHits = terrainRaycaster.intersectObject(targetMesh, true);
                             if (farHits.length > 0) {
@@ -2175,7 +2324,7 @@ function on3DClick(event, isRightClick = false) {
                 }
 
                 // Self-Interaction (Trap, Bonfire, Merchant, Locked) - Allow re-triggering if we are in the room
-                if (current && current.id === roomIdx && (current.isTrap || current.isBonfire || current.isSpecial || current.isLocked)) {
+                if (current && current.id === roomIdx && (current.isTrap || current.isBonfire || current.isSpecial || current.isLocked || current.isFountain)) {
                     enterRoom(roomIdx);
                     break;
                 }
@@ -2376,6 +2525,58 @@ function update3DScene() {
             */
             if (!roomMeshes.has(r.id)) {
                 if (r.isWaypoint) return; // Skip waypoints
+
+                // ── BSP dungeon markers ───────────────────────────────────────
+                if (game.useBSP) {
+                    if (r.isVanished) return;
+                    let modelPath = null, modelScale = 1.0;
+                    if (r.id === 0) {
+                        modelPath = 'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb'; modelScale = 1.0;
+                    } else if (r.isFinal) {
+                        modelPath = 'assets/images/glb/dungeon/dungeon-exit-web.glb'; modelScale = 1.5;
+                    } else if (r.isFountain && !r.fountainUsed) {
+                        modelPath = 'assets/images/glb/dungeon/dungeon-fountain-web.glb'; modelScale = 1.0;
+                    } else if (r.isBonfire) {
+                        modelPath = 'assets/images/glb/dungeon/dungeon-obelisk-web.glb'; modelScale = 1.0;
+                    } else if (r.isSpecial) {
+                        modelPath = 'assets/images/glb/dungeon/dungeon-plantir-web.glb'; modelScale = 1.0;
+                    } else if (r.isAlchemy) {
+                        modelPath = 'assets/images/glb/Arcane_Altar-marker-web.glb'; modelScale = 0.8;
+                    } else if (r.isTrap) {
+                        modelPath = (r.id % 2 === 0) ? 'assets/images/glb/Warden_Cube-marker-web.glb' : 'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb'; modelScale = 0.8;
+                    } else if (r.isLocked) {
+                        modelPath = 'assets/images/glb/dungeon/dungeon-holder-web.glb'; modelScale = 1.0;
+                    } else {
+                        return; // Regular rooms — no marker
+                    }
+                    const geo = new THREE.BoxGeometry(0.5, 1.5, 0.5);
+                    const mat = new THREE.MeshStandardMaterial({ visible: false });
+                    const mesh = new THREE.Mesh(geo, mat);
+                    mesh.position.set(r.gx, 0, r.gy);
+                    scene.add(mesh);
+                    const configKey = modelPath.split('/').pop();
+                    loadGLB(modelPath, (model) => {
+                        const box = new THREE.Box3().setFromObject(model);
+                        model.position.set(0, -box.min.y, 0);
+                        model.scale.setScalar(modelScale);
+                        mesh.add(model);
+                    }, modelScale, configKey);
+                    roomMeshes.set(r.id, mesh);
+                    const bspNeedsRing = (r.isFountain || r.isAlchemy || r.isSpecial || r.isTrap || r.isLocked || r.isBonfire || r.id === 0) && !r.isFinal;
+                    if (bspNeedsRing && !markerRings.has(r.id)) {
+                        const ringGeo = new THREE.PlaneGeometry(3, 3);
+                        const ringTex = loadTexture('assets/images/circle_04.png');
+                        const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
+                        const ring = new THREE.Mesh(ringGeo, ringMat);
+                        ring.rotation.x = -Math.PI / 2;
+                        ring.position.set(r.gx, 0.12, r.gy);
+                        scene.add(ring);
+                        markerRings.set(r.id, ring);
+                    }
+                    return;
+                }
+                // ── End BSP markers ───────────────────────────────────────────
+
                 if (r.isVanished) return; // Skip sunken manors
                 const rw = r.w; const rh = r.h;
                 const rDepth = 3.0 + Math.random() * 3.0;
@@ -2777,10 +2978,6 @@ function update3DScene() {
             */
         });
 
-        if (currentRoom && !isAttractMode && !isCombatView) {
-            const targetPos = new THREE.Vector3(currentRoom.gx, 0, currentRoom.gy);
-            controls.target.lerp(targetPos, 0.05);
-        }
     }
 }
 
@@ -3252,6 +3449,11 @@ function animate3D() {
                         }
                     }
 
+                    // BSP wall occlusion — clear sight if a wall tile crosses the line
+                    if (canSee && game.useBSP) {
+                        if (bspWallBlocksLOS(wandererPos, playerPos)) canSee = false;
+                    }
+
                     // State Machine
                     if (!wanderer.state) wanderer.state = 'patrol';
 
@@ -3684,6 +3886,12 @@ function movePlayerTo(targetVec, isRunning = false) {
                 const lookAheadDist = 0.5;
                 const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
+                // BSP wall collision — tile grid check is cheaper than raycasting
+                if (game.useBSP && isBSPWallAt(aheadPos.x, aheadPos.z)) {
+                    stopMovement();
+                    return;
+                }
+
                 terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
                 const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
 
@@ -3739,14 +3947,10 @@ function stopMovement() {
 }
 
 function updatePlayerMovement(dt) {
-    // Camera Follow Logic
+    // Camera Follow — player is always the orbit pivot; dungeon scrolls around them
     const playerObj = playerMesh;
     if (playerObj && !isAttractMode && !isCombatView && !inHelixZone) {
-        // Smoothly lerp camera target to player position (dungeon / on-map only)
-        // In helix zone the camera is a fixed island-overview; target must not drift.
-        controls.target.lerp(playerObj.position, 0.1);
-
-        // (helix zone: camera target stays on island centre, managed in enterHelixZone)
+        controls.target.copy(playerObj.position);
     }
 }
 
@@ -4060,6 +4264,7 @@ function clear3DScene() {
     savedPlayerPos.set(0, 0, 0);
     hiddenStaticMeshes = [];
     globalFloorMesh = null;
+    bspGrid = null; bspCols = 0; bspRows = 0;
 
     wanderers.forEach(w => {
         if (w.tween) w.tween.stop();
@@ -4306,13 +4511,14 @@ function finalizeStartDive() {
     game.maxHp = cData.hp;
 
     game.floor = 1; game.deck = createDeck();
+    game.seed = (Math.random() * 0xFFFFFFFF | 0) >>> 0 || 1; // unique seed per run
     game.level = 1; game.xp = 0;
     game.weapon = null; game.weaponDurability = Infinity; game.slainStack = [];
     game.soulCoins = 0; game.ap = 0; game.maxAp = 0;
     game.torchCharge = 20;
     game.equipment = { head: null, chest: null, hands: null, legs: null, weapon: null };
     game.backpack = new Array(24).fill(null); game.hotbar = new Array(6).fill(null);
-    game.rooms = generateDungeon(game.floor); game.currentRoomIdx = 0; game.lastAvoided = false;
+    game.currentRoomIdx = 0; game.lastAvoided = false;
     game.bonfireUsed = false; game.merchantUsed = false;
     game.currentTrack = null;
     game.visitedWaypoints = [];
@@ -4360,7 +4566,13 @@ function finalizeStartDive() {
     // Preload FX textures for particle effects
     preloadFXTextures();
 
-    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture); // Generate Atmosphere and Floor
+    // BSP dungeon for new game start
+    game.useBSP = true;
+    const bspNew = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
+    game.rooms = bspNew.rooms;
+    globalFloorMesh = bspNew.mesh;
+    bspGrid = bspNew.tileGrid; bspCols = bspNew.cols; bspRows = bspNew.rows;
+    spawnBSPDoors(bspNew.doorPositions);
 
     updateAtmosphere(game.floor);
 
@@ -4536,7 +4748,7 @@ function descendToNextFloor() {
     const ec = document.getElementById('enemyCounter'); if (ec) ec.style.display = 'none';
     game.floorKills = 0;
     game.floor++; closeCombat();
-    game.deck = createDeck(); game.rooms = generateDungeon(game.floor);
+    game.deck = createDeck();
     game.currentRoomIdx = 0; game.lastAvoided = false;
     game.bonfireUsed = false; game.merchantUsed = false;
     _azureFlameReadyAt = Date.now() + 6000; // 6s grace on floor entry — player drops onto the flame
@@ -4545,17 +4757,21 @@ function descendToNextFloor() {
     game.currentTrack = null; // Force music re-eval
     game.visitedWaypoints = [];
 
-    // Map Item Check
-    const hasMap = game.hotbar.some(i => i && i.type === 'item' && i.id === 3);
-    if (hasMap) {
-        game.rooms.forEach(r => r.isRevealed = true);
-    }
-
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
 
-    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    // BSP dungeon — seeded per floor so every load of the same floor is identical
+    game.useBSP = true;
+    const bsp = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
+    game.rooms = bsp.rooms;
+    globalFloorMesh = bsp.mesh;
+    bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+    spawnBSPDoors(bsp.doorPositions);
+
+    // Map Item: reveal all rooms
+    const hasMap = game.hotbar.some(i => i && i.type === 'item' && i.id === 3);
+    if (hasMap) game.rooms.forEach(r => r.isRevealed = true);
 
     updateAtmosphere(game.floor);
     // initWanderers();
@@ -4648,6 +4864,11 @@ function enterRoom(id) {
     if (room.isSpecial && room.state !== 'cleared') {
         game.activeRoom = room;
         showManorPrompt();
+        return;
+    }
+    if (room.isFountain && !room.fountainUsed) {
+        game.activeRoom = room;
+        showFountainPrompt(room);
         return;
     }
     if (room.isBonfire && room.state !== 'cleared') {
@@ -4851,7 +5072,8 @@ window.handleAzureFlameChoice = function(choice) {
     closeCombat();
 
     // Push player back regardless of choice — prevents re-triggering on both refuel and leave
-    {
+    // In BSP mode the room is surrounded by walls — skip push to avoid clipping through them
+    if (!game.useBSP) {
         const playerObj = playerMesh;
         const r = game.activeRoom;
         if (playerObj && r) {
@@ -4881,6 +5103,26 @@ window.handleAzureFlameChoice = function(choice) {
     // Grace period so the re-trigger can't fire until the slide finishes
     _azureFlameReadyAt = Date.now() + 2000;
     // Azure Flame marker is NEVER sunk/cleared — always present
+};
+
+window.handleFountainChoice = function(choice) {
+    const room = game.activeRoom;
+    closeCombat();
+    if (!room) return;
+    if (choice === 'drink') {
+        const healed = game.maxHp - game.hp;
+        game.hp = game.maxHp;
+        logMsg(`You drink from the fountain. Restored ${healed} HP.`);
+        spawnFloatingText(`+${healed} HP`, window.innerWidth / 2, window.innerHeight / 2, '#44ffaa', 36);
+        updateUI();
+    }
+    // Mark as used and remove the marker from scene
+    room.fountainUsed = true;
+    const mesh = roomMeshes.get(room.id);
+    if (mesh) { scene.remove(mesh); roomMeshes.delete(room.id); }
+    const ring = markerRings.get(room.id);
+    if (ring) { scene.remove(ring); markerRings.delete(room.id); }
+    saveGame();
 };
 
 // Tracker-row click targeting (3rd fallback after raycaster + proximity ray)
@@ -5564,6 +5806,7 @@ function _spawnHelixGuardian(worldPos, getIslandY) {
 function showHelixExitPrompt() {
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
+    overlay.style.pointerEvents = 'auto';
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'none';
 
@@ -5796,7 +6039,12 @@ function showCombat() {
         document.getElementById('modalAvoidBtn').style.display = 'none';
     } else {
         if (game.isBossFight) {
-            msgEl.innerText = "THE GUARDIAN AWAKENS!";
+            if (game.isBrokerFight) {
+                msgEl.innerText = "The Soul Broker";
+            } else {
+                const boss = combatState && combatState.enemies && combatState.enemies.find(e => e.isBoss);
+                msgEl.innerText = (boss && boss.stats && boss.stats.name) || "THE GUARDIAN AWAKENS!";
+            }
         } else
             if (game.combatCards[0] && game.combatCards[0].type === 'gift') {
                 msgEl.innerText = "Choose your blessing...";
@@ -6620,6 +6868,7 @@ function updateBonfireUI() {
 function showTrapUI() {
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
+    overlay.style.pointerEvents = 'auto';
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'none';
 
@@ -6963,6 +7212,19 @@ function setupLayout() {
         contBtn.onclick = loadGame;
         contBtn.style.width = '100%';
         controlBox.appendChild(contBtn);
+
+        const eraseBtn = document.createElement('button');
+        eraseBtn.className = 'v2-btn';
+        eraseBtn.innerText = "Erase Save";
+        eraseBtn.style.cssText = 'width:100%; margin-top:4px; font-size:0.75rem; background:#1a0000; border-color:#551111; color:#cc4444;';
+        eraseBtn.onclick = () => {
+            if (confirm('Erase your saved game? This cannot be undone.')) {
+                localStorage.removeItem('scoundrelSave');
+                contBtn.style.display = 'none';
+                eraseBtn.style.display = 'none';
+            }
+        };
+        controlBox.appendChild(eraseBtn);
     }
 
     // Add New Dive Button
@@ -7447,6 +7709,7 @@ window.changeHelpSlide = function (delta) {
 function initAttractMode() {
     console.log("Initializing Attract Mode...");
     isAttractMode = true;
+    game.useBSP = false;
 
     // Hide Control Box & Gameplay Options (Control box always hidden)
     const cb = document.querySelector('.control-box');
@@ -7511,6 +7774,7 @@ function initAttractMode() {
     if (combatArea) combatArea.style.display = 'none';
 
     game.floor = 1;
+    game.seed = (Math.random() * 0xFFFFFFFF | 0) >>> 0 || 1; // attract-mode seed (not saved)
     game.rooms = generateDungeon(1);
 
     preloadSounds(); // Start loading audio immediately
@@ -7539,8 +7803,14 @@ function hasSave() {
 function saveGame() {
     const data = {
         hp: game.hp, maxHp: game.maxHp, floor: game.floor,
+        seed: game.seed || 1,
+        playerX: playerMesh ? playerMesh.position.x : null,
+        playerZ: playerMesh ? playerMesh.position.z : null,
         soulCoins: game.soulCoins, ap: game.ap, maxAp: game.maxAp,
+        torchCharge: game.torchCharge || 0,
         stats: game.stats,
+        level: game.level || 1,
+        xp: game.xp || 0,
         playerName: game.playerName,
         sex: game.sex, classId: game.classId, mode: game.mode,
         isBossFight: game.isBossFight,
@@ -7548,9 +7818,10 @@ function saveGame() {
         currentRoomIdx: game.currentRoomIdx,
         bonfireUsed: game.bonfireUsed, merchantUsed: game.merchantUsed,
         floorKills: game.floorKills || 0,
+        enemiesDefeated: game.enemiesDefeated || 0,
         slainStack: game.slainStack,
         equipment: game.equipment,
-        weaponDurability: game.weaponDurability, // Save durability state
+        weaponDurability: game.weaponDurability,
         backpack: game.backpack,
         hotbar: game.hotbar,
         anvil: game.anvil,
@@ -7558,12 +7829,34 @@ function saveGame() {
         // Serialize Rooms (strip meshes)
         rooms: game.rooms.map(r => {
             const copy = { ...r };
-            delete copy.mesh; // Remove Three.js object
+            delete copy.mesh;
             return copy;
         })
     };
     localStorage.setItem('scoundrelSave', JSON.stringify(data));
-    console.log("Game Saved.");
+    showSaveIndicator();
+}
+
+function showSaveIndicator() {
+    let el = document.getElementById('saveIndicator');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'saveIndicator';
+        el.style.cssText = `
+            position:fixed; top:16px; right:16px;
+            background:rgba(0,0,0,0.88); border:1px solid #d4af37;
+            color:#d4af37; font-family:'Cinzel',serif; font-size:0.72rem;
+            padding:5px 14px; z-index:99999; border-radius:2px;
+            pointer-events:none; opacity:0;
+            transition:opacity 0.35s ease-in-out;
+            letter-spacing:2px;
+        `;
+        el.textContent = '💾  SAVED';
+        document.body.appendChild(el);
+    }
+    el.style.opacity = '1';
+    clearTimeout(el._hideTimer);
+    el._hideTimer = setTimeout(() => { el.style.opacity = '0'; }, 1800);
 }
 window.saveGame = saveGame;   // Expose for console debugging
 window.enterRoom = enterRoom; // Expose for console debugging
@@ -7613,23 +7906,30 @@ function loadGame() {
     init3D();
     preloadFXTextures();
 
-    // Re-Generate Floor Visuals (using loaded room data)
-    // Note: generateFloorCA uses game.rooms, which we just loaded
-    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    // All normal floors use BSP — ensure the flag is set even on old saves
+    game.useBSP = true;
+
+    // Re-generate floor mesh from BSP (seeded — always matches saved layout)
+    // game.rooms stays as loaded from save (preserves cleared/uncleared states)
+    const bspLoad = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
+    globalFloorMesh = bspLoad.mesh;
+    bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
+    spawnBSPDoors(bspLoad.doorPositions);
 
     updateAtmosphere(game.floor);
     initWanderers();
 
-    // Restore Player Position
+    // Restore Player Position — exact coords if saved, room centre as fallback
     const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
-    if (currentRoom) {
-        if (playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
+    const fallbackX = currentRoom ? currentRoom.gx : 0;
+    const fallbackZ = currentRoom ? currentRoom.gy : 0;
+    const px = (data.playerX != null) ? data.playerX : fallbackX;
+    const pz = (data.playerZ != null) ? data.playerZ : fallbackZ;
 
-        // Snap Camera
-        camera.position.set(20, 20, 20);
-        camera.lookAt(0, 0, 0);
-        controls.target.set(currentRoom.gx, 0, currentRoom.gy);
-    }
+    if (playerMesh) playerMesh.position.set(px, 0.1, pz);
+    camera.position.set(px + 20, 20, pz + 20);
+    camera.lookAt(px, 0, pz);
+    controls.target.set(px, 0, pz);
 
     // Start Audio
     updateMusicForFloor();
@@ -9092,19 +9392,18 @@ function exitCombatView() {
         roomMeshes.get(game.activeRoom.id).visible = true;
     }
 
-    // Restore camera
-    controls.enableRotate = true; // Restore rotation
-    controls.enablePan = true;
-    controls.autoRotate = false; // Stop spinning
-    controls.maxPolarAngle = Math.PI; // Reset vertical limit
+    // Restore camera — pan only during battle island stay, not after returning to dungeon
+    const wasIsland = inBattleIsland;
+    controls.enableRotate = true;
+    controls.enablePan = false; // Dungeon follows player; battle island sets its own pan in enterBossArena
+    controls.autoRotate = false;
+    controls.maxPolarAngle = Math.PI;
     controls.minDistance = 0;
     controls.maxDistance = Infinity;
-
-    // Restore default controls
     controls.mouseButtons = {
         LEFT: THREE.MOUSE.ROTATE,
         MIDDLE: THREE.MOUSE.DOLLY,
-        RIGHT: THREE.MOUSE.PAN
+        RIGHT: THREE.MOUSE.ROTATE
     };
 
     controls.target.copy(savedCamState.target);
@@ -9112,9 +9411,11 @@ function exitCombatView() {
 
     // Only snap the player back if we actually teleported to the Battle Island.
     // On-map combat leaves inBattleIsland = false, so we skip this.
-    if (inBattleIsland && playerMesh) {
+    if (wasIsland && playerMesh) {
         playerMesh.position.copy(savedPlayerPos);
         playerMesh.rotation.set(0, 0, 0);
+        inBattleIsland = false;
+        window.inBattleIsland = false;
     }
 
     // Optional: Tween Ortho camera back if we moved it, but we mostly moved Perspective camera.
@@ -9432,7 +9733,10 @@ window.reloadScene = function () {
     const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
     clear3DScene();
     init3D();
-    globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    const bspReload = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
+    globalFloorMesh = bspReload.mesh;
+    bspGrid = bspReload.tileGrid; bspCols = bspReload.cols; bspRows = bspReload.rows;
+    spawnBSPDoors(bspReload.doorPositions);
     updateAtmosphere(game.floor);
     if (currentRoom && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
 
