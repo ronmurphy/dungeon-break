@@ -26,6 +26,7 @@ import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDec
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, showFountainPrompt, updateInitStrip } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
 import { Pathfinder } from './pathfinding-mesh.js';
+import { Minimap } from './minimap.js';
 // import { createHelixCA, addHelixWalls } from './helix-ca.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -229,6 +230,7 @@ window.testDungeon       = function (floor = 1) {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     bspHeightGrid = bsp.heightGrid;
+    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bsp.doorPositions);
     spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
     createDungeonDustMotes();
@@ -587,7 +589,8 @@ let combatState = {
     enemies: [], // All active combatants (on-map multi-enemy support)
     activeEnemyIdx: 0, // Which enemy in the list is currently taking their turn
     distractionPoint: null, // Bard's Distract: enemies move here instead of the player for one round
-    siphonTurns: 0 // Necromancer's Siphon Life: attacks drain HP for N turns
+    siphonTurns: 0, // Necromancer's Siphon Life: attacks drain HP for N turns
+    tempHp: 0 // Temporary HP from Brace
 };
 
 let savedMapState = null; // For True Dungeon recursion
@@ -1941,10 +1944,23 @@ function initWanderers() {
 
 function getBSPHeightAt(wx, wz) {
     if (!bspHeightGrid) return 0;
-    const col = Math.round(wx + bspCols / 2);
-    const row = Math.round(wz + bspRows / 2);
-    if (col < 0 || col >= bspCols || row < 0 || row >= bspRows) return 0;
-    return bspHeightGrid[row][col];
+    
+    // Convert to grid coords (float)
+    const gx = wx + bspCols / 2;
+    const gz = wz + bspRows / 2;
+    
+    const c = Math.floor(gx);
+    const r = Math.floor(gz);
+    
+    // Bounds check (ensure we can access neighbors)
+    if (c < 0 || c >= bspCols - 1 || r < 0 || r >= bspRows - 1) return 0;
+    
+    // Bilinear Interpolation for smooth slopes
+    const fx = gx - c;
+    const fz = gz - r;
+    const h0 = bspHeightGrid[r][c] * (1 - fx) + bspHeightGrid[r][c+1] * fx;
+    const h1 = bspHeightGrid[r+1][c] * (1 - fx) + bspHeightGrid[r+1][c+1] * fx;
+    return h0 * (1 - fz) + h1 * fz;
 }
 
 function pickWandererTarget(wanderer) {
@@ -3910,6 +3926,11 @@ function animate3D() {
         // Bobbing handled by setting Y in on3DClick, or we can animate here if we track base Y
     }
 
+        // Update Minimap
+    if (playerObj && !isAttractMode && !isCombatView && !inHelixZone) {
+        Minimap.update(playerObj.position);
+    }
+
     // Ground Torch Glow — follows player, dims & shifts colour with torch fuel
     if (torchGlowOuter && playerObj) {
         const fuelPct = Math.max(0, Math.min(1, (game.torchCharge || 0) / 100));
@@ -4824,6 +4845,15 @@ function takeDamage(amount) {
     if (game.ap > protectionFloor) {
         // We have pool above the floor
         const availablePool = game.ap - protectionFloor;
+        
+        // Check Temp HP first (Brace)
+        if (combatState.tempHp > 0) {
+            const absorb = Math.min(combatState.tempHp, remaining);
+            combatState.tempHp -= absorb;
+            remaining -= absorb;
+            spawnHudFloatingText(`(${absorb} Absorbed)`, '#88aaff');
+        }
+
         const absorption = Math.min(availablePool, remaining);
         game.ap -= absorption;
         remaining -= absorption;
@@ -4948,6 +4978,7 @@ function clear3DScene() {
     if (destinationMarker) { scene.remove(destinationMarker); destinationMarker = null; }
     globalFloorMesh = null;
     bspGrid = null; bspHeightGrid = null; bspCols = 0; bspRows = 0;
+    Minimap.clear();
     dungeonDustMotes = null; // scene.remove already happened via while loop above
 
     wanderers.forEach(w => {
@@ -5258,6 +5289,7 @@ function finalizeStartDive() {
     globalFloorMesh = bspNew.mesh;
     bspGrid = bspNew.tileGrid; bspCols = bspNew.cols; bspRows = bspNew.rows;
     bspHeightGrid = bspNew.heightGrid;
+    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bspNew.doorPositions);
     spawnBSPDecorations(bspNew.decorations || [], bspNew.wallSheet);
     createDungeonDustMotes();
@@ -5458,6 +5490,7 @@ function descendToNextFloor() {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     bspHeightGrid = bsp.heightGrid;
+    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bsp.doorPositions);
     spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
     createDungeonDustMotes();
@@ -8176,6 +8209,7 @@ function setupLayout() {
 
     // 5. Force Resize to ensure 3D canvas fills the new full-width container
     window.dispatchEvent(new Event('resize'));
+    Minimap.init();
 }
 
 // --- OPTIONS & SETTINGS ---
@@ -8842,6 +8876,7 @@ function loadGame() {
     globalFloorMesh = bspLoad.mesh;
     bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
     bspHeightGrid = bspLoad.heightGrid;
+    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bspLoad.doorPositions);
     spawnBSPDecorations(bspLoad.decorations || [], bspLoad.wallSheet);
     createDungeonDustMotes();
@@ -10223,6 +10258,7 @@ function startCombat(wanderer, isFlankAttack = false) {
     combatState.gutsStacks = 0;
     combatState.distractionPoint = null;
     combatState.siphonTurns = 0;
+    combatState.tempHp = 0;
     updateSiphonBadge(); // Clear any leftover badge
 
     updateMovementIndicator();
@@ -10686,6 +10722,7 @@ window.reloadScene = function () {
     globalFloorMesh = bspReload.mesh;
     bspGrid = bspReload.tileGrid; bspCols = bspReload.cols; bspRows = bspReload.rows;
     bspHeightGrid = bspReload.heightGrid;
+    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bspReload.doorPositions);
     spawnBSPDecorations(bspReload.decorations || [], bspReload.wallSheet);
     createDungeonDustMotes();
@@ -10968,10 +11005,18 @@ function executePlayerSkill(target) {
                 pushDir.y = 0;
                 const newPos = target.mesh.position.clone().add(pushDir.multiplyScalar(1.5)); // Push 1.5m
                 
-                new TWEEN.Tween(target.mesh.position)
-                    .to({ x: newPos.x, z: newPos.z }, 300)
-                    .easing(TWEEN.Easing.Cubic.Out)
-                    .start();
+                // Wall Collision Check
+                if (game.useBSP && isBSPWallAt(newPos.x, newPos.z)) {
+                    msg = "Slammed into wall! +2 Dmg.";
+                    target.stats.hp -= 2;
+                    spawnFloatingText("WALL SLAM!", window.innerWidth/2, window.innerHeight/2, '#ffaa00');
+                    triggerShake(5, 10);
+                } else {
+                    new TWEEN.Tween(target.mesh.position)
+                        .to({ x: newPos.x, z: newPos.z }, 300)
+                        .easing(TWEEN.Easing.Cubic.Out)
+                        .start();
+                }
             } else {
                 msg = "Shove failed.";
                 spawnFloatingText("RESISTED", window.innerWidth/2, window.innerHeight/2, '#aaa');
@@ -11065,6 +11110,22 @@ function executePlayerSkill(target) {
             color = '#aa44ff';
             updateSiphonBadge();
             // No damage — pure buff (FX handled by spawnSkillFX)
+        }
+        else if (skill.id === 'trip') {
+            // DEX vs DEX (Use AC-10 as proxy for DEX)
+            const playerDex = (game.stats.dex || 1) + (game.equipment.weapon ? 1 : 0);
+            const enemyDex = Math.max(1, (target.stats.ac || 10) - 9); 
+            const res = CombatResolver.resolveClash(playerDex, enemyDex, 0, 0, _lck);
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x0088ff, { x: -1.5, y: -0.5 }, "Trip", () => {});
+            
+            if (res.attacker.total > res.defender.total) {
+                msg = "Trip successful! Enemy is Prone.";
+                target.stats.prone = true;
+                spawnFloatingText("TRIPPED!", window.innerWidth/2, window.innerHeight/2, '#ffffff');
+            } else {
+                msg = "Trip failed.";
+                spawnFloatingText("MISSED", window.innerWidth/2, window.innerHeight/2, '#aaa');
+            }
         }
         else {
             // Default fallback
@@ -11717,6 +11778,47 @@ window.commandDefend = function () {
     startEnemyTurn();
 };
 
+window.commandTaunt = function() {
+    if (combatState.turn !== 'player') return;
+    
+    // Taunt: Enemies become Enraged (-2 AC, +2 Damage)
+    // If pet exists, enemies target pet? For now, just the stat debuff/buff trade.
+    let count = 0;
+    combatState.enemies.forEach(e => {
+        if (e.stats && e.stats.hp > 0) {
+            e.stats.ac = Math.max(0, (e.stats.ac || 10) - 2);
+            e.stats.str = (e.stats.str || 1) + 2;
+            count++;
+        }
+    });
+    
+    spawnFloatingText("TAUNT!", window.innerWidth / 2, window.innerHeight / 2, '#ff4400');
+    logCombat(`Taunted ${count} enemies! They are Enraged (-2 AC, +2 STR).`, '#ff4400');
+    
+    // End turn
+    if (window.openMainMenu) window.openMainMenu();
+    setTimeout(startEnemyTurn, 500);
+};
+
+window.commandBrace = function() {
+    if (combatState.turn !== 'player') return;
+    combatState.tempHp = 5;
+    spawnFloatingText("BRACE!", window.innerWidth / 2, window.innerHeight / 2, '#88aaff');
+    logCombat("Braced for impact! (+5 Temp HP)", '#88aaff');
+    // End turn
+    if (window.openMainMenu) window.openMainMenu();
+    setTimeout(startEnemyTurn, 500);
+};
+
+window.commandTrip = function() {
+    if (combatState.turn !== 'player') return;
+    if (!combatState.canAttack) { logMsg("Cannot Trip after Dashing."); return; }
+    combatState.activeSkill = { id: 'trip', name: 'Trip' };
+    combatState.isTargeting = true;
+    spawnFloatingText("TRIP", window.innerWidth / 2, window.innerHeight / 2 - 150, '#d4af37');
+    logMsg("Select target to Trip.");
+};
+
 function startEnemyTurn() {
     combatState.turn = 'enemy';
     updateMovementIndicator(); // Hide player indicator
@@ -11762,6 +11864,15 @@ function startEnemyTurn() {
     if (enemy.stats.blinded) {
         spawnFloatingText("BLINDED!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffff88');
         logCombat(`${enemyDisplayName(enemy)} is blinded — stumbles helplessly!`, '#ffff88');
+        endEnemyTurn();
+        return;
+    }
+
+    // --- PRONE CHECK (Trip) ---
+    if (enemy.stats.prone) {
+        spawnFloatingText("PRONE!", window.innerWidth / 2, window.innerHeight / 2 + 60, '#ffff88');
+        logCombat(`${enemyDisplayName(enemy)} scrambles to stand up. (Turn skipped)`, '#ffff88');
+        delete enemy.stats.prone;
         endEnemyTurn();
         return;
     }
@@ -12123,6 +12234,7 @@ function endEnemyTurn() {
             combatState.canAttack = true;
             combatState.isDashing = false;
             combatState.isDefending = false;
+            combatState.tempHp = 0; // Clear brace
 
             // Pet heal — 35% chance at the start of the player's turn
             if (playerPet && playerPet.mesh && Math.random() < 0.35) {

@@ -1420,7 +1420,7 @@ const COMBAT_PAGES = {
         { name: 'Skill', icon: 'icon_skill.png', fn: "window.commandSkill()" },
         { name: 'Item', icon: 'icon_item.png', fn: "window.openItemsMenu()" },
         { name: 'Defend', icon: 'icon_defend.png', fn: "window.commandDefend()" },
-        { name: 'Equip', icon: 'icon_equip.png', fn: "console.log('Equip')" },
+        { name: 'Equip', icon: 'icon_equip.png', fn: "window.openEquipMenu()" },
         { name: 'Analyze', icon: 'icon_analyze.png', fn: "window.commandAnalyze()" },
         { name: 'Wait', icon: 'icon_wait.png', fn: "window.commandWait()" },
         { name: 'Flee', icon: 'icon_flee.png', fn: "window.exitBattleIsland()" },
@@ -1431,7 +1431,10 @@ const COMBAT_PAGES = {
         { name: 'Shove', icon: 'icon_attack.png', fn: "window.commandShove()" },
         { name: 'Guts', icon: 'icon_skill.png', fn: "window.commandGuts()" },
         { name: 'Feint', icon: 'icon_analyze.png', fn: "window.commandFeint()" },
-        null, null, null, null,
+        { name: 'Taunt', icon: 'icon_defend.png', fn: "window.commandTaunt()" },
+        { name: 'Brace', icon: 'icon_defend.png', fn: "window.commandBrace()" },
+        { name: 'Trip', icon: 'icon_attack.png', fn: "window.commandTrip()" },
+        null,
         { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" }
     ]
 };
@@ -1439,6 +1442,7 @@ const COMBAT_PAGES = {
 window.openTacticsMenu = () => updateCombatMenu('tactics');
 window.openMainMenu = () => updateCombatMenu('main');
 window.openItemsMenu = () => updateCombatMenu('items');
+window.openEquipMenu = () => updateCombatMenu('equip');
 
 function updateCombatMenu(pageName) {
     const menu = document.getElementById('combatMenuGrid');
@@ -1454,8 +1458,30 @@ function updateCombatMenu(pageName) {
                 const nameColor = item.type === 'potion' ? '#ff8888'
                     : item.type === 'active' ? '#ffcc44'
                     : '#aaaaaa';
-                items[i] = { name: item.name, icon: 'icon_item.png', fn: `window.commandUseItem(${i})`, nameColor };
+                // Use asset data for icon
+                const asset = getAssetData(item.type, item.val || item.id, item.suit);
+                items[i] = { name: item.name, asset: asset, fn: `window.commandUseItem(${i})`, nameColor };
             }
+        });
+        items[8] = { name: 'Back', icon: 'icon_flee.png', fn: 'window.openMainMenu()' };
+    } else if (pageName === 'equip') {
+        items = Array(9).fill(null);
+        const slots = ['head', 'chest', 'hands', 'legs', 'weapon'];
+        slots.forEach((slot, i) => {
+            const item = game.equipment[slot];
+            let name = slot.toUpperCase();
+            let nameColor = '#666';
+            let asset = null;
+            let icon = 'icon_equip.png';
+
+            if (item) {
+                name = item.name;
+                nameColor = '#fff';
+                asset = getAssetData(item.type, item.val || item.id, item.suit);
+            } else {
+                name = `(Empty ${slot})`;
+            }
+            items[i] = { name: name, icon: icon, asset: asset, fn: `window.commandEquipSlot('${slot}')`, nameColor: nameColor };
         });
         items[8] = { name: 'Back', icon: 'icon_flee.png', fn: 'window.openMainMenu()' };
     } else {
@@ -1488,8 +1514,18 @@ function updateCombatMenu(pageName) {
             if (act) {
                 btn.style.visibility = 'visible';
                 btn.onclick = () => { new Function(act.fn)(); };
+                
+                let iconHtml = '';
+                if (act.asset) {
+                    const bgSize = `${act.asset.sheetCount * 100}% 100%`;
+                    const bgPos = `${(act.asset.uv.u * act.asset.sheetCount) / (act.asset.sheetCount - 1) * 100}% 0%`;
+                    iconHtml = `<div style="width:48px; height:48px; margin-bottom:5px; background-image:url('assets/images/${act.asset.file}'); background-size:${bgSize}; background-position:${bgPos};"></div>`;
+                } else {
+                    iconHtml = `<img src="assets/images/ui/combat/${act.icon}" style="width:48px; height:48px; margin-bottom:5px;" onerror="this.style.display='none'">`;
+                }
+
                 btn.innerHTML = `
-                    <img src="assets/images/ui/combat/${act.icon}" style="width:48px; height:48px; margin-bottom:5px;" onerror="this.style.display='none'">
+                    ${iconHtml}
                     <span style="font-family:'Cinzel'; font-size:12px; color:${act.nameColor || '#ccc'};">${act.name}</span>
                 `;
             } else {
@@ -1639,6 +1675,42 @@ export function burnTrophy(idx) {
     updateUI();
     renderInventoryUI();
 }
+
+
+
+
+window.commandEquipSlot = function(slot) {
+    // Free action to swap gear
+    const currentItem = game.equipment[slot];
+    
+    // Find first compatible item in backpack
+    const backpackIdx = game.backpack.findIndex(i => i && i.type === (slot === 'weapon' ? 'weapon' : 'armor') && (slot === 'weapon' || i.slot === slot));
+    
+    if (backpackIdx !== -1) {
+        // Swap
+        const newItem = game.backpack[backpackIdx];
+        game.equipment[slot] = newItem;
+        game.backpack[backpackIdx] = currentItem; // Put old item in backpack (or null if empty)
+        logMsg(`Equipped ${newItem.name}.`);
+        spawnFloatingText("EQUIPPED", window.innerWidth/2, window.innerHeight/2, '#00ff00');
+    } else if (currentItem) {
+        // Unequip
+        if (addToBackpack(currentItem)) {
+            game.equipment[slot] = null;
+            logMsg(`Unequipped ${currentItem.name}.`);
+        } else {
+            spawnFloatingText("FULL!", window.innerWidth/2, window.innerHeight/2, '#ff0000');
+        }
+    } else {
+        spawnFloatingText("NO ITEM", window.innerWidth/2, window.innerHeight/2, '#aaaaaa');
+    }
+    
+    recalcAP();
+    updateCombatMenu('equip');
+    updateUI();
+};
+
+
 
 window.burnAllTrophies = function () {
     if (!game.slainStack || game.slainStack.length === 0) {
