@@ -1433,13 +1433,22 @@ const COMBAT_PAGES = {
         { name: 'Feint', icon: 'icon_analyze.png', fn: "window.commandFeint()" },
         { name: 'Taunt', icon: 'icon_defend.png', fn: "window.commandTaunt()" },
         { name: 'Brace', icon: 'icon_defend.png', fn: "window.commandBrace()" },
+        { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" },
+        null,
+        { name: 'Next >', icon: 'icon_flee.png', fn: "window.openTacticsPage2()" },
+    ],
+    tactics_2: [
         { name: 'Trip', icon: 'icon_attack.png', fn: "window.commandTrip()" },
         { name: '2nd Wind', icon: 'icon_wait.png', fn: "window.commandSecondWind()" },
+        null, null, null, null, 
+        { name: '< Prev', icon: 'icon_flee.png', fn: "window.openTacticsMenu()" },
+        null,
         { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" }
     ]
 };
 
 window.openTacticsMenu = () => updateCombatMenu('tactics');
+window.openTacticsPage2 = () => updateCombatMenu('tactics_2');
 window.openMainMenu = () => updateCombatMenu('main');
 window.openItemsMenu = () => updateCombatMenu('items');
 window.openEquipMenu = () => updateCombatMenu('equip');
