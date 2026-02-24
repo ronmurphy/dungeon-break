@@ -1434,7 +1434,7 @@ const COMBAT_PAGES = {
         { name: 'Taunt', icon: 'icon_defend.png', fn: "window.commandTaunt()" },
         { name: 'Brace', icon: 'icon_defend.png', fn: "window.commandBrace()" },
         { name: 'Trip', icon: 'icon_attack.png', fn: "window.commandTrip()" },
-        null,
+        { name: '2nd Wind', icon: 'icon_wait.png', fn: "window.commandSecondWind()" },
         { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" }
     ]
 };

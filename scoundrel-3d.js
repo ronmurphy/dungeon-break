@@ -11819,6 +11819,28 @@ window.commandTrip = function() {
     logMsg("Select target to Trip.");
 };
 
+window.commandSecondWind = function() {
+    if (combatState.turn !== 'player') return;
+    
+    const heal = Math.min(3, game.maxHp - game.hp);
+    game.hp += heal;
+    
+    let apMsg = "";
+    if (game.maxAp > 0) {
+        const apGain = Math.min(1, game.maxAp - game.ap);
+        game.ap += apGain;
+        if (apGain > 0) apMsg = `, +${apGain} AP`;
+    }
+    
+    spawnFloatingText("SECOND WIND", window.innerWidth / 2, window.innerHeight / 2, '#44ffaa');
+    logCombat(`Second Wind: Recovered ${heal} HP${apMsg}.`, '#44ffaa');
+    updateUI();
+    
+    // End turn
+    if (window.openMainMenu) window.openMainMenu();
+    setTimeout(startEnemyTurn, 500);
+};
+
 function startEnemyTurn() {
     combatState.turn = 'enemy';
     updateMovementIndicator(); // Hide player indicator
