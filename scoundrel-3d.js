@@ -274,14 +274,15 @@ window.goMap = function (map) {
         // Camp/town map: 3 fixed buildings, small flat terrain, 6 marker props
         game.rooms = generateCampRooms();
         game.campMap = true;
-        // bounds=27 gives 55×55 grid (~1/3 bigger than 41×41), elevation kept for terrain interest
-        globalFloorMesh = generateFloorCA(scene, floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 27, false);
+        // bounds=35 gives 71×71 grid — big enough for wanderers and marker spread
+        globalFloorMesh = generateFloorCA(scene, floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 35, false);
+        extractCAGrid(globalFloorMesh);
         updateAtmosphere(floor);
         initWanderers();
         updateUI();
         enterRoom(0);
 
-        // ── Place 6 marker GLBs at random spots in the camp ─────────────────
+        // ── Place 6 marker GLBs around the camp ──────────────────────────────
         const CAMP_MARKERS = [
             'assets/images/glb/Arcane_Altar-marker-web.glb',
             'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb',
@@ -290,19 +291,27 @@ window.goMap = function (map) {
             'assets/images/glb/Warden_Cube-marker-web.glb',
             'assets/images/glb/Whispering_Obelisk-marker-web.glb',
         ];
-        // Fixed spread positions (avoid room centres and map edges)
+        // Candidate positions — kept well inside bounds=35 so CA terrain exists;
+        // fall back to nearest walkable cell if the exact spot is void
         const MARKER_POSITIONS = [
-            { x: -14, z:  4 }, { x:  14, z: -4 },
-            { x:  -4, z: 14 }, { x:   4, z:-14 },
-            { x: -12, z: 12 }, { x:  12, z: 12 },
+            { x: -10, z:  5 }, { x:  10, z: -5 },
+            { x:  -5, z: 10 }, { x:   5, z:-10 },
+            { x:  -8, z: -8 }, { x:  10, z: 10 },
         ];
         CAMP_MARKERS.forEach((path, i) => {
-            const pos = MARKER_POSITIONS[i];
-            // Raycast terrain to find correct ground Y so markers sit on the surface
-            const campRay = new THREE.Raycaster();
-            campRay.set(new THREE.Vector3(pos.x, 50, pos.z), new THREE.Vector3(0, -1, 0));
-            const hits = globalFloorMesh ? campRay.intersectObject(globalFloorMesh) : [];
-            const groundY = hits.length > 0 ? hits[0].point.y : 0;
+            let pos = { ...MARKER_POSITIONS[i] };
+            // Walk outward from candidate until we hit a walkable cell
+            if (isCAVoidAt(pos.x, pos.z)) {
+                outer: for (let r = 0; r <= 6; r += 0.5) {
+                    for (let a = 0; a < Math.PI * 2; a += 0.4) {
+                        const tx = MARKER_POSITIONS[i].x + Math.cos(a) * r;
+                        const tz = MARKER_POSITIONS[i].z + Math.sin(a) * r;
+                        if (!isCAVoidAt(tx, tz)) { pos = { x: tx, z: tz }; break outer; }
+                    }
+                }
+            }
+            // Use CA height grid for ground Y — same as wanderers, no raycast needed
+            const groundY = getCAHeightAt(pos.x, pos.z);
 
             const anchor = new THREE.Mesh(
                 new THREE.BoxGeometry(0.5, 1.5, 0.5),
@@ -505,6 +514,7 @@ const collisionRaycaster = new THREE.Raycaster(); // New raycaster for walls/obs
 
 let globalFloorMesh = null; // Reference for terrain manipulation
 let bspGrid = null, bspHeightGrid = null, bspCols = 0, bspRows = 0; // BSP tile grid for wall collision
+let caGrid = null, caHeightGrid = null, caCols = 0, caRows = 0, caBoundsOffset = 0; // CA tile grid (mirrors BSP — avoids per-frame raycasting)
 
 function isBSPWallAt(wx, wz) {
     if (!bspGrid) return false;
@@ -520,6 +530,36 @@ function isBSPVoidAt(wx, wz) {
     const row = Math.round(wz + bspRows / 2);
     if (col < 0 || col >= bspCols || row < 0 || row >= bspRows) return true;
     return bspGrid[row][col] === 0; // TILE_EMPTY
+}
+
+// Extracts CA pathfinding grid from a freshly generated floor mesh's userData
+function extractCAGrid(mesh) {
+    if (!mesh || !mesh.userData.pathGrid) { caGrid = null; return; }
+    caGrid         = mesh.userData.pathGrid;
+    caHeightGrid   = mesh.userData.heightGrid;
+    caCols         = mesh.userData.gridWidth;
+    caRows         = mesh.userData.gridHeight;
+    caBoundsOffset = mesh.userData.boundsOffset;
+}
+
+// CA equivalents of isBSPVoidAt / getBSPHeightAt
+function isCAVoidAt(wx, wz) {
+    if (!caGrid) return true;
+    const col = Math.round(wx + caBoundsOffset);
+    const row = Math.round(wz + caBoundsOffset);
+    if (col < 0 || col >= caCols || row < 0 || row >= caRows) return true;
+    return caGrid[row][col] !== 1;
+}
+function getCAHeightAt(wx, wz) {
+    if (!caHeightGrid) return 0;
+    const gx = wx + caBoundsOffset;
+    const gz = wz + caBoundsOffset;
+    const c  = Math.floor(gx), r = Math.floor(gz);
+    if (c < 0 || c >= caCols - 1 || r < 0 || r >= caRows - 1) return 0;
+    const fx = gx - c, fz = gz - r;
+    const h0 = caHeightGrid[r][c]   * (1 - fx) + caHeightGrid[r][c+1]   * fx;
+    const h1 = caHeightGrid[r+1][c] * (1 - fx) + caHeightGrid[r+1][c+1] * fx;
+    return h0 * (1 - fz) + h1 * fz;
 }
 
 // Bresenham grid scan — returns true if a TILE_WALL tile lies between fromPos and toPos
@@ -1999,6 +2039,11 @@ function initWanderers() {
                         sy = getBSPHeightAt(sx, sz) + WANDERER_Y_LIFT;
                         valid = true;
                     }
+                } else if (caGrid) {
+                    if (!isCAVoidAt(sx, sz)) {
+                        sy = getCAHeightAt(sx, sz) + WANDERER_Y_LIFT;
+                        valid = true;
+                    }
                 } else if (globalFloorMesh) {
                     terrainRaycaster.set(new THREE.Vector3(sx, 50, sz), new THREE.Vector3(0, -1, 0));
                     const hits = terrainRaycaster.intersectObject(globalFloorMesh);
@@ -2109,8 +2154,10 @@ function pickWandererTarget(wanderer) {
         }
         if (nearCorr) continue;
 
-        // Raycast to ensure target is on the floor mesh
-        if (globalFloorMesh) {
+        // Validate target is on walkable floor — use grid if available, otherwise raycast
+        if (caGrid) {
+            if (!isCAVoidAt(x, z)) valid = true;
+        } else if (globalFloorMesh) {
             terrainRaycaster.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
             const hits = terrainRaycaster.intersectObject(globalFloorMesh);
             if (hits.length > 0) {
@@ -2149,9 +2196,12 @@ function pickWandererTarget(wanderer) {
                     
                     let currentY = wanderer.mesh.position.y;
 
-                    // OPTIMIZATION: In BSP mode, floor is flat at Y=0. Skip raycast.
+                    // OPTIMIZATION: Use grid when available, skip per-frame raycast
                     if (game.useBSP && targetMesh === globalFloorMesh) {
                         currentY = getBSPHeightAt(wanderer.mesh.position.x, wanderer.mesh.position.z) + WANDERER_Y_LIFT;
+                        if (!wanderer.isJumping) wanderer.mesh.position.y = currentY;
+                    } else if (caGrid && targetMesh === globalFloorMesh) {
+                        currentY = getCAHeightAt(wanderer.mesh.position.x, wanderer.mesh.position.z) + WANDERER_Y_LIFT;
                         if (!wanderer.isJumping) wanderer.mesh.position.y = currentY;
                     } else {
                         terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
@@ -2168,9 +2218,11 @@ function pickWandererTarget(wanderer) {
 
                     let stop = false;
 
-                    // OPTIMIZATION: Use grid check for BSP, raycast for others
+                    // OPTIMIZATION: Use grid check when available, raycast for others
                     if (game.useBSP && targetMesh === globalFloorMesh) {
                         if (isBSPWallAt(aheadPos.x, aheadPos.z) || isBSPVoidAt(aheadPos.x, aheadPos.z)) stop = true;
+                    } else if (caGrid && targetMesh === globalFloorMesh) {
+                        if (isCAVoidAt(aheadPos.x, aheadPos.z)) stop = true;
                     } else {
                         terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
                         const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
@@ -4677,10 +4729,13 @@ function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options
                 const rayOriginHeight = playerObj.position.y + 3.0; // Cast from above head
 
                 // 1. Ground Snapping
-                // OPTIMIZATION: Skip raycast in BSP mode (flat floor at Y=0)
+                // OPTIMIZATION: Use grid when available, skip raycast
                 let currentY = playerObj.position.y;
                 if (game.useBSP && targetMesh === globalFloorMesh) {
                     currentY = getBSPHeightAt(playerObj.position.x, playerObj.position.z) + offset;
+                    playerObj.position.y = currentY;
+                } else if (caGrid && targetMesh === globalFloorMesh) {
+                    currentY = getCAHeightAt(playerObj.position.x, playerObj.position.z) + offset;
                     playerObj.position.y = currentY;
                 } else {
                     terrainRaycaster.set(new THREE.Vector3(playerObj.position.x, rayOriginHeight, playerObj.position.z), down);
@@ -4698,9 +4753,14 @@ function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options
                 const lookAheadDist = 0.5;
                 const aheadPos = playerObj.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
-                // OPTIMIZATION: Use grid check for BSP
+                // OPTIMIZATION: Use grid check when available
                 if (game.useBSP && targetMesh === globalFloorMesh) {
                     if (isBSPWallAt(aheadPos.x, aheadPos.z) || isBSPVoidAt(aheadPos.x, aheadPos.z)) {
+                        stopMovement();
+                        return;
+                    }
+                } else if (caGrid && targetMesh === globalFloorMesh) {
+                    if (isCAVoidAt(aheadPos.x, aheadPos.z)) {
                         stopMovement();
                         return;
                     }
@@ -5098,6 +5158,7 @@ function clear3DScene() {
     if (destinationMarker) { scene.remove(destinationMarker); destinationMarker = null; }
     globalFloorMesh = null;
     bspGrid = null; bspHeightGrid = null; bspCols = 0; bspRows = 0;
+    caGrid = null; caHeightGrid = null; caCols = 0; caRows = 0; caBoundsOffset = 0;
     Minimap.clear();
     dungeonDustMotes = null; // scene.remove already happened via while loop above
 
@@ -8873,6 +8934,7 @@ function initAttractMode() {
 
     // Generate floor and atmosphere
     globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+    extractCAGrid(globalFloorMesh);
 
     updateAtmosphere(1);
 
@@ -9578,6 +9640,7 @@ window.enterTrueDungeon = function() {
 
         // Generate Flat Floor (True Dungeon Mode) with calculated bounds
         globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, bounds, true);
+        extractCAGrid(globalFloorMesh);
 
         updateAtmosphere(game.floor); // Will use floor 99 or 100 theme
         initWanderers();
@@ -9607,6 +9670,7 @@ window.exitTrueDungeon = function() {
 
     // Regenerate Original Floor (Not Flat)
     globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, null, false);
+    extractCAGrid(globalFloorMesh);
 
     updateAtmosphere(game.floor);
     initWanderers();

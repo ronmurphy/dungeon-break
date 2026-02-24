@@ -273,13 +273,13 @@ function insertWaypoints(r1, r2, allRooms) {
 export function generateCampRooms() {
     return [
         { id: 0, gx:  0, gy:  0, w: 8, h: 8, shape: 'rect', connections: [1, 2], state: 'normal',
-          isWaypoint: false, isFinal: false, isBonfire: false, isSpecial: false,
+          cards: [], isWaypoint: false, isFinal: false, isBonfire: false, isSpecial: false,
           isAlchemy: false, isTrap: false, isLocked: false, isVanished: false },
         { id: 1, gx: -9, gy: -9, w: 5, h: 5, shape: 'round', connections: [0, 2], state: 'normal',
-          isWaypoint: false, isFinal: false, isBonfire: true,  isSpecial: false,
+          cards: [], isWaypoint: false, isFinal: false, isBonfire: true,  isSpecial: false,
           isAlchemy: false, isTrap: false, isLocked: false, isVanished: false },
         { id: 2, gx:  9, gy:  9, w: 5, h: 5, shape: 'round', connections: [0, 1], state: 'normal',
-          isWaypoint: false, isFinal: false, isBonfire: true,  isSpecial: false,
+          cards: [], isWaypoint: false, isFinal: false, isBonfire: true,  isSpecial: false,
           isAlchemy: false, isTrap: false, isLocked: false, isVanished: false },
     ];
 }
