@@ -111,7 +111,8 @@ let _helixExitPromptShown = false;
 let helixPathWaypoints   = null;  // world-space Vector3[] — full spiral, used for path snap
 let _helixSavedControls  = null;  // saved OrbitControls config, restored on exit
 let savedPlayerPos = new THREE.Vector3();
-let pathDebugLine = null; // Visualizer for A* path
+let destinationMarker = null; // Gold marker for click destination
+let playerRotateTween = null; // Tween for smooth turning
 let savedFogDensity = 0.045;
 
 // Expose exit function globally
@@ -1591,6 +1592,13 @@ function init3D() {
 
     scene.add(playerMarker);
 
+    // Destination Marker (Gold Diamond)
+    const destGeo = new THREE.OctahedronGeometry(0.3, 0);
+    const destMat = new THREE.MeshBasicMaterial({ color: 0xffd700, wireframe: true, transparent: true, opacity: 0.8 });
+    destinationMarker = new THREE.Mesh(destGeo, destMat);
+    scene.add(destinationMarker);
+    destinationMarker.visible = false;
+
     // Ground Torch Glow — flat additive texture decal sitting just above the floor.
     // Follows the player and dims/shifts colour as torchCharge depletes.
     // Uses AdditiveBlending so it brightens whatever is under it; no dynamic lights needed.
@@ -2770,7 +2778,7 @@ function on3DClick(event, isRightClick = false) {
 
         if (floorHits.length > 0) {
             // 0. BSP Pathfinding Check (Only in main dungeon, not combat/helix)
-            if (game.useBSP && !isCombatView && !inHelixZone && !inBattleIsland && globalFloorMesh) {
+            if (gameSettings.usePathfinding && game.useBSP && !isCombatView && !inHelixZone && !inBattleIsland && globalFloorMesh) {
                 const point = floorHits[0].point;
                 const startNode = {
                     x: Math.round(playerMesh.position.x + bspCols / 2),
@@ -2783,13 +2791,11 @@ function on3DClick(event, isRightClick = false) {
                 
                 const path = Pathfinder.findPath(startNode, endNode, bspGrid, bspCols, bspRows);
                 if (path && path.length > 0) {
-                    // Visualize Path
-                    if (pathDebugLine) scene.remove(pathDebugLine);
-                    const points = path.map(p => new THREE.Vector3(p.x - bspCols/2, 0.2, p.z - bspRows/2));
-                    points.unshift(playerMesh.position.clone()); // Add current pos as start
-                    const geo = new THREE.BufferGeometry().setFromPoints(points);
-                    pathDebugLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x00ff00 }));
-                    scene.add(pathDebugLine);
+                    // Show Destination Marker
+                    if (destinationMarker) {
+                        destinationMarker.position.set(point.x, point.y + 1.5, point.z);
+                        destinationMarker.visible = true;
+                    }
 
                     movePlayerAlongPath(path, isRightClick);
                     return;
@@ -2823,6 +2829,12 @@ function on3DClick(event, isRightClick = false) {
                 }
                 combatState.currentMove -= dist;
                 updateMovementIndicator();
+            }
+
+            // Show Destination Marker (Direct Move)
+            if (destinationMarker) {
+                destinationMarker.position.set(point.x, point.y + 1.5, point.z);
+                destinationMarker.visible = true;
             }
 
             // Move player to point
@@ -3739,6 +3751,12 @@ function animate3D() {
         }
     }
 
+    // Animate Destination Marker
+    if (destinationMarker && destinationMarker.visible) {
+        destinationMarker.rotation.y -= 0.05;
+        // Bobbing handled by setting Y in on3DClick, or we can animate here if we track base Y
+    }
+
     // Ground Torch Glow — follows player, dims & shifts colour with torch fuel
     if (torchGlowOuter && playerObj) {
         const fuelPct = Math.max(0, Math.min(1, (game.torchCharge || 0) / 100));
@@ -4246,7 +4264,7 @@ function movePlayerAlongPath(path, isRunning) {
     function step() {
         if (worldPoints.length === 0) {
             // Path complete
-            if (pathDebugLine) { scene.remove(pathDebugLine); pathDebugLine = null; }
+            if (destinationMarker) destinationMarker.visible = false;
             return;
         }
         const next = worldPoints.shift();
@@ -4261,6 +4279,7 @@ function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options
 
     // Stop existing tween if any
     if (playerMoveTween) playerMoveTween.stop();
+    if (playerRotateTween) playerRotateTween.stop();
 
     const playerObj = playerMesh;
     const startPos = playerObj.position.clone();
@@ -4320,7 +4339,17 @@ function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options
 
     // Face target
     if (playerMesh) {
-        playerMesh.lookAt(targetVec.x, playerMesh.position.y, targetVec.z);
+        // Smooth Rotation
+        const startRot = playerMesh.quaternion.clone();
+        const dummy = new THREE.Object3D();
+        dummy.position.copy(playerMesh.position);
+        dummy.lookAt(targetVec.x, playerMesh.position.y, targetVec.z);
+        const endRot = dummy.quaternion;
+
+        playerRotateTween = new TWEEN.Tween({ t: 0 })
+            .to({ t: 1 }, 150) // 150ms turn
+            .onUpdate(obj => playerMesh.quaternion.slerpQuaternions(startRot, endRot, obj.t))
+            .start();
 
         // Start Walk Animation
         if (actions.walk) {
@@ -4434,6 +4463,7 @@ function stopMovement() {
     playerMoveTween = null;
     if (actions.walk) actions.walk.stop();
     if (actions.idle) actions.idle.play();
+    if (destinationMarker) destinationMarker.visible = false;
 }
 
 function updatePlayerMovement(dt) {
@@ -4762,7 +4792,7 @@ function clear3DScene() {
     hiddenDecorationIndices.clear();
     savedPlayerPos.set(0, 0, 0);
     hiddenStaticMeshes = [];
-    if (pathDebugLine) { scene.remove(pathDebugLine); pathDebugLine = null; }
+    if (destinationMarker) { scene.remove(destinationMarker); destinationMarker = null; }
     globalFloorMesh = null;
     bspGrid = null; bspCols = 0; bspRows = 0;
     dungeonDustMotes = null; // scene.remove already happened via while loop above
@@ -7999,7 +8029,8 @@ let gameSettings = {
     shadowsEnabled: 'medium', // false, 'low', 'medium', 'high'
     lod: { near: 40, far: 80 },
     pixelRatio: 1.5,
-    benchmarkFPS: 30 // Default safe value
+    benchmarkFPS: 30, // Default safe value
+    usePathfinding: true
 };
 
 function loadSettings() {
@@ -8082,6 +8113,11 @@ window.showOptionsModal = function () {
             <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
                 <input type="checkbox" id="muteSFX" ${gameSettings.sfxMuted ? 'checked' : ''} onchange="updateSetting('sfx', this.checked)">
                 <label for="muteSFX">Mute Sound Effects</label>
+            </div>
+            
+            <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
+                <input type="checkbox" id="usePathfinding" ${gameSettings.usePathfinding ? 'checked' : ''} onchange="updateSetting('pathfinding', this.checked)">
+                <label for="usePathfinding">Use Pathfinding</label>
             </div>
 
             <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
@@ -8197,6 +8233,9 @@ window.updateSetting = function (type, val) {
             if (composer) composer.setPixelRatio(val);
         }
     }
+    if (type === 'pathfinding') {
+        gameSettings.usePathfinding = val;
+    }
 
     // If a graphics-related setting is changed manually, set profile to custom
     const graphicSettings = ['graphics', 'tiltShift', 'bloom', 'shadows', 'lod', 'pixelRatio'];
@@ -8237,6 +8276,7 @@ function updateOptionsUI() {
     if (get('tiltShift')) get('tiltShift').checked = (gameSettings.tiltShiftMode === 'threejs');
     if (get('bloomFX')) get('bloomFX').checked = gameSettings.bloomEnabled;
     if (get('shadowsEnabled')) get('shadowsEnabled').value = String(gameSettings.shadowsEnabled);
+    if (get('usePathfinding')) get('usePathfinding').checked = gameSettings.usePathfinding;
 }
 
 // --- BENCHMARK SYSTEM (Glenn's Request) ---
