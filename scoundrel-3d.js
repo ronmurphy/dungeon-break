@@ -174,8 +174,14 @@ window.exitBattleIsland = function () {
     exitCombatView();
 };
 
-// spawnPet is a hoisted function declared later — expose now so console commands work immediately
-window.spawnPet = function (...args) { return spawnPet(...args); };
+// spawnPet / dismissPet are hoisted functions declared later — expose now so console commands work immediately
+window.spawnPet    = function (...args) { return spawnPet(...args); };
+window.dismissPet  = function () {
+    if (!playerPet) { if (typeof logMsg === 'function') logMsg('No companion to dismiss.'); return; }
+    if (playerPet.mesh) scene.remove(playerPet.mesh);
+    playerPet = null;
+    if (typeof logMsg === 'function') logMsg('Companion dismissed.');
+};
 
 // Expose live state objects to console for inspection
 // Using getters so reassignment of combatState is always reflected
@@ -214,6 +220,7 @@ window.testDungeon       = function (floor = 1) {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     spawnBSPDoors(bsp.doorPositions);
+    spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
     createDungeonDustMotes();
     updateAtmosphere(floor);
     initWanderers();
@@ -339,10 +346,12 @@ const WANDERER_MODELS = [
     'MagmaDog-web.glb',
     'gremlinn-web.glb',
     'demoness-web.glb',
-    'queen-web.glb'
+    'queen-web.glb',
+'a-female_twin-web.glb', 'a_male_twin-web.glb'
 ];
 // Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
-// 'a-female_twin-web.glb', 'a_male_twin-web.glb'
+// i made better versions so the old versions can be harder, uncommon enemies. --brad
+//  'Boss_Twin_Female-web.glb','Boss_Twin_Male-web.glb'
 
 // List of models to display in Gallery Mode (editmap)
 // Add new building/prop filenames here to configure them.
@@ -582,6 +591,71 @@ let benchmarkState = {
 };
 
 const textureLoader = new THREE.TextureLoader();
+// ── Music manager ─────────────────────────────────────────────────────────────
+let _MUSIC_VOL = 0.7;     // normal playback volume (adjustable via BGM slider)
+const _DUCK_VOL  = 0.18;  // ducked (intermission / modal screens)
+const _TRACKS = {
+    day:   'assets/music/forestDay.ogg',    // CA dungeon / base camp
+    night: 'assets/music/forestNight.ogg',  // BSP dungeon
+    boss:  'assets/music/bloodMoon.ogg',    // boss / Battle Island
+};
+const _musicAudio = {};
+for (const [key, src] of Object.entries(_TRACKS)) {
+    const a = new Audio(src);
+    a.loop = true; a.volume = 0;
+    _musicAudio[key] = a;
+}
+let _currentTrack = null;
+
+function _fadeVolTo(audio, target, ms = 800) {
+    const steps = 25, dt = ms / steps;
+    const delta = (target - audio.volume) / steps;
+    let n = 0;
+    const id = setInterval(() => {
+        n++;
+        audio.volume = Math.max(0, Math.min(1, audio.volume + delta));
+        if (n >= steps) { audio.volume = target; clearInterval(id); }
+    }, dt);
+}
+
+function playMusic(trackKey) {
+    return; // OGG system disabled — SoundManager handles BGM via updateMusicForFloor()
+    if (_currentTrack === trackKey) { // eslint-disable-line no-unreachable
+        // Already on this track — just restore full volume in case it was ducked
+        if (_musicAudio[trackKey]) _fadeVolTo(_musicAudio[trackKey], _MUSIC_VOL, 600);
+        return;
+    }
+    if (_currentTrack && _musicAudio[_currentTrack]) {
+        const old = _musicAudio[_currentTrack];
+        _fadeVolTo(old, 0, 900);
+        setTimeout(() => { old.pause(); old.currentTime = 0; }, 950);
+    }
+    _currentTrack = trackKey;
+    const next = _musicAudio[trackKey];
+    if (!next) return;
+    next.volume = 0;
+    next.currentTime = 0;
+    next.play().catch(() => {}); // blocked until first user gesture; retried on interaction
+    if (!gameSettings.musicMuted) _fadeVolTo(next, _MUSIC_VOL, 1200);
+}
+
+// Lower volume without stopping — use for modals / intermission
+function duckMusic()   { if (_currentTrack && _musicAudio[_currentTrack]) _fadeVolTo(_musicAudio[_currentTrack], _DUCK_VOL, 600); }
+function unduckMusic() { if (_currentTrack && _musicAudio[_currentTrack]) _fadeVolTo(_musicAudio[_currentTrack], _MUSIC_VOL, 600); }
+
+window.duckMusic   = duckMusic;
+window.unduckMusic = unduckMusic;
+
+// Browsers block autoplay until a user gesture — retry on first interaction
+const _retryMusic = () => {
+    if (_currentTrack && _musicAudio[_currentTrack]?.paused) {
+        _musicAudio[_currentTrack].play().catch(() => {});
+    }
+};
+document.addEventListener('click',   _retryMusic, { once: true });
+document.addEventListener('keydown',  _retryMusic, { once: true });
+// ─────────────────────────────────────────────────────────────────────────────
+
 const glbCache = new Map(); // Cache for loaded GLB assets
 const loadingPromises = new Map(); // Deduplicate in-flight loads
 const gltfLoader = new GLTFLoader();
@@ -2070,9 +2144,11 @@ function onDecorationHover(event) {
         return;
     }
 
-    const rockMesh = decorationMeshes.find(m => m.userData?.isRockMesh);
-    const treeMesh = decorationMeshes.find(m => m.userData?.isTreeMesh);
-    if (!rockMesh && !treeMesh) return;
+    const rockMesh   = decorationMeshes.find(m => m.userData?.isRockMesh);
+    const treeMesh   = decorationMeshes.find(m => m.userData?.isTreeMesh);
+    const pillarMesh = decorationMeshes.find(m => m.userData?.isBSPPillarMesh);
+    const rubbleMesh = decorationMeshes.find(m => m.userData?.isBSPRubbleMesh);
+    if (!rockMesh && !treeMesh && !pillarMesh && !rubbleMesh) return;
 
     const container = renderer.domElement;
     const rect = container.getBoundingClientRect();
@@ -2080,30 +2156,29 @@ function onDecorationHover(event) {
     const my = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(new THREE.Vector2(mx, my), camera);
 
-    // Check rocks then trees — first valid hit wins
+    // Check all lootable mesh types — first valid hit wins
     let newMesh = null, newId = -1;
-    if (rockMesh) {
-        const hits = raycaster.intersectObject(rockMesh);
+    const candidates = [
+        { m: rockMesh,   lootSet: 'flippable', doneSet: 'flipped'  },
+        { m: treeMesh,   lootSet: 'shakeable', doneSet: 'shook'    },
+        { m: pillarMesh, lootSet: 'lootable',  doneSet: 'toppled'  },
+        { m: rubbleMesh, lootSet: 'flippable', doneSet: 'flipped'  },
+    ];
+    for (const { m, lootSet, doneSet } of candidates) {
+        if (newMesh || !m) continue;
+        const hits = raycaster.intersectObject(m);
         if (hits.length > 0) {
             const id = hits[0].instanceId;
-            if (rockMesh.userData.flippable?.has(id) && !rockMesh.userData.flipped?.has(id)) {
-                newMesh = rockMesh; newId = id;
-            }
-        }
-    }
-    if (!newMesh && treeMesh) {
-        const hits = raycaster.intersectObject(treeMesh);
-        if (hits.length > 0) {
-            const id = hits[0].instanceId;
-            if (treeMesh.userData.shakeable?.has(id) && !treeMesh.userData.shook?.has(id)) {
-                newMesh = treeMesh; newId = id;
+            if (m.userData[lootSet]?.has(id) && !m.userData[doneSet]?.has(id)) {
+                newMesh = m; newId = id;
             }
         }
     }
 
     // Reset previous hover
     if (hoveredDecoration.id !== -1 && (hoveredDecoration.mesh !== newMesh || hoveredDecoration.id !== newId)) {
-        const baseCol = hoveredDecoration.mesh?.userData.isTreeMesh ? _TREE_BASE_COLOR : _ROCK_BASE_COLOR;
+        const baseCol = hoveredDecoration.mesh?.userData.baseColor
+            ?? (hoveredDecoration.mesh?.userData.isTreeMesh ? _TREE_BASE_COLOR : _ROCK_BASE_COLOR);
         hoveredDecoration.mesh.setColorAt(hoveredDecoration.id, baseCol);
         hoveredDecoration.mesh.instanceColor.needsUpdate = true;
         hoveredDecoration = { mesh: null, id: -1 };
@@ -2280,6 +2355,215 @@ function shakeTree(treeMesh, instanceId) {
     spawnFloatingText('...', window.innerWidth / 2, window.innerHeight / 2, '#aaaaaa');
 }
 
+// ── BSP rubble flip (small dungeon stones — same system as CA-floor rocks) ───
+
+const _BSP_RUBBLE_BASE = new THREE.Color(0x556655);
+
+function flipBSPRubble(rubbleMesh, instanceId) {
+    rubbleMesh.userData.flipped.add(instanceId);
+
+    rubbleMesh.setColorAt(instanceId, _BSP_RUBBLE_BASE);
+    rubbleMesh.instanceColor.needsUpdate = true;
+    hoveredDecoration = { mesh: null, id: -1 };
+
+    const matrix = new THREE.Matrix4();
+    rubbleMesh.getMatrixAt(instanceId, matrix);
+    const pos = new THREE.Vector3().setFromMatrixPosition(matrix);
+
+    // Hide instance
+    rubbleMesh.setMatrixAt(instanceId,
+        new THREE.Matrix4().makeTranslation(pos.x, pos.y, pos.z)
+            .multiply(new THREE.Matrix4().makeScale(0.001, 0.001, 0.001)));
+    rubbleMesh.instanceMatrix.needsUpdate = true;
+
+    // Temp mesh for flip animation (smaller than CA rock)
+    const tempGeo = new THREE.DodecahedronGeometry(0.18);
+    const tempMat = new THREE.MeshStandardMaterial({ color: 0x556655, roughness: 0.9 });
+    const tempMesh = new THREE.Mesh(tempGeo, tempMat);
+    tempMesh.position.set(pos.x, 0.09, pos.z);
+    scene.add(tempMesh);
+
+    new TWEEN.Tween(tempMesh.rotation)
+        .to({ x: Math.PI, z: Math.PI * 0.4 }, 320)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .start();
+
+    new TWEEN.Tween(tempMesh.position)
+        .to({ y: 0.45 }, 160)
+        .easing(TWEEN.Easing.Quadratic.Out)
+        .chain(new TWEEN.Tween(tempMesh.position)
+            .to({ y: 0.03 }, 160)
+            .easing(TWEEN.Easing.Quadratic.In)
+            .onComplete(() => {
+                scene.remove(tempMesh);
+                tempGeo.dispose(); tempMat.dispose();
+
+                const reward = rubbleMesh.userData.rewards?.get(instanceId);
+                if (reward === 'coin') {
+                    const coinTex = getClonedTexture('assets/images/animations/soulcoin.png');
+                    coinTex.repeat.set(1 / 25, 1);
+                    const coinMat = new THREE.SpriteMaterial({ map: coinTex, transparent: true });
+                    const coinSprite = new THREE.Sprite(coinMat);
+                    coinSprite.position.set(pos.x, 0.4, pos.z);
+                    coinSprite.scale.set(0.7, 0.7, 0.7);
+                    scene.add(coinSprite);
+                    soulcoinSprites.push({ mesh: coinSprite, tex: coinTex, coins: 1 });
+                    spawnFloatingText('Soul Coin!', window.innerWidth / 2, window.innerHeight / 2, '#d4af37');
+                    logMsg('A coin tucked under the rubble — walk over it!');
+                } else if (reward) {
+                    const potionItem = { type: 'potion', val: 2, suit: '♥', name: 'HP Incense 2', desc: 'Stashed under a loose stone.' };
+                    spawnLootSprite(pos, potionItem);
+                    logMsg('Something was hidden under the rubble!');
+                }
+            })
+        ).start();
+
+    spawnFloatingText('...', window.innerWidth / 2, window.innerHeight / 2, '#aaaaaa');
+}
+
+// ── BSP pillar topple (timber falls in a random direction) ────────────────────
+
+const _BSP_PILLAR_H = 2.5;
+const _BSP_PILLAR_BASE = new THREE.Color(0xffffff); // white = show wood texture as-is
+
+function topplePillar(pillMesh, instanceId) {
+    pillMesh.userData.toppled.add(instanceId);
+
+    pillMesh.setColorAt(instanceId, _BSP_PILLAR_BASE);
+    pillMesh.instanceColor.needsUpdate = true;
+    hoveredDecoration = { mesh: null, id: -1 };
+
+    const matrix = new THREE.Matrix4();
+    pillMesh.getMatrixAt(instanceId, matrix);
+    const pos = new THREE.Vector3().setFromMatrixPosition(matrix);
+
+    // Hide instance
+    pillMesh.setMatrixAt(instanceId,
+        new THREE.Matrix4().makeTranslation(pos.x, pos.y, pos.z)
+            .multiply(new THREE.Matrix4().makeScale(0.001, 0.001, 0.001)));
+    pillMesh.instanceMatrix.needsUpdate = true;
+
+    // Temp mesh — same geometry + same texture as the pillar InstancedMesh, pivot at base
+    const tempGeo = new THREE.BoxGeometry(0.6, _BSP_PILLAR_H, 0.6);
+    tempGeo.translate(0, _BSP_PILLAR_H / 2, 0);
+    const tempMat = new THREE.MeshStandardMaterial({ map: pillMesh.material.map, roughness: 0.85 });
+    const tempMesh = new THREE.Mesh(tempGeo, tempMat);
+    tempMesh.position.set(pos.x, 0, pos.z);
+    scene.add(tempMesh);
+
+    // Fall in a random cardinal direction
+    const angle = Math.floor(Math.random() * 4) * (Math.PI / 2);
+    const targetRot = { x: Math.cos(angle) * (Math.PI / 2), z: Math.sin(angle) * (Math.PI / 2) };
+
+    new TWEEN.Tween(tempMesh.rotation)
+        .to(targetRot, 560)
+        .easing(TWEEN.Easing.Quadratic.In)
+        .onComplete(() => {
+            setTimeout(() => { scene.remove(tempMesh); tempGeo.dispose(); tempMat.dispose(); }, 2000);
+
+            const reward = pillMesh.userData.rewards?.get(instanceId);
+            if (reward) {
+                const lootPos = new THREE.Vector3(pos.x, 0.3, pos.z);
+                let item;
+                if (reward === 'weapon') {
+                    const val = Math.max(2, Math.min(10, game.floor + 1));
+                    item = { type: 'weapon', val, suit: '♦', name: getWeaponName(val) };
+                } else if (reward === 'item') {
+                    const iData = ITEM_DATA[Math.floor(Math.random() * ITEM_DATA.length)];
+                    item = { type: iData.type, id: iData.id, val: 0, name: iData.name, desc: iData.desc };
+                }
+                if (item) spawnLootSprite(lootPos, item);
+                logMsg('Something was propped behind the pillar!');
+            } else {
+                logMsg('The pillar falls with a crash... nothing there.');
+            }
+        }).start();
+
+    spawnFloatingText('...', window.innerWidth / 2, window.innerHeight / 2, '#aaaaaa');
+}
+
+// ── Spawn BSP decoration InstancedMeshes (pillars + rubble) after floor load ──
+
+function spawnBSPDecorations(decorations, _wallSheet) {
+    if (!decorations || decorations.length === 0) return;
+
+    // ── Wood pillars ──────────────────────────────────────────────────────────
+    const pillarPos = decorations.filter(d => d.type === 'pillar');
+    if (pillarPos.length > 0) {
+        const geo = new THREE.BoxGeometry(0.6, _BSP_PILLAR_H, 0.6);
+        geo.translate(0, _BSP_PILLAR_H / 2, 0); // Pivot at base
+
+        const pillarTex = getClonedTexture('assets/images/woodpillar.png');
+        const mat = new THREE.MeshStandardMaterial({ map: pillarTex, color: 0xffffff, roughness: 0.85 });
+
+        const mesh = new THREE.InstancedMesh(geo, mat, pillarPos.length);
+        const lootable = new Set();
+        const rewards  = new Map();
+
+        for (let i = 0; i < pillarPos.length; i++) {
+            const p = pillarPos[i];
+            mesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(p.x, 0, p.z));
+            mesh.setColorAt(i, _BSP_PILLAR_BASE);
+            if (Math.random() < 0.15) {
+                lootable.add(i);
+                rewards.set(i, Math.random() < 0.5 ? 'weapon' : 'item');
+            }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+        mesh.userData.isBSPPillarMesh = true;
+        mesh.userData.baseColor = _BSP_PILLAR_BASE;
+        mesh.userData.lootable  = lootable;
+        mesh.userData.toppled   = new Set();
+        mesh.userData.rewards   = rewards;
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+
+        scene.add(mesh);
+        decorationMeshes.push(mesh);
+    }
+
+    // ── Stone rubble ──────────────────────────────────────────────────────────
+    const rubblePos = decorations.filter(d => d.type === 'rubble');
+    if (rubblePos.length > 0) {
+        const geo = new THREE.DodecahedronGeometry(0.18);
+        geo.translate(0, 0.09, 0); // Pivot at base
+
+        const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+
+        const mesh = new THREE.InstancedMesh(geo, mat, rubblePos.length);
+        const flippable = new Set();
+        const rewards   = new Map();
+
+        for (let i = 0; i < rubblePos.length; i++) {
+            const p = rubblePos[i];
+            const rot = Math.random() * Math.PI * 2;
+            const m4 = new THREE.Matrix4().makeRotationY(rot);
+            m4.setPosition(p.x, 0, p.z);
+            mesh.setMatrixAt(i, m4);
+            mesh.setColorAt(i, _BSP_RUBBLE_BASE);
+            if (Math.random() < 0.15) {
+                flippable.add(i);
+                rewards.set(i, Math.random() < 0.6 ? 'coin' : 'potion');
+            }
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+
+        mesh.userData.isBSPRubbleMesh = true;
+        mesh.userData.baseColor = _BSP_RUBBLE_BASE;
+        mesh.userData.flippable = flippable;
+        mesh.userData.flipped   = new Set();
+        mesh.userData.rewards   = rewards;
+        mesh.castShadow = false;
+        mesh.receiveShadow = true;
+
+        scene.add(mesh);
+        decorationMeshes.push(mesh);
+    }
+}
+
 function on3DContextMenu(e) {
     e.preventDefault();
     on3DClick(e, true);
@@ -2396,6 +2680,26 @@ function on3DClick(event, isRightClick = false) {
                     return;
                 }
                 continue; // Non-shakeable tree — let click pass through
+            }
+
+            // --- BSP PILLAR TOPPLE ---
+            if (obj.userData && obj.userData.isBSPPillarMesh && !isCombatView) {
+                const instanceId = intersects[i].instanceId;
+                if (instanceId !== undefined && obj.userData.lootable?.has(instanceId) && !obj.userData.toppled?.has(instanceId)) {
+                    topplePillar(obj, instanceId);
+                    return;
+                }
+                continue;
+            }
+
+            // --- BSP RUBBLE FLIP ---
+            if (obj.userData && obj.userData.isBSPRubbleMesh && !isCombatView) {
+                const instanceId = intersects[i].instanceId;
+                if (instanceId !== undefined && obj.userData.flippable?.has(instanceId) && !obj.userData.flipped?.has(instanceId)) {
+                    flipBSPRubble(obj, instanceId);
+                    return;
+                }
+                continue;
             }
 
             const current = game.rooms.find(r => r.id === game.currentRoomIdx);
@@ -4704,11 +5008,13 @@ function finalizeStartDive() {
 
     // BSP dungeon for new game start
     game.useBSP = true;
+    playMusic(game.useBSP ? 'night' : 'day');
     const bspNew = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
     game.rooms = bspNew.rooms;
     globalFloorMesh = bspNew.mesh;
     bspGrid = bspNew.tileGrid; bspCols = bspNew.cols; bspRows = bspNew.rows;
     spawnBSPDoors(bspNew.doorPositions);
+    spawnBSPDecorations(bspNew.decorations || [], bspNew.wallSheet);
     createDungeonDustMotes();
 
     updateAtmosphere(game.floor);
@@ -4731,6 +5037,7 @@ function finalizeStartDive() {
 }
 
 function startIntermission() {
+    duckMusic(); // soften — don't switch tracks; undocked when entering next floor
     // Calculate Bonuses
     // Minstrel (Bard) Passive: Silver Tongue (20% Discount)
     const discount = (game.classId === 'bard') ? 0.8 : 1.0;
@@ -4900,11 +5207,13 @@ function descendToNextFloor() {
 
     // BSP dungeon — seeded per floor so every load of the same floor is identical
     game.useBSP = true;
+    playMusic(game.useBSP ? 'night' : 'day');
     const bsp = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
     game.rooms = bsp.rooms;
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     spawnBSPDoors(bsp.doorPositions);
+    spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
     createDungeonDustMotes();
 
     // Map Item: reveal all rooms
@@ -5113,6 +5422,7 @@ function sinkAlchemy(room) {
 
 window.handleManorChoice = function(choice) {
     if (choice === 'leave') {
+        unduckMusic();
         closeCombat();
         // If the player cleared the room (bought something or took gift), sink it
         if (game.activeRoom.state === 'cleared') {
@@ -5658,11 +5968,7 @@ function showCompanionPicker() {
     dismissBtn.onmouseenter = () => { dismissBtn.style.background = 'rgba(60,0,0,0.7)'; dismissBtn.style.color = '#ff6666'; dismissBtn.style.borderColor = 'rgba(255,50,50,0.4)'; };
     dismissBtn.onmouseleave = () => { dismissBtn.style.background = 'rgba(40,0,0,0.5)'; dismissBtn.style.color = '#aa4444'; dismissBtn.style.borderColor = 'rgba(255,50,50,0.15)'; };
     dismissBtn.onclick = () => {
-        if (playerPet) {
-            if (playerPet.mesh) scene.remove(playerPet.mesh);
-            playerPet = null;
-            logMsg("Companion dismissed.");
-        }
+        window.dismissPet();
         panel.remove();
     };
 
@@ -5746,16 +6052,23 @@ function spawnPet(name) {
         );
         lod.addLevel(placeholder, (gameSettings.lod && gameSettings.lod.far) || 80);
 
-        // Green companion tint via emissive — no green enemies, so unambiguous
+        // Green companion tint + force opaque (GLBs with BLEND alpha kill performance)
         model.traverse(child => {
             if (!child.isMesh || !child.material) return;
             const mats = Array.isArray(child.material) ? child.material : [child.material];
-            mats.forEach(m => {
-                if (m.emissive !== undefined) {
-                    m.emissive.setHex(0x002800);
-                    m.emissiveIntensity = 0.5;
+            const fixed = mats.map(m => {
+                const c = m.clone();
+                if (c.emissive !== undefined) {
+                    c.emissive.setHex(0x002800);
+                    c.emissiveIntensity = 0.5;
                 }
+                // Force fully opaque — BLEND-alpha materials from some GLBs cause extra
+                // render passes and a noticeable frame-rate hit even for a single model.
+                c.transparent = false;
+                c.opacity = 1.0;
+                return c;
             });
+            child.material = Array.isArray(child.material) ? fixed : fixed[0];
         });
 
         // Place beside the player
@@ -5844,6 +6157,7 @@ function spawnHelperWanderer(helperDef, anchor, getIslandY, callback) {
  */
 function enterBossArena() {
     game.isBossFight = true;
+    playMusic('boss');
     if (game.activeRoom) game.activeRoom.state = 'boss_active';
     document.getElementById('combatModal').style.display = 'none';
     logMsg("You step into the Guardian's Lair...");
@@ -7614,6 +7928,7 @@ function setupLayout() {
 // --- OPTIONS & SETTINGS ---
 let gameSettings = {
     masterVolume: 0.5,
+    bgmVolume: 0.7,
     musicMuted: false,
     sfxMuted: false,
     graphicsProfile: 'high', // low, medium, high, ultra, custom
@@ -7697,6 +8012,11 @@ window.showOptionsModal = function () {
                 <input type="checkbox" id="muteMusic" ${gameSettings.musicMuted ? 'checked' : ''} onchange="updateSetting('music', this.checked)">
                 <label for="muteMusic">Mute Music</label>
             </div>
+
+            <div style="margin:10px 0; text-align:left;">
+                <label style="display:block; margin-bottom:5px;">BGM Volume</label>
+                <input type="range" min="0" max="1" step="0.05" value="${gameSettings.bgmVolume ?? 0.7}" style="width:100%;" oninput="updateSetting('bgmVol', this.value)">
+            </div>
             
             <div style="margin:15px 0; text-align:left; display:flex; align-items:center; gap:10px;">
                 <input type="checkbox" id="muteSFX" ${gameSettings.sfxMuted ? 'checked' : ''} onchange="updateSetting('sfx', this.checked)">
@@ -7756,7 +8076,21 @@ window.resetSettings = function() {
 
 window.updateSetting = function (type, val) {
     if (type === 'vol') gameSettings.masterVolume = parseFloat(val);
-    if (type === 'music') gameSettings.musicMuted = val;
+    if (type === 'bgmVol') {
+        gameSettings.bgmVolume = parseFloat(val);
+        _MUSIC_VOL = gameSettings.bgmVolume;
+        // Apply immediately to the playing track (unless ducked)
+        if (_currentTrack && _musicAudio[_currentTrack] && !gameSettings.musicMuted) {
+            _musicAudio[_currentTrack].volume = _MUSIC_VOL;
+        }
+    }
+    if (type === 'music') {
+        gameSettings.musicMuted = val;
+        if (_currentTrack && _musicAudio[_currentTrack]) {
+            if (val) { _fadeVolTo(_musicAudio[_currentTrack], 0, 400); }
+            else     { _fadeVolTo(_musicAudio[_currentTrack], _MUSIC_VOL, 400); _musicAudio[_currentTrack].play().catch(()=>{}); }
+        }
+    }
     if (type === 'sfx') gameSettings.sfxMuted = val;
     if (type === 'tiltShift') {
         const mode = val ? 'threejs' : 'off';
@@ -8037,6 +8371,7 @@ window.changeHelpSlide = function (delta) {
 function initAttractMode() {
     console.log("Initializing Attract Mode...");
     isAttractMode = true;
+    playMusic('day');
     game.useBSP = false;
 
     // Hide Control Box & Gameplay Options (Control box always hidden)
@@ -8236,6 +8571,7 @@ function loadGame() {
 
     // All normal floors use BSP — ensure the flag is set even on old saves
     game.useBSP = true;
+    playMusic(game.isBossFight ? 'boss' : game.useBSP ? 'night' : 'day');
 
     // Re-generate floor mesh from BSP (seeded — always matches saved layout)
     // game.rooms stays as loaded from save (preserves cleared/uncleared states)
@@ -8243,6 +8579,7 @@ function loadGame() {
     globalFloorMesh = bspLoad.mesh;
     bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
     spawnBSPDoors(bspLoad.doorPositions);
+    spawnBSPDecorations(bspLoad.decorations || [], bspLoad.wallSheet);
     createDungeonDustMotes();
 
     updateAtmosphere(game.floor);
@@ -10085,6 +10422,7 @@ window.reloadScene = function () {
     globalFloorMesh = bspReload.mesh;
     bspGrid = bspReload.tileGrid; bspCols = bspReload.cols; bspRows = bspReload.rows;
     spawnBSPDoors(bspReload.doorPositions);
+    spawnBSPDecorations(bspReload.decorations || [], bspReload.wallSheet);
     createDungeonDustMotes();
     updateAtmosphere(game.floor);
     if (currentRoom && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);

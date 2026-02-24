@@ -610,6 +610,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         }
         if (treeMesh.instanceColor) treeMesh.instanceColor.needsUpdate = true;
         treeMesh.userData.isTreeMesh = true;
+        treeMesh.userData.baseColor = new THREE.Color(0x2a1d15);
         treeMesh.userData.shakeable = treeShakeable;
         treeMesh.userData.shook = new Set();
         treeMesh.userData.rewards = treeRewards;
@@ -643,6 +644,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         }
         if (rockMesh.instanceColor) rockMesh.instanceColor.needsUpdate = true;
         rockMesh.userData.isRockMesh = true;
+        rockMesh.userData.baseColor = new THREE.Color(0x555555);
         rockMesh.userData.flippable = flippable;
         rockMesh.userData.flipped = new Set();
         rockMesh.userData.rewards = rewards;

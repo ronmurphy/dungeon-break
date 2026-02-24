@@ -216,7 +216,7 @@ function buildTileGrid(cols, rows, rooms, paths) {
  * Build one merged floor mesh (ROOM + CORRIDOR tiles) and one merged wall mesh
  * (WALL tiles), add both to scene.  Returns the floor mesh for raycasting.
  */
-function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture) {
+function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture, rng, outDecorations) {
     const theme = getThemeForFloor(floor);
     const ox = cols / 2;  // world offset — centres grid on origin
     const oz = rows / 2;
@@ -362,6 +362,116 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
                 [wx - 0.5, H, wz + 0.5], [wx + 0.5, H, wz + 0.5],
                 [wx + 0.5, H, wz - 0.5], [wx - 0.5, H, wz - 0.5],
                 u, tw);
+        }
+    }
+
+    // ── Decorations ───────────────────────────────────────────────────────────
+    // Door frames at corridor-room boundaries + scattered rubble (visual only)
+
+    function addBox(cx, cy, cz, sx, sy, sz, u) {
+        // Top
+        wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
+            [cx-sx, cy+sy, cz+sz], [cx+sx, cy+sy, cz+sz],
+            [cx+sx, cy+sy, cz-sz], [cx-sx, cy+sy, cz-sz], u, tw);
+        // Front (-Z)
+        wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
+            [cx-sx, cy+sy, cz-sz], [cx+sx, cy+sy, cz-sz],
+            [cx+sx, cy-sy, cz-sz], [cx-sx, cy-sy, cz-sz], u, tw);
+        // Back (+Z)
+        wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
+            [cx+sx, cy+sy, cz+sz], [cx-sx, cy+sy, cz+sz],
+            [cx-sx, cy-sy, cz+sz], [cx+sx, cy-sy, cz+sz], u, tw);
+        // Left (-X)
+        wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
+            [cx-sx, cy+sy, cz+sz], [cx-sx, cy+sy, cz-sz],
+            [cx-sx, cy-sy, cz-sz], [cx-sx, cy-sy, cz+sz], u, tw);
+        // Right (+X)
+        wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
+            [cx+sx, cy+sy, cz-sz], [cx+sx, cy+sy, cz+sz],
+            [cx+sx, cy-sy, cz+sz], [cx+sx, cy-sy, cz-sz], u, tw);
+    }
+
+    // Helper to check if a neighbor corridor tile borders the same room in direction (dr,dc)
+    const isRun = (tr, tc, dr, dc) => {
+        if (tr < 0 || tr >= rows || tc < 0 || tc >= cols) return false;
+        if (tileGrid[tr][tc] !== TILE_CORRIDOR) return false;
+        const rr = tr + dr, rc = tc + dc;
+        if (rr < 0 || rr >= rows || rc < 0 || rc >= cols) return false;
+        return tileGrid[rr][rc] === TILE_ROOM;
+    };
+
+    for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+            if (tileGrid[r][c] !== TILE_CORRIDOR) continue;
+
+            const wx = c - ox;
+            const wz = r - oz;
+            const u  = Math.floor(rng() * 9) * tw;  // seeded UV
+            let placedDoor = false;
+
+            // Check 4 directions for room adjacency (corridor entrance = door frame)
+            const checkDirs = [
+                { dr: -1, dc: 0, axis: 'x' }, // North
+                { dr:  1, dc: 0, axis: 'x' }, // South
+                { dr:  0, dc: -1, axis: 'z' }, // West
+                { dr:  0, dc:  1, axis: 'z' }  // East
+            ];
+
+            for (const d of checkDirs) {
+                const rr = r + d.dr, rc = c + d.dc;
+                if (rr < 0 || rr >= rows || rc < 0 || rc >= cols) continue;
+                if (tileGrid[rr][rc] !== TILE_ROOM) continue;
+
+                // Scan perpendicular to find how many corridor tiles share this doorway
+                let runLen = 1;
+                let hasPrev = false;
+                let hasNext = false;
+
+                if (d.axis === 'x') {
+                    let i = 1; while (isRun(r, c - i, d.dr, d.dc)) { runLen++; i++; }
+                    if (i > 1) hasPrev = true;
+                    i = 1; while (isRun(r, c + i, d.dr, d.dc)) { runLen++; i++; }
+                    if (i > 1) hasNext = true;
+                } else {
+                    let i = 1; while (isRun(r - i, c, d.dr, d.dc)) { runLen++; i++; }
+                    if (i > 1) hasPrev = true;
+                    i = 1; while (isRun(r + i, c, d.dr, d.dc)) { runLen++; i++; }
+                    if (i > 1) hasNext = true;
+                }
+
+                if (runLen > 2) continue; // skip unusually wide openings
+
+                placedDoor = true;
+                const ph = 2.2, pw = 0.15, pd = 0.15;
+
+                if (d.axis === 'x') {
+                    if (!hasPrev) addBox(wx - 0.4, ph/2, wz, pw/2, ph/2, pd/2, u);
+                    if (!hasNext) addBox(wx + 0.4, ph/2, wz, pw/2, ph/2, pd/2, u);
+                    // Lintel only on the first (leftmost) tile of the run — prevents doubling
+                    if (!hasPrev) addBox(wx + (hasNext ? 0.5 : 0), ph, wz, (runLen === 2 ? 1.0 : 0.5), 0.1, pd/2, u);
+                } else {
+                    if (!hasPrev) addBox(wx, ph/2, wz - 0.4, pd/2, ph/2, pw/2, u);
+                    if (!hasNext) addBox(wx, ph/2, wz + 0.4, pd/2, ph/2, pw/2, u);
+                    // Lintel only on the first (topmost) tile of the run
+                    if (!hasPrev) addBox(wx, ph, wz + (hasNext ? 0.5 : 0), pd/2, 0.1, (runLen === 2 ? 1.0 : 0.5), u);
+                }
+            }
+
+            // Corridor pillar — position tracked; InstancedMesh built by spawnBSPDecorations()
+            if (!placedDoor && rng() < 0.10) {
+                outDecorations.push({ x: wx, z: wz, type: 'pillar' });
+            }
+        }
+    }
+
+    // ── Room rubble ───────────────────────────────────────────────────────────
+    // Positions tracked; InstancedMesh rubble built by spawnBSPDecorations()
+
+    for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+            if (tileGrid[r][c] !== TILE_ROOM) continue;
+            if (rng() > 0.025) continue; // ~2.5% of room tiles
+            outDecorations.push({ x: c - ox, z: r - oz, type: 'rubble' });
         }
     }
 
@@ -599,7 +709,8 @@ export function generateBSPFloor(scene, floor, rng, loadTexture, getClonedTextur
     const tileGrid = buildTileGrid(cols, rows, bspRooms, bspPaths);
 
     // ── Three.js geometry ─────────────────────────────────────────────────────
-    const mesh = buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture);
+    const decorations = [];
+    const mesh = buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture, rng, decorations);
 
     // ── Game room graph ───────────────────────────────────────────────────────
     const rooms = buildRoomGraph(bspRooms, bspConns, cols, rows);
@@ -607,5 +718,6 @@ export function generateBSPFloor(scene, floor, rng, loadTexture, getClonedTextur
     // ── Door positions ────────────────────────────────────────────────────────
     const doorPositions = findDoorPositions(tileGrid, cols, rows);
 
-    return { rooms, mesh, tileGrid, cols, rows, doorPositions };
+    const wallSheet = getThemeForFloor(floor).sheet || 'assets/images/block.png';
+    return { rooms, mesh, tileGrid, cols, rows, doorPositions, decorations, wallSheet };
 }

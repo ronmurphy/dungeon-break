@@ -37,6 +37,7 @@ export function logMsg(m) {
 }
 
 export function showManorPrompt() {
+    if (window.duckMusic) window.duckMusic();
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
     overlay.style.pointerEvents = 'auto';
@@ -554,12 +555,16 @@ function updateMapHUD() {
                 crossbowBadge.remove();
             }
 
-            // Pet Badge
+            // Clean up any stray sibling companion button from a previous session
+            const staleBtn = document.getElementById('mapCompanionBtn');
+            if (staleBtn) staleBtn.remove();
+
+            // Pet badge — bottom-left of the weapon frame, mirroring the crossbow at bottom-right
             let petBadge = mapWepBtn.querySelector('.pet-badge');
             if (!petBadge) {
                 petBadge = document.createElement('div');
                 petBadge.className = 'pet-badge';
-                petBadge.title = 'Companions';
+                petBadge.title = 'Summon / Dismiss Companion';
                 petBadge.style.cssText = 'position:absolute; bottom:-24px; right:90px; width:44px; height:44px; background:rgba(0,0,0,0.75); border:1px solid #44cc66; border-radius:2px; cursor:pointer; pointer-events:auto;';
                 petBadge.innerHTML = '<img src="assets/images/pets.png" style="width:100%; height:100%; object-fit:contain;">';
                 petBadge.onclick = (e) => {
@@ -1186,10 +1191,12 @@ window.toggleInventory = function () {
     const modal = document.getElementById('inventoryModal');
     if (modal.style.display === 'flex') {
         modal.style.display = 'none';
+        if (window.unduckMusic) window.unduckMusic();
         if (window.saveGame) window.saveGame(); // persist inventory changes
         updateUI();
     } else {
         modal.style.display = 'flex';
+        if (window.duckMusic) window.duckMusic();
         updateUI();
     }
 };
