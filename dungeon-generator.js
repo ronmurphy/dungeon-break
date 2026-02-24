@@ -15,6 +15,12 @@ export const THEMES = [
     { id: 9, name: 'Ruins',   tile: 9, sheet: null,                           color: 0x282222, fogDensity: 0.035, hemiIntensity: 0.38, weather: 'rain' },
 ];
 
+// ── Camp Map Island ──────────────────────────────────────────────────────────
+// Circular island radius for campMap terrain. Tiles outside this radius are void.
+// Tweak CAMP_ISLAND_RADIUS and CAMP_ISLAND_TAPER to resize / reshape the island.
+export const CAMP_ISLAND_RADIUS = 46; // Hard cutoff (world units from centre)
+export const CAMP_ISLAND_TAPER  =  6; // Width of soft-fade zone at the shoreline
+
 export function getThemeForFloor(floor) {
     // Special Theme for True Dungeon (Floor 99)
     if (floor === 99) {
@@ -297,11 +303,16 @@ function countNeighbors(grid, x, z, b) {
     return count;
 }
 
-export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null, isFlat = false, textureOverride = null) {
+export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, boundsOverride = null, isFlat = false, textureOverride = null, isCampMap = false) {
     const theme = getThemeForFloor(floor);
     // Larger Map: 2.5x base size + scaling
     // Cap bounds to prevent massive geometry generation on high floors (e.g. Floor 99)
     const bounds = boundsOverride !== null ? boundsOverride : Math.min(80, (30 + (floor * 5)));
+
+    // Camp-specific decoration density and reward rates
+    const decoTreeRate  = isCampMap ? 0.02 : 0.05; // Fewer trees — more intentional
+    const decoRockRate  = isCampMap ? 0.03 : 0.08; // Fewer rocks
+    const shakeableRate = isCampMap ? 0.40 : 0.15; // Richer drops (40% on camp, 15% elsewhere)
 
     const size = bounds * 2 + 1;
     let grid = {};
@@ -331,7 +342,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     for (let x = -bounds; x <= bounds; x++) {
         grid[x] = {};
         for (let z = -bounds; z <= bounds; z++) {
-            let alive = Math.random() < 0.45;
+            // Camp map starts denser so CA has fewer holes after smoothing
+            let alive = Math.random() < (isCampMap ? 0.58 : 0.45);
 
             const nearRoom = rooms.some(r => {
                 return x >= r.gx - r.w / 2 - 1 && x <= r.gx + r.w / 2 + 1 &&
@@ -342,7 +354,19 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
             const nearPath = paths.some(p => distToSegment(x, z, p.x1, p.z1, p.x2, p.z2) < 2.5);
 
             if (nearRoom || nearPath) alive = true;
-            
+
+            // Camp map: circular island with soft taper — tiles outside CAMP_ISLAND_RADIUS are void
+            if (isCampMap) {
+                const dist = Math.sqrt(x * x + z * z);
+                if (dist > CAMP_ISLAND_RADIUS) {
+                    alive = false;
+                } else if (dist > CAMP_ISLAND_RADIUS - CAMP_ISLAND_TAPER && !nearRoom && !nearPath) {
+                    // Soft shoreline: probability fades 1→0 across taper zone
+                    const taper = (CAMP_ISLAND_RADIUS - dist) / CAMP_ISLAND_TAPER;
+                    if (Math.random() > taper) alive = false;
+                }
+            }
+
             // Special initialization for empty rooms (Battle Arena Mode)
             if (rooms.length === 0 && boundsOverride !== null) {
                 alive = false; // Clear random noise
@@ -364,7 +388,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     // ========================================
     // STEP 2: CA Steps
     // ========================================
-    for (let step = 0; step < 3; step++) {
+    // Camp map uses 2 passes — less smoothing preserves organic, varied terrain shapes
+    for (let step = 0; step < (isCampMap ? 2 : 3); step++) {
         let nextGrid = JSON.parse(JSON.stringify(grid));
         for (let x = -bounds; x <= bounds; x++) {
             for (let z = -bounds; z <= bounds; z++) {
@@ -422,8 +447,20 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
             if (distToSegment(vx, vz, p.x1, p.z1, p.x2, p.z2) < 0.8) return 0;
         }
 
-        // 3. Terrain Noise
+        // 3. Terrain Height
         const noise = Math.sin(vx * 0.1) + Math.cos(vz * 0.1) + Math.sin(vx * 0.3 + vz * 0.2) * 0.5;
+
+        // Camp map: two Gaussian landmark peaks + low-freq wave for rolling hills
+        if (isCampMap) {
+            // Peak 1 — dominant mountain, east-southeast of camp
+            const p1 = 7.0 * Math.exp(-((vx - 16) ** 2 + (vz + 14) ** 2) / (2 * 55));
+            // Peak 2 — secondary peak, west-northwest
+            const p2 = 5.0 * Math.exp(-((vx + 18) ** 2 + (vz - 12) ** 2) / (2 * 40));
+            // Gentle base undulation — keeps the flat areas slightly alive (0–0.6 range)
+            const base = (Math.sin(vx * 0.08) + Math.cos(vz * 0.08)) * 0.3;
+            return p1 + p2 + base;
+        }
+
         if (noise > 1.5) return 2.5; // High Mountain
         if (noise > 0.8) return 1.0; // Hill
         if (noise < -1.2) return -1.0; // Valley
@@ -522,7 +559,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
                 if (!isStructuralTile(x, z)) {
                     const h = getVertexHeight(x, z);
                     // Trees (Dead/Spooky)
-                    if (Math.random() < 0.05) {
+                    if (Math.random() < decoTreeRate) {
                         dummy.position.set(x, h, z);
                         dummy.rotation.set((Math.random() - 0.5) * 0.2, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.2);
                         dummy.scale.setScalar(0.8 + Math.random() * 0.5);
@@ -531,7 +568,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
                         treePositions.push(new THREE.Vector3(x, h, z));
                     }
                     // Rocks/Boulders
-                    else if (Math.random() < 0.08) {
+                    else if (Math.random() < decoRockRate) {
                         dummy.position.set(x, h, z);
                         dummy.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
                         dummy.scale.setScalar(0.5 + Math.random() * 0.6);
@@ -657,7 +694,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         const baseTreeColor = new THREE.Color(0x2a1d15);
         for (let i = 0; i < treeInstances.length; i++) {
             treeMesh.setColorAt(i, baseTreeColor);
-            if (Math.random() < 0.15) {  // 15% chance to be shakeable (adjust as needed)
+            if (Math.random() < shakeableRate) {  // campMap: 40% | regular: 15%
                 treeShakeable.add(i);
                 treeRewards.set(i, Math.floor(2 + Math.random() * 4)); // weapon val 2–5
             }
@@ -691,7 +728,7 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
         const baseRockColor = new THREE.Color(0x555555);
         for (let i = 0; i < rockInstances.length; i++) {
             rockMesh.setColorAt(i, baseRockColor); // Init per-instance color buffer
-            if (Math.random() < 0.15) {  // 15% chance to be flippable (adjust as needed)
+            if (Math.random() < shakeableRate) {  // campMap: 40% | regular: 15%
                 flippable.add(i);
                 rewards.set(i, Math.random() < 0.6 ? 'coin' : 'potion');
             }

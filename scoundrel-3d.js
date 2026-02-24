@@ -274,8 +274,8 @@ window.goMap = function (map) {
         // Camp/town map: 3 fixed buildings, small flat terrain, 6 marker props
         game.rooms = generateCampRooms();
         game.campMap = true;
-        // bounds=35 gives 71×71 grid — big enough for wanderers and marker spread
-        globalFloorMesh = generateFloorCA(scene, floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 35, false);
+        // bounds=50 gives a 101×101 grid; isCampMap enables circular island + Gaussian peaks
+        globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 50, false, null, true);
         extractCAGrid(globalFloorMesh);
         updateAtmosphere(floor);
         initWanderers();
@@ -285,18 +285,17 @@ window.goMap = function (map) {
         // ── Place 6 marker GLBs around the camp ──────────────────────────────
         const CAMP_MARKERS = [
             'assets/images/glb/Arcane_Altar-marker-web.glb',
-            'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb',
             'assets/images/glb/Cursed_Treasure_Chest-marker-web.glb',
             'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb',
             'assets/images/glb/Warden_Cube-marker-web.glb',
             'assets/images/glb/Whispering_Obelisk-marker-web.glb',
         ];
-        // Candidate positions — kept well inside bounds=35 so CA terrain exists;
+        // Candidate positions — kept well inside bounds=50 so CA terrain exists;
         // fall back to nearest walkable cell if the exact spot is void
         const MARKER_POSITIONS = [
             { x: -10, z:  5 }, { x:  10, z: -5 },
             { x:  -5, z: 10 }, { x:   5, z:-10 },
-            { x:  -8, z: -8 }, { x:  10, z: 10 },
+            { x:  -8, z: -8 },
         ];
         CAMP_MARKERS.forEach((path, i) => {
             let pos = { ...MARKER_POSITIONS[i] };
@@ -385,7 +384,21 @@ window.help = function() {
     console.log('%c\n── Also available ────────────────────────────────────', h);
     console.log('%cgame%c                        %cthe live game state object', w, d, d);
     console.log('%ccombatState%c                 %cthe live combat state object', w, d, d);
+    console.log('%cwhereAmI%c()                  %cprint floor, kills, deck size, and map type', w, d, d);
     console.log('%c\n', d);
+};
+
+window.whereAmI = function() {
+    const g = 'color:#d4af37;font-weight:bold';
+    const w = 'color:#ffffff';
+    const mapType = game.useBSP ? 'BSP Dungeon' : game.campMap ? 'CA Camp' : 'CA Overworld';
+    console.log('%c── Where Am I? ──────────────────────────', g);
+    console.log(`%cFloor:       %c${game.floor}`, 'color:#aaa', w);
+    console.log(`%cMap type:    %c${mapType}`, 'color:#aaa', w);
+    console.log(`%cFloor kills: %c${game.floorKills || 0}`, 'color:#aaa', w);
+    console.log(`%cDeck size:   %c${game.deck ? game.deck.length : '?'} cards`, 'color:#aaa', w);
+    console.log(`%cHP:          %c${game.hp} / ${game.maxHp}`, 'color:#aaa', w);
+    console.log(`%cGold:        %c${game.gold || 0}`, 'color:#aaa', w);
 };
 
 // Store player pos before teleporting to Battle Island
@@ -401,6 +414,7 @@ let playerReturnPos = null;
 let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
 let wanderers = [];
+let BASE_CAMP_WANDERERS = 4; // Baseline NPC count for camp; set higher before initWanderers() for story events
 const WANDERER_Y_LIFT = 0.08; // Keep enemies just under player height (0.1) so range circles are visible and overlap cleanly
 const JUMP_MAX_GAP = 2.2;         // Max horizontal gap (world units) player/wanderer can jump across
 const JUMP_MAX_HEIGHT_DIFF = 2.0; // Max up/down height change on a jump
@@ -1717,6 +1731,7 @@ function init3D() {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enablePan = false;   // Dungeon default: camera follows player, no manual panning
     controls.enableRotate = true; // Restore spinning for Map View
+    controls.maxPolarAngle = Math.PI * 0.42; // ~75° — prevent top-down flip
     controls.maxZoom = 2;
     controls.minZoom = 0.5;
     controls.mouseButtons = {
@@ -1982,7 +1997,7 @@ function initWanderers() {
     let count = 3 + Math.floor(game.floor);
 
     // Camp map keeps it peaceful — just a handful of wandering NPCs
-    if (game.campMap) count = 4;
+    if (game.campMap) count = BASE_CAMP_WANDERERS;
 
     // Apply Benchmark Math ONLY for True Dungeon
     if (game.inTrueDungeon) {
@@ -2019,8 +2034,10 @@ function initWanderers() {
 
             while (!valid && attempts < 50) {
                 attempts++;
-                const bounds = 12 + (game.floor * 2);
-                const r = 5 + Math.random() * (bounds - 6);
+                // Camp map: annular ring 12–28 — avoids central rooms, stays well within island radius
+                const rMin = game.campMap ? 12 : 5;
+                const rMax = game.campMap ? 28 : 12 + (game.floor * 2);
+                const r = rMin + Math.random() * (rMax - rMin);
                 const angle = Math.random() * Math.PI * 2;
                 sx = Math.cos(angle) * r;
                 sz = Math.sin(angle) * r;
@@ -2138,8 +2155,10 @@ function pickWandererTarget(wanderer) {
 
     while (!valid && attempts < 50) {
         attempts++;
-        const bounds = 12 + (game.floor * 2);
-        const r = 5 + Math.random() * (bounds - 6); // Wander within valid floor bounds
+        // Camp map: annular ring 12–28 — matches spawn zone so wanderers patrol the same area
+        const rMin = game.campMap ? 12 : 5;
+        const rMax = game.campMap ? 28 : 12 + (game.floor * 2);
+        const r = rMin + Math.random() * (rMax - rMin); // Wander within valid floor bounds
         const angle = Math.random() * Math.PI * 2;
         x = Math.cos(angle) * r;
         z = Math.sin(angle) * r;
@@ -8971,6 +8990,8 @@ function saveGame() {
         bonfireUsed: game.bonfireUsed, merchantUsed: game.merchantUsed,
         floorKills: game.floorKills || 0,
         enemiesDefeated: game.enemiesDefeated || 0,
+        useBSP: game.useBSP,
+        campMap: game.campMap || false,
         slainStack: game.slainStack,
         equipment: game.equipment,
         weaponDurability: game.weaponDurability,
@@ -9058,22 +9079,42 @@ function loadGame() {
     init3D();
     preloadFXTextures();
 
-    // All normal floors use BSP — ensure the flag is set even on old saves
-    game.useBSP = true;
+    // Detect map type from save — default BSP for old saves that lack the flag
+    const savedCampMap = data.campMap || false;
+    const savedUseBSP  = data.useBSP !== undefined ? data.useBSP : true;
+    game.useBSP  = savedUseBSP;
+    game.campMap = savedCampMap;
+
     playMusic(game.isBossFight ? 'boss' : game.useBSP ? 'night' : 'day');
 
-    // Re-generate floor mesh from BSP (seeded — always matches saved layout)
-    // game.rooms stays as loaded from save (preserves cleared/uncleared states)
-    const bspLoad = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
-    globalFloorMesh = bspLoad.mesh;
-    bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
-    bspHeightGrid = bspLoad.heightGrid;
-    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
-    spawnBSPDoors(bspLoad.doorPositions);
-    spawnBSPDecorations(bspLoad.decorations || [], bspLoad.wallSheet);
-    createDungeonDustMotes();
-
-    updateAtmosphere(game.floor);
+    if (savedCampMap) {
+        // ── Restore CA camp map ──────────────────────────────────────────────
+        game.useBSP = false;
+        game.campMap = true;
+        // Camp rooms are deterministic — regenerate from scratch (no per-room state to preserve)
+        game.rooms = generateCampRooms();
+        globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 50, false, null, true);
+        extractCAGrid(globalFloorMesh);
+        updateAtmosphere(1);
+    } else if (!savedUseBSP) {
+        // ── Restore standard CA floor ────────────────────────────────────────
+        game.useBSP = false;
+        globalFloorMesh = generateFloorCA(scene, game.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture);
+        extractCAGrid(globalFloorMesh);
+        updateAtmosphere(game.floor);
+    } else {
+        // ── Restore BSP dungeon (default) ────────────────────────────────────
+        game.useBSP = true;
+        const bspLoad = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
+        globalFloorMesh = bspLoad.mesh;
+        bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
+        bspHeightGrid = bspLoad.heightGrid;
+        Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
+        spawnBSPDoors(bspLoad.doorPositions);
+        spawnBSPDecorations(bspLoad.decorations || [], bspLoad.wallSheet);
+        createDungeonDustMotes();
+        updateAtmosphere(game.floor);
+    }
     initWanderers();
 
     // Restore Player Position — exact coords if saved, room centre as fallback
@@ -10576,7 +10617,7 @@ function exitCombatView() {
     controls.enableRotate = true;
     controls.enablePan = false; // Dungeon follows player; battle island sets its own pan in enterBossArena
     controls.autoRotate = false;
-    controls.maxPolarAngle = Math.PI;
+    controls.maxPolarAngle = Math.PI * 0.42; // ~75° — matches init3D default, prevents top-down lock
     controls.minDistance = 0;
     controls.maxDistance = Infinity;
     controls.mouseButtons = {
