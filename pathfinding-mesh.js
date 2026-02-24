@@ -98,9 +98,10 @@ export class Pathfinder {
      * @param {Array<Uint8Array>} grid - The floor grid [row][col] from bsp-dungeon.js
      * @param {number} cols - Grid width
      * @param {number} rows - Grid height
+     * @param {Object} options - { getHeight: (x, z) => number }
      * @returns {Array} Array of {x, z} points (including start and end), or null if no path.
      */
-    static findPath(start, end, grid, cols, rows) {
+    static findPath(start, end, grid, cols, rows, options = {}) {
         // 1. Validate Start/End
         if (!this.isValid(start.x, start.z, grid, cols, rows)) return null;
         
@@ -158,6 +159,14 @@ export class Pathfinder {
                 if (closedSet.has(nKey)) continue;
                 if (!this.isValid(nx, nz, grid, cols, rows)) continue;
 
+                // Height Check (if provided)
+                if (options.getHeight) {
+                    const h1 = options.getHeight(current.x, current.z);
+                    const h2 = options.getHeight(nx, nz);
+                    // Max step height 1.5 units (handles steep hills but blocks cliffs)
+                    if (Math.abs(h2 - h1) > 1.5) continue;
+                }
+
                 // Diagonal cost = 1.414, Cardinal = 1.0
                 const isDiag = (offset.x !== 0 && offset.z !== 0);
                 const moveCost = isDiag ? 1.414 : 1.0;
@@ -197,7 +206,7 @@ export class Pathfinder {
     static isValid(x, z, grid, cols, rows) {
         if (x < 0 || x >= cols || z < 0 || z >= rows) return false;
         const tile = grid[z][x]; // grid[row][col]
-        // 1=Room, 2=Corridor. 0=Empty, 3=Wall.
+        // 1=Room, 2=Corridor (BSP). 1=Walkable (CA).
         return tile === 1 || tile === 2;
     }
 

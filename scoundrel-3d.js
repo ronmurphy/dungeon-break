@@ -2777,19 +2777,59 @@ function on3DClick(event, isRightClick = false) {
         const floorHits = floorRaycaster.intersectObject(targetFloor, true);
 
         if (floorHits.length > 0) {
+            const point = floorHits[0].point;
+
             // 0. BSP Pathfinding Check (Only in main dungeon, not combat/helix)
-            if (gameSettings.usePathfinding && game.useBSP && !isCombatView && !inHelixZone && !inBattleIsland && globalFloorMesh) {
-                const point = floorHits[0].point;
+            let grid, cols, rows, offsetX, offsetZ, heightGrid;
+            let usePath = gameSettings.usePathfinding && !isCombatView && !inHelixZone;
+
+            if (usePath) {
+                if (game.useBSP && bspGrid && !inBattleIsland) {
+                    grid = bspGrid; cols = bspCols; rows = bspRows;
+                    offsetX = bspCols / 2; offsetZ = bspRows / 2;
+                } else if (targetFloor.userData && targetFloor.userData.pathGrid) {
+                    // CA Floor (Overworld / Battle Island)
+                    grid = targetFloor.userData.pathGrid;
+                    heightGrid = targetFloor.userData.heightGrid;
+                    cols = targetFloor.userData.gridWidth;
+                    rows = targetFloor.userData.gridHeight;
+                    offsetX = targetFloor.userData.boundsOffset;
+                    offsetZ = targetFloor.userData.boundsOffset;
+                } else if (targetFloor.children && targetFloor.children.length > 0) {
+                    // Handle Battle Island Group (find the mesh with the grid)
+                    const meshWithGrid = targetFloor.children.find(c => c.userData && c.userData.pathGrid);
+                    if (meshWithGrid) {
+                        grid = meshWithGrid.userData.pathGrid;
+                        heightGrid = meshWithGrid.userData.heightGrid;
+                        cols = meshWithGrid.userData.gridWidth;
+                        rows = meshWithGrid.userData.gridHeight;
+                        offsetX = meshWithGrid.userData.boundsOffset;
+                        offsetZ = meshWithGrid.userData.boundsOffset;
+                    }
+                }
+            }
+
+            if (grid) {
                 const startNode = {
-                    x: Math.round(playerMesh.position.x + bspCols / 2),
-                    z: Math.round(playerMesh.position.z + bspRows / 2)
+                    x: Math.round(playerMesh.position.x + offsetX),
+                    z: Math.round(playerMesh.position.z + offsetZ)
                 };
                 const endNode = {
-                    x: Math.round(point.x + bspCols / 2),
-                    z: Math.round(point.z + bspRows / 2)
+                    x: Math.round(point.x + offsetX),
+                    z: Math.round(point.z + offsetZ)
                 };
                 
-                const path = Pathfinder.findPath(startNode, endNode, bspGrid, bspCols, bspRows);
+                // Height callback for CA floors (hills)
+                let heightCb = null;
+                if (heightGrid) {
+                    heightCb = (gx, gz) => {
+                        if (gz >= 0 && gz < heightGrid.length && gx >= 0 && gx < heightGrid[0].length) return heightGrid[gz][gx];
+                        return 0;
+                    };
+                }
+
+                const path = Pathfinder.findPath(startNode, endNode, grid, cols, rows, { getHeight: heightCb });
+
                 if (path && path.length > 0) {
                     // Show Destination Marker
                     if (destinationMarker) {
@@ -2797,12 +2837,10 @@ function on3DClick(event, isRightClick = false) {
                         destinationMarker.visible = true;
                     }
 
-                    movePlayerAlongPath(path, isRightClick);
+                    movePlayerAlongPath(path, isRightClick, offsetX, offsetZ);
                     return;
                 }
             }
-
-            let point = floorHits[0].point;
 
             // Helix zone: snap destination to nearest spiral-path waypoint so the
             // player can only walk the path, not cut across the side walls / slopes.
@@ -4251,10 +4289,10 @@ function detectJumpGap(startPos, endPos) {
     return { startY, endY };
 }
 
-function movePlayerAlongPath(path, isRunning) {
+function movePlayerAlongPath(path, isRunning, offsetX, offsetZ) {
     // Convert grid coords back to world coords
     // path is array of {x, z}
-    const worldPoints = path.map(p => new THREE.Vector3(p.x - bspCols/2, 0, p.z - bspRows/2));
+    const worldPoints = path.map(p => new THREE.Vector3(p.x - offsetX, 0, p.z - offsetZ));
     
     // Remove first point if it's the tile we are currently standing on (prevents stutter)
     if (worldPoints.length > 0 && worldPoints[0].distanceTo(playerMesh.position) < 0.6) {

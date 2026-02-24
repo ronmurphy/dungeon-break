@@ -528,6 +528,33 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     // STEP 4: Create the final merged mesh
     // ========================================
 
+    // Convert sparse grid to dense array for pathfinding
+    // CA grid is centered at 0,0 with range [-bounds, +bounds]
+    // We map this to [0, width] for the pathfinder
+    const denseGrid = [];
+    const heightGrid = [];
+    const gridWidth = bounds * 2 + 1;
+    const gridHeight = bounds * 2 + 1;
+    
+    for (let z = 0; z < gridHeight; z++) {
+        const row = new Uint8Array(gridWidth);
+        const hRow = new Float32Array(gridWidth);
+        const worldZ = z - bounds;
+        for (let x = 0; x < gridWidth; x++) {
+            const worldX = x - bounds;
+            // Check if tile exists in sparse grid
+            if (grid[worldX] && grid[worldX][worldZ]) {
+                row[x] = 1; // Walkable
+                hRow[x] = getVertexHeight(worldX, worldZ);
+            } else {
+                row[x] = 0; // Void
+                hRow[x] = -9999;
+            }
+        }
+        denseGrid.push(row);
+        heightGrid.push(hRow);
+    }
+
     const mergedGeometry = new THREE.BufferGeometry();
     mergedGeometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     mergedGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
@@ -579,6 +606,13 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     floorMesh.receiveShadow = true;
     floorMesh.matrixAutoUpdate = false;
     floorMesh.updateMatrix();
+
+    // Attach pathfinding data
+    floorMesh.userData.pathGrid = denseGrid;
+    floorMesh.userData.heightGrid = heightGrid;
+    floorMesh.userData.gridWidth = gridWidth;
+    floorMesh.userData.gridHeight = gridHeight;
+    floorMesh.userData.boundsOffset = bounds; // To convert grid index back to world coord (index - bounds)
 
     scene.add(floorMesh);
 
