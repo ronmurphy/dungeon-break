@@ -11234,6 +11234,15 @@ function checkCombatEnd(target) {
     if (target.stats.hp <= 0) {
         logCombat("Enemy defeated!", '#ffd700');
 
+        // Necromancer passive — Death Harvest: any kill has a LCK-scaled chance to siphon 1 HP
+        if (game.classId === 'necromancer') {
+            const lck = game.stats?.lck || 1;
+            if (Math.random() * 100 < 15 + lck * 5) {
+                game.hp = Math.min(game.hp + 1, game.maxHp);
+                spawnFloatingText('✦ +1', window.innerWidth / 2 + 30, window.innerHeight / 2 + 30, '#aa44ff');
+            }
+        }
+
         const power = (target.stats.str || 1) + 4;
         game.slainStack.push({ type: 'monster', val: power, suit: '💀', name: enemyDisplayName(target) });
         spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
@@ -11281,6 +11290,11 @@ function checkLevelUp() {
     if (game.xp >= xpNeeded) {
         game.xp = 0; // resets to 0 for the new level
         game.level++;
+        // Every 3rd level, Luck grows on its own
+        if (game.level % 3 === 0) {
+            game.stats.lck = (game.stats.lck || 1) + 1;
+            setTimeout(() => spawnFloatingText('☆ Fortune Smiles', window.innerWidth / 2, window.innerHeight / 2 + 80, '#d4af37'), 900);
+        }
         // Small delay so VICTORY floater clears first
         setTimeout(showLevelUpModal, 800);
     }

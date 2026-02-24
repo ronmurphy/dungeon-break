@@ -1,6 +1,6 @@
 # Dungeon Break - Progress & Roadmap
 
-*Last updated: 2026-02-22 (session 4)*
+*Last updated: 2026-02-23 (session 5)*
 
 ---
 
@@ -293,11 +293,30 @@ The last option (extend existing CA) is the lowest-risk starting point and produ
 
 ### Medium Priority
 - [ ] **Analyze command** — Expand tracker row on click to show enemy HP/AC/STR.
-- [ ] **Necromancer passive** — "Exact kills heal 1 HP" not yet wired.
+- [x] **Necromancer passive** — *Death Harvest*: any kill in combat rolls `(15 + LCK×5)%` chance to siphon 1 HP. At LCK 1 = 20%, LCK 5 = 40%. Scales with Luck.
+- [x] **Luck auto-growth** — Every 3rd level-up grants a free LCK +1 ("☆ Fortune Smiles" toast) regardless of stat choice. Makes LCK meaningful across all classes.
 - [ ] **Equip command** — Quick-swap gear during combat (1/battle).
 - [ ] **Other class passives** — Priest waypoint heals, Paladin +AP on kills, Ranger waypoint reveal, Artificer consumable save chance.
 - [ ] **XP / Leveling** — Gain stat points on level-up.
 - [ ] **Three-slot save system** — Save game seed so floor layout is consistent on reload. Three save slots.
+
+### Camp NPC System (Planned)
+
+Art complete (`camp_scene.png` — Joe, Mira, Old Pell around a campfire).
+
+**NPC roles:**
+- **Joe** — merchant in fine traveling clothes. Shop panel. "Reliable but expensive." Warm firelight personality.
+- **Mira** — information broker, maps and scrolls. Slightly withdrawn — player seeks her out, she doesn't approach. Reveals floor intel, enemy density, room layouts.
+- **Old Pell** — lore anchor. Carries a shard of the Azure Flame in a bowl. He placed (or tends) the Azure Flames in the dungeon. Knows what the flame is protecting against and why someone keeps descending. Dialogue is the *why* behind all of it — not practical advice, but meaning.
+
+**Dialogue split:**
+- Pell = lore / why the dungeon exists / what's deeper down
+- Mira = practical intelligence (what's on this floor, what's been seen)
+- Joe = commerce
+
+**Implementation:** CA overworld floor, NPC markers similar to Manor/Bonfire. Portrait crops (256×256) needed from camp_scene.png for dialogue panels.
+
+---
 
 ### Twin Boss Encounter (Deferred — post-helix)
 - Final encounter: both twins spawn simultaneously as a 2-enemy combat.
@@ -309,6 +328,13 @@ The last option (extend existing CA) is the lowest-risk starting point and produ
 - [ ] **Height map** — Terrain elevation variation, new file, doesn't touch existing systems.
 - [ ] **Asset compression** — Any remaining GLBs without `-web` suffix need compression pipeline.
 - [ ] **Tauri desktop wrapper** — Post-completion packaging (~3MB vs Electron's ~150MB).
+
+### Session 5 additions ✅
+- **BSP decorations:** Pillars (BoxGeometry, wood texture, 15% lootable → weapon/item) and rubble (DodecahedronGeometry, 15% lootable → coin/potion). Both use InstancedMesh matching rocks/trees. Gold hover tint on lootable instances. `topplePillar()` falls in random cardinal direction; `flipBSPRubble()` hops like rocks.
+- **Pillar texture:** `woodpillar.png` (128×128) via `getClonedTexture`, matches floor theme sheet on non-pillar arches.
+- **Companion pet opacity fix:** `spawnPet()` now clones all materials and forces `transparent=false, opacity=1.0` — eliminates FPS hit from alpha blend draw calls.
+- **Dismiss pet:** `window.dismissPet()` global wired to pet badge onclick.
+- **Music system:** `SoundManager` (`bg_1/2/3.ogg` by floor tier, synth drone fallback) was already present and is the active BGM. New OGG system (`forestDay/forestNight/bloodMoon`) built but parked (`playMusic()` returns early) — ready to activate when boss/overworld tracks are composed. BGM volume slider added to Options modal. Mute Music checkbox now actually fades audio. `duckMusic()`/`unduckMusic()` called on inventory open/close, Whispering Manor enter/leave, and intermission.
 
 ### Weapon Sprite Sheet Reference (`weapons_final.png` — 20 cells, 128×128)
 Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–19 are the new additions.
