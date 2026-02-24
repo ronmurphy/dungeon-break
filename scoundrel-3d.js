@@ -20,7 +20,7 @@ import { CombatResolver, DND_CONFIG, DiceRoller } from './dnd-mechanics.js';
 import { CardDesigner } from './card-designer.js';
 import { CombatManager } from './combat-manager.js';
 import BattleIsland, { createBattleIsland, addArenaWalls } from './battle-island.js';
-import { generateDungeon as _generateDungeon, generateFloorCA as _generateFloorCA, getThemeForFloor, shuffle } from './dungeon-generator.js';
+import { generateDungeon as _generateDungeon, generateFloorCA as _generateFloorCA, generateCampRooms, getThemeForFloor, shuffle } from './dungeon-generator.js';
 import { generateBSPFloor } from './bsp-dungeon.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getWeaponName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, showFountainPrompt, updateInitStrip } from './ui-manager.js';
@@ -241,6 +241,110 @@ window.testDungeon       = function (floor = 1) {
     console.log(`%c[testDungeon] Floor ${floor} — ${game.rooms.filter(r=>!r.isWaypoint).length} rooms`, 'color:#d4af37;font-weight:bold');
 };
 
+// ── goMap(name) ── jump to a specific map type from the console ───────────────
+// Usage: goMap('BSP')  goMap('CA')  goMap('BI')
+window.goMap = function (map) {
+    const m = (map || '').toLowerCase();
+    const floor = (game.floor > 0 ? game.floor : 1);
+
+    // Ensure a valid character exists so every map can spawn enemies/UI
+    if (!game.classId) game.classId = 'scoundrel';
+    if (!game.stats)   game.stats   = { str: 2, dex: 2, int: 2, lck: 2 };
+    if (!game.maxHp)   { game.maxHp = 20; game.hp = 20; }
+
+    const _baseSetup = () => {
+        game.floor = floor;
+        game.seed  = (Math.random() * 0xFFFFFFFF | 0) >>> 0 || 1;
+        game.deck  = createDeck();
+        game.currentRoomIdx = 0;
+        game.isBossFight = false;
+        game.campMap = false;
+        game.visitedWaypoints = [];
+        isAttractMode = false;
+        closeCombat();
+        clear3DScene(); init3D(); preloadFXTextures();
+    };
+
+    if (m === 'bsp') {
+        testDungeon(floor);
+
+    } else if (m === 'ca') {
+        _baseSetup();
+        game.useBSP = false;
+        // Camp/town map: 3 fixed buildings, small flat terrain, 6 marker props
+        game.rooms = generateCampRooms();
+        game.campMap = true;
+        // bounds=27 gives 55×55 grid (~1/3 bigger than 41×41), elevation kept for terrain interest
+        globalFloorMesh = generateFloorCA(scene, floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 27, false);
+        updateAtmosphere(floor);
+        initWanderers();
+        updateUI();
+        enterRoom(0);
+
+        // ── Place 6 marker GLBs at random spots in the camp ─────────────────
+        const CAMP_MARKERS = [
+            'assets/images/glb/Arcane_Altar-marker-web.glb',
+            'assets/images/glb/Azure_Flame_Obelisk-marker-web.glb',
+            'assets/images/glb/Cursed_Treasure_Chest-marker-web.glb',
+            'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb',
+            'assets/images/glb/Warden_Cube-marker-web.glb',
+            'assets/images/glb/Whispering_Obelisk-marker-web.glb',
+        ];
+        // Fixed spread positions (avoid room centres and map edges)
+        const MARKER_POSITIONS = [
+            { x: -14, z:  4 }, { x:  14, z: -4 },
+            { x:  -4, z: 14 }, { x:   4, z:-14 },
+            { x: -12, z: 12 }, { x:  12, z: 12 },
+        ];
+        CAMP_MARKERS.forEach((path, i) => {
+            const pos = MARKER_POSITIONS[i];
+            // Raycast terrain to find correct ground Y so markers sit on the surface
+            const campRay = new THREE.Raycaster();
+            campRay.set(new THREE.Vector3(pos.x, 50, pos.z), new THREE.Vector3(0, -1, 0));
+            const hits = globalFloorMesh ? campRay.intersectObject(globalFloorMesh) : [];
+            const groundY = hits.length > 0 ? hits[0].point.y : 0;
+
+            const anchor = new THREE.Mesh(
+                new THREE.BoxGeometry(0.5, 1.5, 0.5),
+                new THREE.MeshStandardMaterial({ visible: false })
+            );
+            anchor.position.set(pos.x, groundY, pos.z);
+            scene.add(anchor);
+            const key = path.split('/').pop();
+            loadGLB(path, (model) => {
+                const box = new THREE.Box3().setFromObject(model);
+                model.position.set(0, -box.min.y, 0);
+                model.scale.setScalar(1.0);
+                anchor.add(model);
+            }, 1.0, key);
+        });
+        console.log(`%c[goMap CA] Camp map — floor ${floor}`, 'color:#d4af37;font-weight:bold');
+
+    } else if (m === 'bi') {
+        // Build a minimal BSP dungeon so the scene/wanderers are valid,
+        // then trigger the boss encounter — player clicks "ENTER THE LAIR"
+        // and the real Battle Island spawns with the boss GLB loaded.
+        _baseSetup();
+        game.useBSP = true;
+        const bsp = generateBSPFloor(scene, floor, _rngMulberry32(floorSeed(floor)), loadTexture, getClonedTexture);
+        game.rooms     = bsp.rooms;
+        globalFloorMesh = bsp.mesh;
+        bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+        bspHeightGrid  = bsp.heightGrid;
+        Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
+        spawnBSPDoors(bsp.doorPositions);
+        initWanderers();
+        updateUI();
+        enterRoom(0);
+        // Short delay lets the scene settle before the boss prompt appears
+        setTimeout(() => { game.isBossFight = false; startBossEncounter(); }, 800);
+        console.log(`%c[goMap BI] Click "ENTER THE LAIR" to load Battle Island`, 'color:#d4af37;font-weight:bold');
+
+    } else {
+        console.warn(`goMap: unknown map "${map}". Valid options: "BSP", "CA", "BI"`);
+    }
+};
+
 window.help = function() {
     const g = 'color:#d4af37;font-weight:bold;font-size:13px';
     const w = 'color:#ffffff;font-weight:bold';
@@ -251,6 +355,7 @@ window.help = function() {
     console.log('%c╚══════════════════════════════════════════════════════╝', g);
     console.log('%c\n── Development / Testing ─────────────────────────────', h);
     console.log('%ctestDungeon%c(floor=1)        %cdrop into a BSP dungeon, skips class select', w, d, d);
+    console.log('%cgoMap%c("BSP"|"CA"|"BI")      %cjump directly to a map type', w, d, d);
     console.log('%cdebugBoss%c()                 %cstart boss encounter immediately', w, d, d);
     console.log('%cdebugIntermission%c(floor,coins)  %cjump to floor intermission', w, d, d);
     console.log('%cdebugHelix%c(floor=1)         %ctrigger helix zone descent', w, d, d);
@@ -1835,6 +1940,9 @@ function initWanderers() {
 
     // Revert to standard enemy count for normal floors
     let count = 3 + Math.floor(game.floor);
+
+    // Camp map keeps it peaceful — just a handful of wandering NPCs
+    if (game.campMap) count = 4;
 
     // Apply Benchmark Math ONLY for True Dungeon
     if (game.inTrueDungeon) {
