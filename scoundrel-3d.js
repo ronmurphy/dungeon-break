@@ -1497,6 +1497,18 @@ function handleWindowResize() {
     }
 }
 window.addEventListener('resize', handleWindowResize);
+window.handleWindowResize = handleWindowResize;
+
+// ── qperf(true/false) — Quality/Performance mode ────────────────────────────
+// Shrinks the 3D canvas to the top 68 % of the viewport so all UI elements
+// sit in a dedicated bottom strip instead of overlaying the 3D scene.
+// Fewer pixels rendered → better FPS on lower-end machines.
+window.qperf = function (on) {
+    document.body.classList.toggle('qperf', on);
+    // Wait one frame for CSS to resize #v3-container before Three.js reads it
+    requestAnimationFrame(() => handleWindowResize());
+    console.log(`%c QPERF ${on ? 'ON  🟢' : 'OFF 🔴'} `, 'background:#111;color:#d4af37;font-weight:bold;padding:3px 8px;');
+};
 
 
 function init3D() {
@@ -8226,7 +8238,8 @@ let gameSettings = {
     lod: { near: 40, far: 80 },
     pixelRatio: 1.5,
     benchmarkFPS: 30, // Default safe value
-    usePathfinding: true
+    usePathfinding: true,
+    qperf: false
 };
 
 function loadSettings() {
@@ -8284,6 +8297,11 @@ window.showOptionsModal = function () {
                     <option value="custom">Custom</option>
                     ${Object.entries(PROFILES).map(([key, val]) => `<option value="${key}">${val.name}</option>`).join('')}
                 </select>
+            </div>
+
+            <div style="margin:10px 0; text-align:left; display:flex; align-items:center; gap:10px; padding:8px; background:rgba(212,175,55,0.07); border:1px solid rgba(212,175,55,0.25); border-radius:3px;">
+                <input type="checkbox" id="qperfMode" ${gameSettings.qperf ? 'checked' : ''} onchange="updateSetting('qperf', this.checked)">
+                <label for="qperfMode" style="cursor:pointer;">Quality Performance Mode <span style="font-size:0.7rem; color:#aaa;">(smaller canvas, better FPS)</span></label>
             </div>
             
             <div style="margin:20px 0; text-align:left;">
@@ -8431,6 +8449,10 @@ window.updateSetting = function (type, val) {
     }
     if (type === 'pathfinding') {
         gameSettings.usePathfinding = val;
+    }
+    if (type === 'qperf') {
+        gameSettings.qperf = val;
+        if (typeof window.qperf === 'function') window.qperf(val);
     }
 
     // If a graphics-related setting is changed manually, set profile to custom
@@ -12608,6 +12630,8 @@ window.addEventListener('mousedown', (e) => {
 
 // Initialize Layout
 loadSettings();
+// Apply persisted qperf state before init3D so the canvas starts at the right size
+if (gameSettings.qperf) document.body.classList.add('qperf');
 loadRoomConfig().then(() => {
     setupLayout();
     initAttractMode();

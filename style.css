@@ -1786,3 +1786,80 @@ h1 {
 
 /* Restore default behavior for non-gothic mode (width:100% of container is default) */
 /* The container is 100% width/height of parent by defaultJS, so no change needed there */
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   QPERF MODE  —  window.qperf(true/false)
+   Shrinks the 3D canvas to the top 68 % of the viewport.  All UI elements
+   reflow into a dedicated dark strip at the bottom.  Fewer pixels rendered
+   = higher FPS on lower-end machines.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Strip background — body bg colour shows below the canvas */
+body.qperf {
+    background: #0d0d0f;
+}
+
+/* Gold divider line between canvas and UI strip */
+body.qperf::after {
+    content: '';
+    position: fixed;
+    top: 68vh;
+    left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(to right,
+        transparent,
+        rgba(212,175,55,0.55) 15%,
+        rgba(212,175,55,0.55) 85%,
+        transparent);
+    z-index: 9999;
+    pointer-events: none;
+}
+
+/* Shrink 3D canvas to top 68 % of viewport */
+body.qperf #v3-container {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 68vh !important;
+}
+
+/* Gothic bar — centred in strip, scaled down */
+body.qperf #gameplayInventoryBar.gothic-hud-active {
+    top: calc(68vh + 6px) !important;
+    bottom: auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) scale(0.78) !important;
+    transform-origin: top center !important;
+}
+
+/* Combat menu — left side of strip (JS still sets left:20px when shown) */
+body.qperf #combatMenuGrid {
+    top: calc(68vh + 10px) !important;
+    bottom: auto !important;
+    transform: scale(0.82) !important;
+    transform-origin: top left !important;
+}
+
+/* Combat tracker — right side of strip */
+body.qperf #combatTracker {
+    top: calc(68vh + 10px) !important;
+    bottom: auto !important;
+    right: 20px !important;
+    left: auto !important;
+}
+
+/* ≤1080px wide: tighter scaling to avoid overlap */
+@media (max-width: 1080px) {
+    body.qperf #gameplayInventoryBar.gothic-hud-active {
+        transform: translateX(-50%) scale(0.62) !important;
+    }
+    body.qperf #combatMenuGrid {
+        transform: scale(0.72) !important;
+    }
+    body.qperf #combatTracker {
+        transform: scale(0.82) !important;
+        transform-origin: top right !important;
+    }
+}
