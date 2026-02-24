@@ -25,6 +25,7 @@ import { generateBSPFloor } from './bsp-dungeon.js';
 import { game, SUITS, CLASS_DATA, ITEM_DATA, ARMOR_DATA, CURSED_ITEMS, createDeck, getMonsterName, getSpellName, getWeaponName, getAssetData, getDisplayVal, getUVForCell } from './game-state.js';
 import { updateUI, renderInventoryUI, spawnFloatingText, logMsg, setupInventoryUI, addToBackpack, addToHotbar, recalcAP, handleDrop, burnTrophy, getFreeBackpackSlot, hideCombatMenu, showCombatMenu, showCombatTracker, updateCombatTracker, removeCombatTracker, COMBAT_COLORS, logToTracker, spawnHudFloatingText, showManorPrompt, showAzureFlamePrompt, showFountainPrompt, updateInitStrip } from './ui-manager.js';
 import { getEnemyStats } from './enemy-database.js';
+import { Pathfinder } from './pathfinding-mesh.js';
 // import { createHelixCA, addHelixWalls } from './helix-ca.js';
 
 let roomConfig = {}; // Stores custom transforms for GLB models
@@ -110,6 +111,7 @@ let _helixExitPromptShown = false;
 let helixPathWaypoints   = null;  // world-space Vector3[] — full spiral, used for path snap
 let _helixSavedControls  = null;  // saved OrbitControls config, restored on exit
 let savedPlayerPos = new THREE.Vector3();
+let pathDebugLine = null; // Visualizer for A* path
 let savedFogDensity = 0.045;
 
 // Expose exit function globally
@@ -2767,6 +2769,33 @@ function on3DClick(event, isRightClick = false) {
         const floorHits = floorRaycaster.intersectObject(targetFloor, true);
 
         if (floorHits.length > 0) {
+            // 0. BSP Pathfinding Check (Only in main dungeon, not combat/helix)
+            if (game.useBSP && !isCombatView && !inHelixZone && !inBattleIsland && globalFloorMesh) {
+                const point = floorHits[0].point;
+                const startNode = {
+                    x: Math.round(playerMesh.position.x + bspCols / 2),
+                    z: Math.round(playerMesh.position.z + bspRows / 2)
+                };
+                const endNode = {
+                    x: Math.round(point.x + bspCols / 2),
+                    z: Math.round(point.z + bspRows / 2)
+                };
+                
+                const path = Pathfinder.findPath(startNode, endNode, bspGrid, bspCols, bspRows);
+                if (path && path.length > 0) {
+                    // Visualize Path
+                    if (pathDebugLine) scene.remove(pathDebugLine);
+                    const points = path.map(p => new THREE.Vector3(p.x - bspCols/2, 0.2, p.z - bspRows/2));
+                    points.unshift(playerMesh.position.clone()); // Add current pos as start
+                    const geo = new THREE.BufferGeometry().setFromPoints(points);
+                    pathDebugLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0x00ff00 }));
+                    scene.add(pathDebugLine);
+
+                    movePlayerAlongPath(path, isRightClick);
+                    return;
+                }
+            }
+
             let point = floorHits[0].point;
 
             // Helix zone: snap destination to nearest spiral-path waypoint so the
@@ -4204,7 +4233,30 @@ function detectJumpGap(startPos, endPos) {
     return { startY, endY };
 }
 
-function movePlayerTo(targetVec, isRunning = false) {
+function movePlayerAlongPath(path, isRunning) {
+    // Convert grid coords back to world coords
+    // path is array of {x, z}
+    const worldPoints = path.map(p => new THREE.Vector3(p.x - bspCols/2, 0, p.z - bspRows/2));
+    
+    // Remove first point if it's the tile we are currently standing on (prevents stutter)
+    if (worldPoints.length > 0 && worldPoints[0].distanceTo(playerMesh.position) < 0.6) {
+        worldPoints.shift();
+    }
+
+    function step() {
+        if (worldPoints.length === 0) {
+            // Path complete
+            if (pathDebugLine) { scene.remove(pathDebugLine); pathDebugLine = null; }
+            return;
+        }
+        const next = worldPoints.shift();
+        // Chain the next move
+        movePlayerTo(next, isRunning, step, { skipCollision: true });
+    }
+    step();
+}
+
+function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options = {}) {
     if (!playerMesh) return;
 
     // Stop existing tween if any
@@ -4232,19 +4284,21 @@ function movePlayerTo(targetVec, isRunning = false) {
     // --- COLLISION DETECTION SETUP ---
     // Collect solid objects: All rooms except current and Room 0 (Obelisk)
     const solidObjects = [];
-    roomMeshes.forEach((mesh, id) => {
-        const r = game.rooms.find(room => room.id === id);
-        // Exclude markers/open areas from being solid walls so we can walk into them
-        const isMarker = r && (r.isLocked || r.isTrap || r.isAlchemy || r.isSecret || r.isShrine);
-        if (id !== 0 && id !== game.currentRoomIdx && !isMarker) {
-            solidObjects.push(mesh);
-        }
-    });
+    if (!options.skipCollision) {
+        roomMeshes.forEach((mesh, id) => {
+            const r = game.rooms.find(room => room.id === id);
+            // Exclude markers/open areas from being solid walls so we can walk into them
+            const isMarker = r && (r.isLocked || r.isTrap || r.isAlchemy || r.isSecret || r.isShrine);
+            if (id !== 0 && id !== game.currentRoomIdx && !isMarker) {
+                solidObjects.push(mesh);
+            }
+        });
+    }
     // Add decorations (trees/rocks) if needed, though they are instanced and might need specific handling
     // For now, rooms are the main blockers.
 
     // --- JUMP DETECTION ---
-    const jumpInfo = (!isCombatView) ? detectJumpGap(startPos, targetVec) : null;
+    const jumpInfo = (!isCombatView && !options.skipCollision) ? detectJumpGap(startPos, targetVec) : null;
     if (jumpInfo !== null) {
         playerJumping = true;
         if (playerJumpTween) playerJumpTween.stop();
@@ -4344,25 +4398,31 @@ function movePlayerTo(targetVec, isRunning = false) {
 
                 // 3. Solid Object Collision (Walls/Buildings) - Keep this for props
                 // Cast forward from player center
-                collisionRaycaster.set(new THREE.Vector3(playerObj.position.x, playerObj.position.y + 1.0, playerObj.position.z), moveDir);
-                collisionRaycaster.camera = camera; // Fix for sprite raycasting error
-                collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
-                const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
-                
-                if (wallHits.length > 0) {
-                    stopMovement();
+                if (!options.skipCollision && solidObjects.length > 0) {
+                    collisionRaycaster.set(new THREE.Vector3(playerObj.position.x, playerObj.position.y + 1.0, playerObj.position.z), moveDir);
+                    collisionRaycaster.camera = camera; // Fix for sprite raycasting error
+                    collisionRaycaster.far = 1.0; // Stop if within 1 unit of wall
+                    const wallHits = collisionRaycaster.intersectObjects(solidObjects, true); // Recursive to hit GLB children
+                    
+                    if (wallHits.length > 0) {
+                        stopMovement();
+                    }
                 }
             }
         })
         .onComplete(() => {
             playerMoveTween = null;
 
-            // Return to Idle
-            if (actions.walk) {
-                if (actions.idle) {
-                    actions.walk.crossFadeTo(actions.idle, 0.2, true).play();
-                } else {
-                    actions.walk.stop();
+            if (onCompleteCb) {
+                onCompleteCb();
+            } else {
+                // Return to Idle (only if no callback, implying end of chain)
+                if (actions.walk) {
+                    if (actions.idle) {
+                        actions.walk.crossFadeTo(actions.idle, 0.2, true).play();
+                    } else {
+                        actions.walk.stop();
+                    }
                 }
             }
         })
@@ -4702,6 +4762,7 @@ function clear3DScene() {
     hiddenDecorationIndices.clear();
     savedPlayerPos.set(0, 0, 0);
     hiddenStaticMeshes = [];
+    if (pathDebugLine) { scene.remove(pathDebugLine); pathDebugLine = null; }
     globalFloorMesh = null;
     bspGrid = null; bspCols = 0; bspRows = 0;
     dungeonDustMotes = null; // scene.remove already happened via while loop above
