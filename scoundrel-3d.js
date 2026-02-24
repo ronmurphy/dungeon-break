@@ -222,6 +222,7 @@ window.testDungeon       = function (floor = 1) {
     game.rooms = bsp.rooms;
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+    bspHeightGrid = bsp.heightGrid;
     spawnBSPDoors(bsp.doorPositions);
     spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
     createDungeonDustMotes();
@@ -390,7 +391,7 @@ const terrainRaycaster = new THREE.Raycaster();
 const collisionRaycaster = new THREE.Raycaster(); // New raycaster for walls/obstacles
 
 let globalFloorMesh = null; // Reference for terrain manipulation
-let bspGrid = null, bspCols = 0, bspRows = 0; // BSP tile grid for wall collision
+let bspGrid = null, bspHeightGrid = null, bspCols = 0, bspRows = 0; // BSP tile grid for wall collision
 
 function isBSPWallAt(wx, wz) {
     if (!bspGrid) return false;
@@ -1866,7 +1867,7 @@ function initWanderers() {
                 // Validate spawn position — BSP uses grid (flat floor), others use raycast
                 if (game.useBSP) {
                     if (!isBSPWallAt(sx, sz) && !isBSPVoidAt(sx, sz)) {
-                        sy = WANDERER_Y_LIFT; // BSP floor is flat at Y=0
+                        sy = getBSPHeightAt(sx, sz) + WANDERER_Y_LIFT;
                         valid = true;
                     }
                 } else if (globalFloorMesh) {
@@ -1930,6 +1931,14 @@ function initWanderers() {
             pickWandererTarget(wanderer);
         }, 0.7);
     }
+}
+
+function getBSPHeightAt(wx, wz) {
+    if (!bspHeightGrid) return 0;
+    const col = Math.round(wx + bspCols / 2);
+    const row = Math.round(wz + bspRows / 2);
+    if (col < 0 || col >= bspCols || row < 0 || row >= bspRows) return 0;
+    return bspHeightGrid[row][col];
 }
 
 function pickWandererTarget(wanderer) {
@@ -2000,7 +2009,7 @@ function pickWandererTarget(wanderer) {
 
                     // OPTIMIZATION: In BSP mode, floor is flat at Y=0. Skip raycast.
                     if (game.useBSP && targetMesh === globalFloorMesh) {
-                        currentY = WANDERER_Y_LIFT;
+                        currentY = getBSPHeightAt(wanderer.mesh.position.x, wanderer.mesh.position.z) + WANDERER_Y_LIFT;
                         if (!wanderer.isJumping) wanderer.mesh.position.y = currentY;
                     } else {
                         terrainRaycaster.set(new THREE.Vector3(wanderer.mesh.position.x, rayOriginHeight, wanderer.mesh.position.z), down);
@@ -2223,7 +2232,7 @@ function flipRock(rockMesh, instanceId) {
     const tempGeo = new THREE.DodecahedronGeometry(0.3);
     const tempMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.8 });
     const tempMesh = new THREE.Mesh(tempGeo, tempMat);
-    tempMesh.position.set(pos.x, 0.15, pos.z);
+    tempMesh.position.set(pos.x, pos.y + 0.15, pos.z);
     scene.add(tempMesh);
 
     // Flip: hop up then back down, rotate as it goes
@@ -2233,10 +2242,10 @@ function flipRock(rockMesh, instanceId) {
         .start();
 
     new TWEEN.Tween(tempMesh.position)
-        .to({ y: 0.6 }, 190)
+        .to({ y: pos.y + 0.6 }, 190)
         .easing(TWEEN.Easing.Quadratic.Out)
         .chain(new TWEEN.Tween(tempMesh.position)
-            .to({ y: 0.05 }, 190)
+            .to({ y: pos.y + 0.05 }, 190)
             .easing(TWEEN.Easing.Quadratic.In)
             .onComplete(() => {
                 scene.remove(tempMesh);
@@ -2390,7 +2399,7 @@ function flipBSPRubble(rubbleMesh, instanceId) {
     const tempGeo = new THREE.DodecahedronGeometry(0.18);
     const tempMat = new THREE.MeshStandardMaterial({ color: 0x556655, roughness: 0.9 });
     const tempMesh = new THREE.Mesh(tempGeo, tempMat);
-    tempMesh.position.set(pos.x, 0.09, pos.z);
+    tempMesh.position.set(pos.x, pos.y + 0.09, pos.z);
     scene.add(tempMesh);
 
     new TWEEN.Tween(tempMesh.rotation)
@@ -2399,10 +2408,10 @@ function flipBSPRubble(rubbleMesh, instanceId) {
         .start();
 
     new TWEEN.Tween(tempMesh.position)
-        .to({ y: 0.45 }, 160)
+        .to({ y: pos.y + 0.45 }, 160)
         .easing(TWEEN.Easing.Quadratic.Out)
         .chain(new TWEEN.Tween(tempMesh.position)
-            .to({ y: 0.03 }, 160)
+            .to({ y: pos.y + 0.03 }, 160)
             .easing(TWEEN.Easing.Quadratic.In)
             .onComplete(() => {
                 scene.remove(tempMesh);
@@ -2458,7 +2467,7 @@ function topplePillar(pillMesh, instanceId) {
     tempGeo.translate(0, _BSP_PILLAR_H / 2, 0);
     const tempMat = new THREE.MeshStandardMaterial({ map: pillMesh.material.map, roughness: 0.85 });
     const tempMesh = new THREE.Mesh(tempGeo, tempMat);
-    tempMesh.position.set(pos.x, 0, pos.z);
+    tempMesh.position.set(pos.x, pos.y, pos.z);
     scene.add(tempMesh);
 
     // Fall in a random cardinal direction
@@ -2473,7 +2482,7 @@ function topplePillar(pillMesh, instanceId) {
 
             const reward = pillMesh.userData.rewards?.get(instanceId);
             if (reward) {
-                const lootPos = new THREE.Vector3(pos.x, 0.3, pos.z);
+                const lootPos = new THREE.Vector3(pos.x, pos.y + 0.3, pos.z);
                 let item;
                 if (reward === 'weapon') {
                     const val = Math.max(2, Math.min(10, game.floor + 1));
@@ -2512,7 +2521,8 @@ function spawnBSPDecorations(decorations, _wallSheet) {
 
         for (let i = 0; i < pillarPos.length; i++) {
             const p = pillarPos[i];
-            mesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(p.x, 0, p.z));
+            const h = getBSPHeightAt(p.x, p.z);
+            mesh.setMatrixAt(i, new THREE.Matrix4().makeTranslation(p.x, h, p.z));
             mesh.setColorAt(i, _BSP_PILLAR_BASE);
             if (Math.random() < 0.15) {
                 lootable.add(i);
@@ -2550,7 +2560,7 @@ function spawnBSPDecorations(decorations, _wallSheet) {
             const p = rubblePos[i];
             const rot = Math.random() * Math.PI * 2;
             const m4 = new THREE.Matrix4().makeRotationY(rot);
-            m4.setPosition(p.x, 0, p.z);
+            m4.setPosition(p.x, p.y || 0, p.z); // p.y comes from outDecorations
             mesh.setMatrixAt(i, m4);
             mesh.setColorAt(i, _BSP_RUBBLE_BASE);
             if (Math.random() < 0.15) {
@@ -2787,6 +2797,10 @@ function on3DClick(event, isRightClick = false) {
                 if (game.useBSP && bspGrid && !inBattleIsland) {
                     grid = bspGrid; cols = bspCols; rows = bspRows;
                     offsetX = bspCols / 2; offsetZ = bspRows / 2;
+                    // Use BSP height grid for slopes
+                    if (bspHeightGrid) {
+                        heightGrid = bspHeightGrid;
+                    }
                 } else if (targetFloor.userData && targetFloor.userData.pathGrid) {
                     // CA Floor (Overworld / Battle Island)
                     grid = targetFloor.userData.pathGrid;
@@ -3058,7 +3072,7 @@ function update3DScene() {
                     const geo = new THREE.BoxGeometry(0.5, 1.5, 0.5);
                     const mat = new THREE.MeshStandardMaterial({ visible: false });
                     const mesh = new THREE.Mesh(geo, mat);
-                    mesh.position.set(r.gx, 0, r.gy);
+                    mesh.position.set(r.gx, r.floorHeight || 0, r.gy);
                     scene.add(mesh);
                     const configKey = modelPath.split('/').pop();
                     loadGLB(modelPath, (model) => {
@@ -3075,7 +3089,7 @@ function update3DScene() {
                         const ringMat = new THREE.MeshBasicMaterial({ map: ringTex, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide });
                         const ring = new THREE.Mesh(ringGeo, ringMat);
                         ring.rotation.x = -Math.PI / 2;
-                        ring.position.set(r.gx, 0.12, r.gy);
+                        ring.position.set(r.gx, (r.floorHeight || 0) + 0.12, r.gy);
                         scene.add(ring);
                         markerRings.set(r.id, ring);
                     }
@@ -3230,13 +3244,13 @@ function update3DScene() {
 
                 if (r.isFinal) {
                     // Extend downwards for the pit/tower
-                    mesh.position.set(r.gx, 0, r.gy); // Sit on ground
+                    mesh.position.set(r.gx, r.floorHeight || 0, r.gy); // Sit on ground
                 } else if (r.shape === 'dome' || r.isSecret || customModelPath) {
                     // If using 3D models, always sit on ground (y=0) to ensure config offsets are consistent
                     // regardless of random rDepth generation.
-                    mesh.position.set(r.gx, 0, r.gy); // Sit on ground (half buried)
+                    mesh.position.set(r.gx, r.floorHeight || 0, r.gy); // Sit on ground (half buried)
                 } else {
-                    mesh.position.set(r.gx, rDepth / 2, r.gy); // Standard rooms raised slightly
+                    mesh.position.set(r.gx, (r.floorHeight || 0) + rDepth / 2, r.gy); // Standard rooms raised slightly
                 }
 
                 // Apply the matrix once
@@ -3396,7 +3410,7 @@ function update3DScene() {
                     });
                     const ring = new THREE.Mesh(ringGeo, ringMat);
                     ring.rotation.x = -Math.PI / 2;
-                    ring.position.set(r.gx, 0.12, r.gy);
+                    ring.position.set(r.gx, (r.floorHeight || 0) + 0.12, r.gy);
                     scene.add(ring);
                     markerRings.set(r.id, ring);
                 }
@@ -4292,7 +4306,7 @@ function detectJumpGap(startPos, endPos) {
 function movePlayerAlongPath(path, isRunning, offsetX, offsetZ) {
     // Convert grid coords back to world coords
     // path is array of {x, z}
-    const worldPoints = path.map(p => new THREE.Vector3(p.x - offsetX, 0, p.z - offsetZ));
+    const worldPoints = path.map(p => new THREE.Vector3(p.x - offsetX, getBSPHeightAt(p.x - offsetX, p.z - offsetZ), p.z - offsetZ));
     
     // Remove first point if it's the tile we are currently standing on (prevents stutter)
     if (worldPoints.length > 0 && worldPoints[0].distanceTo(playerMesh.position) < 0.6) {
@@ -4422,10 +4436,10 @@ function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options
 
                 // 1. Ground Snapping
                 // OPTIMIZATION: Skip raycast in BSP mode (flat floor at Y=0)
-                let currentY = 0;
+                let currentY = playerObj.position.y;
                 if (game.useBSP && targetMesh === globalFloorMesh) {
-                    playerObj.position.y = offset; // 0 + offset
-                    currentY = offset;
+                    currentY = getBSPHeightAt(playerObj.position.x, playerObj.position.z) + offset;
+                    playerObj.position.y = currentY;
                 } else {
                     terrainRaycaster.set(new THREE.Vector3(playerObj.position.x, rayOriginHeight, playerObj.position.z), down);
                     const currentHits = terrainRaycaster.intersectObject(targetMesh, true);
@@ -4528,7 +4542,7 @@ function movePlayerSprite(oldId, newId) {
 
     // Rotate to face target
     if (playerMesh) {
-        playerMesh.lookAt(r2.gx, playerMesh.position.y, r2.gy);
+        playerMesh.lookAt(r2.gx, (r2.floorHeight || 0) + 0.1, r2.gy);
         // Trigger Walk Animation
         if (actions.walk && actions.idle) {
             actions.walk.enabled = true;
@@ -4536,7 +4550,7 @@ function movePlayerSprite(oldId, newId) {
             actions.walk.setEffectiveWeight(1.0);
             actions.idle.crossFadeTo(actions.walk, 0.2, true).play();
         }
-        playerMoveTween = new TWEEN.Tween(playerMesh.position).to({ x: r2.gx, z: r2.gy }, 600).easing(TWEEN.Easing.Quadratic.Out).onComplete(() => {
+        playerMoveTween = new TWEEN.Tween(playerMesh.position).to({ x: r2.gx, y: (r2.floorHeight || 0) + 0.1, z: r2.gy }, 600).easing(TWEEN.Easing.Quadratic.Out).onComplete(() => {
             // Return to Idle
             if (actions.walk && actions.idle) {
                 actions.walk.crossFadeTo(actions.idle, 0.2, true).play();
@@ -4832,7 +4846,7 @@ function clear3DScene() {
     hiddenStaticMeshes = [];
     if (destinationMarker) { scene.remove(destinationMarker); destinationMarker = null; }
     globalFloorMesh = null;
-    bspGrid = null; bspCols = 0; bspRows = 0;
+    bspGrid = null; bspHeightGrid = null; bspCols = 0; bspRows = 0;
     dungeonDustMotes = null; // scene.remove already happened via while loop above
 
     wanderers.forEach(w => {
@@ -5142,6 +5156,7 @@ function finalizeStartDive() {
     game.rooms = bspNew.rooms;
     globalFloorMesh = bspNew.mesh;
     bspGrid = bspNew.tileGrid; bspCols = bspNew.cols; bspRows = bspNew.rows;
+    bspHeightGrid = bspNew.heightGrid;
     spawnBSPDoors(bspNew.doorPositions);
     spawnBSPDecorations(bspNew.decorations || [], bspNew.wallSheet);
     createDungeonDustMotes();
@@ -5341,6 +5356,7 @@ function descendToNextFloor() {
     game.rooms = bsp.rooms;
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+    bspHeightGrid = bsp.heightGrid;
     spawnBSPDoors(bsp.doorPositions);
     spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
     createDungeonDustMotes();
@@ -5576,7 +5592,7 @@ window.handleManorChoice = function(choice) {
                 const tz = r.gy + nz * targetDist;
 
                 new TWEEN.Tween(playerObj.position)
-                    .to({ x: tx, z: tz }, 400)
+                    .to({ x: tx, y: (r.floorHeight || 0) + 0.1, z: tz }, 400)
                     .easing(TWEEN.Easing.Quadratic.Out)
                     .start();
 
@@ -5662,7 +5678,7 @@ window.handleAzureFlameChoice = function(choice) {
             const tx = r.gx + (dx / len) * 3.5;
             const tz = r.gy + (dz / len) * 3.5;
             new TWEEN.Tween(playerObj.position)
-                .to({ x: tx, z: tz }, 400)
+                .to({ x: tx, y: (r.floorHeight || 0) + 0.1, z: tz }, 400)
                 .easing(TWEEN.Easing.Quadratic.Out)
                 .onUpdate(() => {
                     // Snap to floor while sliding back
@@ -8717,6 +8733,7 @@ function loadGame() {
     const bspLoad = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
     globalFloorMesh = bspLoad.mesh;
     bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
+    bspHeightGrid = bspLoad.heightGrid;
     spawnBSPDoors(bspLoad.doorPositions);
     spawnBSPDecorations(bspLoad.decorations || [], bspLoad.wallSheet);
     createDungeonDustMotes();
@@ -8731,7 +8748,7 @@ function loadGame() {
     const px = (data.playerX != null) ? data.playerX : fallbackX;
     const pz = (data.playerZ != null) ? data.playerZ : fallbackZ;
 
-    if (playerMesh) playerMesh.position.set(px, 0.1, pz);
+    if (playerMesh) playerMesh.position.set(px, (currentRoom ? (currentRoom.floorHeight || 0) : 0) + 0.1, pz);
     camera.position.set(px + 20, 20, pz + 20);
     camera.lookAt(px, 0, pz);
     controls.target.set(px, 0, pz);
@@ -10560,6 +10577,7 @@ window.reloadScene = function () {
     const bspReload = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
     globalFloorMesh = bspReload.mesh;
     bspGrid = bspReload.tileGrid; bspCols = bspReload.cols; bspRows = bspReload.rows;
+    bspHeightGrid = bspReload.heightGrid;
     spawnBSPDoors(bspReload.doorPositions);
     spawnBSPDecorations(bspReload.decorations || [], bspReload.wallSheet);
     createDungeonDustMotes();

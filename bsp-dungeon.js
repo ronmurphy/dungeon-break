@@ -103,7 +103,10 @@ class BSPNode {
             const oy = this.rand(Math.floor(h * 0.2), Math.floor(h * 0.25));
             const rw = this.rand(Math.floor(w * 0.6), Math.floor(w * 0.7));
             const rh = this.rand(Math.floor(h * 0.6), Math.floor(h * 0.7));
-            this.room = { x: x + ox, y: y + oy, w: Math.max(4, rw), h: Math.max(4, rh) };
+            
+            // Random height: -2 (sunken), 0 (flat), 2 (raised)
+            const rHeight = (Math.random() < 0.3) ? (Math.random() < 0.5 ? -2 : 2) : 0;
+            this.room = { x: x + ox, y: y + oy, w: Math.max(4, rw), h: Math.max(4, rh), floorHeight: rHeight };
         }
         if (this.left)  this.left.generateRooms();
         if (this.right) this.right.generateRooms();
@@ -210,13 +213,60 @@ function buildTileGrid(cols, rows, rooms, paths) {
     return grid;
 }
 
+// ─── Height grid ──────────────────────────────────────────────────────────────
+
+function buildHeightGrid(cols, rows, root) {
+    const grid = Array.from({ length: rows }, () => new Float32Array(cols).fill(0));
+
+    // 1. Fill Rooms
+    const rooms = root.getAllRooms();
+    rooms.forEach(r => {
+        for (let y = r.y; y < r.y + r.h; y++) {
+            for (let x = r.x; x < r.x + r.w; x++) {
+                if (y >= 0 && y < rows && x >= 0 && x < cols) {
+                    grid[y][x] = r.floorHeight || 0;
+                }
+            }
+        }
+    });
+
+    // 2. Fill Corridors (Interpolate)
+    const processNode = (node) => {
+        if (node.left) processNode(node.left);
+        if (node.right) processNode(node.right);
+        
+        if (node.paths.length > 0 && node.conn) {
+            const hA = node.conn.a.floorHeight || 0;
+            const hB = node.conn.b.floorHeight || 0;
+            const cA = { x: node.conn.a.x + node.conn.a.w/2, y: node.conn.a.y + node.conn.a.h/2 };
+            const cB = { x: node.conn.b.x + node.conn.b.w/2, y: node.conn.b.y + node.conn.b.h/2 };
+            const totalDist = Math.hypot(cB.x - cA.x, cB.y - cA.y) || 1;
+
+            node.paths.forEach(p => {
+                for (let y = p.y; y < p.y + p.h; y++) {
+                    for (let x = p.x; x < p.x + p.w; x++) {
+                        if (y >= 0 && y < rows && x >= 0 && x < cols) {
+                            const distA = Math.hypot(x - cA.x, y - cA.y);
+                            const t = Math.max(0, Math.min(1, distA / totalDist));
+                            grid[y][x] = hA + (hB - hA) * t;
+                        }
+                    }
+                }
+            });
+        }
+    };
+    processNode(root);
+
+    return grid;
+}
+
 // ─── Three.js geometry ───────────────────────────────────────────────────────
 
 /**
  * Build one merged floor mesh (ROOM + CORRIDOR tiles) and one merged wall mesh
  * (WALL tiles), add both to scene.  Returns the floor mesh for raycasting.
  */
-function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture, rng, outDecorations) {
+function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getClonedTexture, rng, outDecorations) {
     const theme = getThemeForFloor(floor);
     const ox = cols / 2;  // world offset — centres grid on origin
     const oz = rows / 2;
@@ -247,11 +297,12 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
             const wx = c - ox;      // world X
             const wz = r - oz;      // world Z
             const u  = Math.floor(Math.random() * 9) * tw;
+            const h  = heightGrid[r][c];
 
             // Top face
             fv = pushQuad(floorPos, floorUVs, floorIdx, fv,
-                [wx - 0.5, 0, wz + 0.5], [wx + 0.5, 0, wz + 0.5],
-                [wx + 0.5, 0, wz - 0.5], [wx - 0.5, 0, wz - 0.5],
+                [wx - 0.5, h, wz + 0.5], [wx + 0.5, h, wz + 0.5],
+                [wx + 0.5, h, wz - 0.5], [wx - 0.5, h, wz - 0.5],
                 u, tw);
 
             // Side skirts (keep floor watertight against the wall bases)
@@ -311,27 +362,30 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
                 const nt = (nr >= 0 && nr < rows && nc >= 0 && nc < cols)
                     ? tileGrid[nr][nc] : TILE_EMPTY;
                 if (nt === TILE_WALL) continue; // wall-to-wall edge: interior, never visible
+                
+                // Wall extends down to the floor height of the neighbor
+                const floorH = (nr >= 0 && nr < rows && nc >= 0 && nc < cols) ? heightGrid[nr][nc] : 0;
 
                 // Emit inward-facing side face
                 if (n.dir === '-X') {
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax, H, n.az2], [n.ax, H, n.az1],
-                        [n.ax, 0, n.az1], [n.ax, 0, n.az2],
+                        [n.ax, floorH, n.az1], [n.ax, floorH, n.az2],
                         u, tw);
                 } else if (n.dir === '+X') {
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax, H, n.az2], [n.ax, H, n.az1],
-                        [n.ax, 0, n.az1], [n.ax, 0, n.az2],
+                        [n.ax, floorH, n.az1], [n.ax, floorH, n.az2],
                         u, tw);
                 } else if (n.dir === '-Z') {
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax2, H, n.az], [n.ax1, H, n.az],
-                        [n.ax1, 0, n.az], [n.ax2, 0, n.az],
+                        [n.ax1, floorH, n.az], [n.ax2, floorH, n.az],
                         u, tw);
                 } else { // +Z — reversed winding so normal points +Z toward floor
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax2, H, n.az], [n.ax1, H, n.az],
-                        [n.ax1, 0, n.az], [n.ax2, 0, n.az],
+                        [n.ax1, floorH, n.az], [n.ax2, floorH, n.az],
                         u, tw);
                 }
             }
@@ -406,6 +460,7 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
 
             const wx = c - ox;
             const wz = r - oz;
+            const h  = heightGrid[r][c];
             const u  = Math.floor(rng() * 9) * tw;  // seeded UV
             let placedDoor = false;
 
@@ -445,21 +500,22 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
                 const ph = 2.2, pw = 0.15, pd = 0.15;
 
                 if (d.axis === 'x') {
-                    if (!hasPrev) addBox(wx - 0.4, ph/2, wz, pw/2, ph/2, pd/2, u);
-                    if (!hasNext) addBox(wx + 0.4, ph/2, wz, pw/2, ph/2, pd/2, u);
+                    if (!hasPrev) addBox(wx - 0.4, h + ph/2, wz, pw/2, ph/2, pd/2, u);
+                    if (!hasNext) addBox(wx + 0.4, h + ph/2, wz, pw/2, ph/2, pd/2, u);
                     // Lintel only on the first (leftmost) tile of the run — prevents doubling
-                    if (!hasPrev) addBox(wx + (hasNext ? 0.5 : 0), ph, wz, (runLen === 2 ? 1.0 : 0.5), 0.1, pd/2, u);
+                    if (!hasPrev) addBox(wx + (hasNext ? 0.5 : 0), h + ph, wz, (runLen === 2 ? 1.0 : 0.5), 0.1, pd/2, u);
                 } else {
-                    if (!hasPrev) addBox(wx, ph/2, wz - 0.4, pd/2, ph/2, pw/2, u);
-                    if (!hasNext) addBox(wx, ph/2, wz + 0.4, pd/2, ph/2, pw/2, u);
+                    if (!hasPrev) addBox(wx, h + ph/2, wz - 0.4, pd/2, ph/2, pw/2, u);
+                    if (!hasNext) addBox(wx, h + ph/2, wz + 0.4, pd/2, ph/2, pw/2, u);
                     // Lintel only on the first (topmost) tile of the run
-                    if (!hasPrev) addBox(wx, ph, wz + (hasNext ? 0.5 : 0), pd/2, 0.1, (runLen === 2 ? 1.0 : 0.5), u);
+                    if (!hasPrev) addBox(wx, h + ph, wz + (hasNext ? 0.5 : 0), pd/2, 0.1, (runLen === 2 ? 1.0 : 0.5), u);
                 }
             }
 
             // Corridor pillar — position tracked; InstancedMesh built by spawnBSPDecorations()
             if (!placedDoor && rng() < 0.10) {
                 outDecorations.push({ x: wx, z: wz, type: 'pillar' });
+                tileGrid[r][c] = TILE_WALL; // Mark as wall for collision
             }
         }
     }
@@ -471,7 +527,8 @@ function buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture
         for (let c = 1; c < cols - 1; c++) {
             if (tileGrid[r][c] !== TILE_ROOM) continue;
             if (rng() > 0.025) continue; // ~2.5% of room tiles
-            outDecorations.push({ x: c - ox, z: r - oz, type: 'rubble' });
+            const h = heightGrid[r][c];
+            outDecorations.push({ x: c - ox, z: r - oz, y: h, type: 'rubble' });
         }
     }
 
@@ -539,6 +596,7 @@ function buildRoomGraph(bspRooms, connections, cols, rows) {
         r._id = i;
         r._gx = (r.x + r.w / 2) - ox;
         r._gz = (r.y + r.h / 2) - oz;
+        // r.floorHeight is already set
     });
 
     // Build game room objects
@@ -554,6 +612,7 @@ function buildRoomGraph(bspRooms, connections, cols, rows) {
         shape: ['rect', 'rect', 'round', 'dome'][Math.floor(Math.random() * 4)],
         depth: 1.5 + Math.random() * 2,
         restRemaining: 3,
+        floorHeight: r.floorHeight || 0
     }));
 
     let idCounter = gameRooms.length;
@@ -627,6 +686,9 @@ function buildRoomGraph(bspRooms, connections, cols, rows) {
     // Start room
     gameRooms[0].isShrine = true;
     gameRooms[0].isRevealed = true;
+    
+    // Force start room to height 0 for safety
+    gameRooms[0].floorHeight = 0;
 
     return gameRooms;
 }
@@ -707,10 +769,16 @@ export function generateBSPFloor(scene, floor, rng, loadTexture, getClonedTextur
 
     // ── Tile grid ─────────────────────────────────────────────────────────────
     const tileGrid = buildTileGrid(cols, rows, bspRooms, bspPaths);
+    
+    // ── Height grid ───────────────────────────────────────────────────────────
+    // Force start room to 0 before building grid
+    if (root.room) root.room.floorHeight = 0;
+    else if (root.left && root.left.room) root.left.room.floorHeight = 0; // Approximation
+    const heightGrid = buildHeightGrid(cols, rows, root);
 
     // ── Three.js geometry ─────────────────────────────────────────────────────
     const decorations = [];
-    const mesh = buildSceneGeometry(scene, floor, tileGrid, cols, rows, getClonedTexture, rng, decorations);
+    const mesh = buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getClonedTexture, rng, decorations);
 
     // ── Game room graph ───────────────────────────────────────────────────────
     const rooms = buildRoomGraph(bspRooms, bspConns, cols, rows);
@@ -719,5 +787,5 @@ export function generateBSPFloor(scene, floor, rng, loadTexture, getClonedTextur
     const doorPositions = findDoorPositions(tileGrid, cols, rows);
 
     const wallSheet = getThemeForFloor(floor).sheet || 'assets/images/block.png';
-    return { rooms, mesh, tileGrid, cols, rows, doorPositions, decorations, wallSheet };
+    return { rooms, mesh, tileGrid, heightGrid, cols, rows, doorPositions, decorations, wallSheet };
 }

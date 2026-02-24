@@ -370,4 +370,4 @@ Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–1
 - **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets.
 
 ### Brad Notes:
-Some special 'rooms' like the Mansion and the Potion -marker- are limited use events, the Potion -marker- can only be used twice, then it rumbles and falls through the floor, forever gone as how it is marked as do not load on the map load again, The manision, if you buy, sell, or accept a free gift, will also do the sinking floor anim and be marked as do not load also.  chosing the leave button will not activate the floor sink and mark as do  not load... the player didnt take anything, so no need to do so.
+Pathfinding is in now, it is in the optionsModal for enable or disable, works well in bsd-dungeon, untested in battle island and overworld / camp map. pre-map caching during generation is how it works. 
