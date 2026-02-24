@@ -277,6 +277,31 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
     const wallPos  = [], wallUVs  = [], wallIdx  = [];
     const voidPos  = [], voidUVs  = [], voidIdx  = [];
     let fv = 0, wv = 0, vv = 0; // vertex counters
+    
+    // Pre-calculate smoothed heights for every grid intersection (vertex)
+    // Vertex (r, c) corresponds to the top-left corner of tile (r, c)
+    const vertexHeights = new Float32Array((rows + 1) * (cols + 1));
+    for (let r = 0; r <= rows; r++) {
+        for (let c = 0; c <= cols; c++) {
+            let sum = 0, count = 0;
+            // Check 4 tiles sharing this vertex: (r-1, c-1), (r-1, c), (r, c-1), (r, c)
+            const checks = [
+                { tr: r - 1, tc: c - 1 }, { tr: r - 1, tc: c },
+                { tr: r, tc: c - 1 },     { tr: r, tc: c }
+            ];
+            for (const { tr, tc } of checks) {
+                if (tr >= 0 && tr < rows && tc >= 0 && tc < cols) {
+                    const t = tileGrid[tr][tc];
+                    if (t === TILE_ROOM || t === TILE_CORRIDOR) {
+                        sum += heightGrid[tr][tc];
+                        count++;
+                    }
+                }
+            }
+            vertexHeights[r * (cols + 1) + c] = count > 0 ? sum / count : 0;
+        }
+    }
+    const getVH = (r, c) => vertexHeights[r * (cols + 1) + c];
 
     function pushQuad(parr, uvArr, idxArr, vc, v0, v1, v2, v3, u, tw) {
         parr.push(...v0, ...v1, ...v2, ...v3);
@@ -297,33 +322,38 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
             const wx = c - ox;      // world X
             const wz = r - oz;      // world Z
             const u  = Math.floor(Math.random() * 9) * tw;
-            const h  = heightGrid[r][c];
+            
+            // Get heights for 4 corners of this tile
+            const h_tl = getVH(r, c);         // Top-Left (min Z, min X) -> corresponds to wx-0.5, wz-0.5
+            const h_tr = getVH(r, c + 1);     // Top-Right (min Z, max X) -> corresponds to wx+0.5, wz-0.5
+            const h_bl = getVH(r + 1, c);     // Bottom-Left (max Z, min X) -> corresponds to wx-0.5, wz+0.5
+            const h_br = getVH(r + 1, c + 1); // Bottom-Right (max Z, max X) -> corresponds to wx+0.5, wz+0.5
 
             // Top face
             fv = pushQuad(floorPos, floorUVs, floorIdx, fv,
-                [wx - 0.5, h, wz + 0.5], [wx + 0.5, h, wz + 0.5],
-                [wx + 0.5, h, wz - 0.5], [wx - 0.5, h, wz - 0.5],
+                [wx - 0.5, h_bl, wz + 0.5], [wx + 0.5, h_br, wz + 0.5],
+                [wx + 0.5, h_tr, wz - 0.5], [wx - 0.5, h_tl, wz - 0.5],
                 u, tw);
 
             // Side skirts (keep floor watertight against the wall bases)
             // Front (-Z)
             fv = pushQuad(floorPos, floorUVs, floorIdx, fv,
-                [wx - 0.5, 0, wz - 0.5], [wx + 0.5, 0, wz - 0.5],
+                [wx - 0.5, h_tl, wz - 0.5], [wx + 0.5, h_tr, wz - 0.5],
                 [wx + 0.5, FLOOR_BASE, wz - 0.5], [wx - 0.5, FLOOR_BASE, wz - 0.5],
                 u, tw);
             // Back (+Z)
             fv = pushQuad(floorPos, floorUVs, floorIdx, fv,
-                [wx + 0.5, 0, wz + 0.5], [wx - 0.5, 0, wz + 0.5],
+                [wx + 0.5, h_br, wz + 0.5], [wx - 0.5, h_bl, wz + 0.5],
                 [wx - 0.5, FLOOR_BASE, wz + 0.5], [wx + 0.5, FLOOR_BASE, wz + 0.5],
                 u, tw);
             // Left (-X)
             fv = pushQuad(floorPos, floorUVs, floorIdx, fv,
-                [wx - 0.5, 0, wz + 0.5], [wx - 0.5, 0, wz - 0.5],
+                [wx - 0.5, h_bl, wz + 0.5], [wx - 0.5, h_tl, wz - 0.5],
                 [wx - 0.5, FLOOR_BASE, wz - 0.5], [wx - 0.5, FLOOR_BASE, wz + 0.5],
                 u, tw);
             // Right (+X)
             fv = pushQuad(floorPos, floorUVs, floorIdx, fv,
-                [wx + 0.5, 0, wz - 0.5], [wx + 0.5, 0, wz + 0.5],
+                [wx + 0.5, h_tr, wz - 0.5], [wx + 0.5, h_br, wz + 0.5],
                 [wx + 0.5, FLOOR_BASE, wz + 0.5], [wx + 0.5, FLOOR_BASE, wz - 0.5],
                 u, tw);
         }
@@ -363,30 +393,54 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
                     ? tileGrid[nr][nc] : TILE_EMPTY;
                 if (nt === TILE_WALL) continue; // wall-to-wall edge: interior, never visible
                 
-                // Wall extends down to the floor height of the neighbor
-                const floorH = (nr >= 0 && nr < rows && nc >= 0 && nc < cols) ? heightGrid[nr][nc] : 0;
+                // Wall extends down to the smoothed floor height at the corners
+                // Calculate heights for the two corners of this face
+                let h1 = 0, h2 = 0;
+                // Sconce placement chance (15%)
+                const placeSconce = rng() < 0.15;
+                const sconceY = 1.6; // Height above floor
 
                 // Emit inward-facing side face
                 if (n.dir === '-X') {
+                    h1 = getVH(r, c); h2 = getVH(r + 1, c); // TL, BL
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax, H, n.az2], [n.ax, H, n.az1],
-                        [n.ax, floorH, n.az1], [n.ax, floorH, n.az2],
+                        [n.ax, h1, n.az1], [n.ax, h2, n.az2],
                         u, tw);
+                    if (placeSconce) {
+                        const fh = (h1 + h2) / 2;
+                        outDecorations.push({ x: n.ax - 0.15, y: fh + sconceY, z: (n.az1 + n.az2)/2, type: 'sconce', rot: Math.PI });
+                    }
                 } else if (n.dir === '+X') {
+                    h1 = getVH(r, c + 1); h2 = getVH(r + 1, c + 1); // TR, BR
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax, H, n.az2], [n.ax, H, n.az1],
-                        [n.ax, floorH, n.az1], [n.ax, floorH, n.az2],
+                        [n.ax, h1, n.az1], [n.ax, h2, n.az2],
                         u, tw);
+                    if (placeSconce) {
+                        const fh = (h1 + h2) / 2;
+                        outDecorations.push({ x: n.ax + 0.15, y: fh + sconceY, z: (n.az1 + n.az2)/2, type: 'sconce', rot: 0 });
+                    }
                 } else if (n.dir === '-Z') {
+                    h1 = getVH(r, c); h2 = getVH(r, c + 1); // TL, TR
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax2, H, n.az], [n.ax1, H, n.az],
-                        [n.ax1, floorH, n.az], [n.ax2, floorH, n.az],
+                        [n.ax1, h1, n.az], [n.ax2, h2, n.az],
                         u, tw);
+                    if (placeSconce) {
+                        const fh = (h1 + h2) / 2;
+                        outDecorations.push({ x: (n.ax1 + n.ax2)/2, y: fh + sconceY, z: n.az - 0.15, type: 'sconce', rot: Math.PI/2 });
+                    }
                 } else { // +Z — reversed winding so normal points +Z toward floor
+                    h1 = getVH(r + 1, c); h2 = getVH(r + 1, c + 1); // BL, BR
                     wv = pushQuad(wallPos, wallUVs, wallIdx, wv,
                         [n.ax2, H, n.az], [n.ax1, H, n.az],
-                        [n.ax1, floorH, n.az], [n.ax2, floorH, n.az],
+                        [n.ax1, h1, n.az], [n.ax2, h2, n.az],
                         u, tw);
+                    if (placeSconce) {
+                        const fh = (h1 + h2) / 2;
+                        outDecorations.push({ x: (n.ax1 + n.ax2)/2, y: fh + sconceY, z: n.az + 0.15, type: 'sconce', rot: -Math.PI/2 });
+                    }
                 }
             }
         }
@@ -514,6 +568,24 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
 
             // Corridor pillar — position tracked; InstancedMesh built by spawnBSPDecorations()
             if (!placedDoor && rng() < 0.10) {
+                // Check local width to prevent blocking path
+                // Horizontal span
+                let wx_span = 1;
+                let i = 1; while (c - i >= 0 && tileGrid[r][c - i] !== TILE_WALL) { wx_span++; i++; }
+                i = 1; while (c + i < cols && tileGrid[r][c + i] !== TILE_WALL) { wx_span++; i++; }
+
+                // Vertical span
+                let wz_span = 1;
+                i = 1; while (r - i >= 0 && tileGrid[r - i][c] !== TILE_WALL) { wz_span++; i++; }
+                i = 1; while (r + i < rows && tileGrid[r + i][c] !== TILE_WALL) { wz_span++; i++; }
+
+                const min_w = Math.min(wx_span, wz_span);
+                if (min_w <= 1) continue; // 1-wide hall: no pillars
+
+                // Ensure pillars aren't adjacent (8-way) to prevent diagonal chokes
+                const hasAdj = outDecorations.some(d => d.type === 'pillar' && Math.abs(d.x - wx) < 1.5 && Math.abs(d.z - wz) < 1.5);
+                if (hasAdj) continue;
+
                 outDecorations.push({ x: wx, z: wz, type: 'pillar' });
                 tileGrid[r][c] = TILE_WALL; // Mark as wall for collision
             }
@@ -529,6 +601,35 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
             if (rng() > 0.025) continue; // ~2.5% of room tiles
             const h = heightGrid[r][c];
             outDecorations.push({ x: c - ox, z: r - oz, y: h, type: 'rubble' });
+        }
+    }
+
+    // ── Cobwebs (Corners) & Chains (Ceiling) ──────────────────────────────────
+    for (let r = 1; r < rows - 1; r++) {
+        for (let c = 1; c < cols - 1; c++) {
+            if (tileGrid[r][c] !== TILE_ROOM) continue;
+            
+            const wx = c - ox;
+            const wz = r - oz;
+            const h = heightGrid[r][c];
+
+            // Chains (Hanging from "ceiling" ~3.5 units up)
+            if (rng() < 0.03) {
+                outDecorations.push({ x: wx, y: h + 3.2, z: wz, type: 'chain' });
+            }
+
+            // Cobwebs in corners (30% chance)
+            if (rng() < 0.3) {
+                const nN = tileGrid[r-1][c] === TILE_WALL;
+                const nS = tileGrid[r+1][c] === TILE_WALL;
+                const nW = tileGrid[r][c-1] === TILE_WALL;
+                const nE = tileGrid[r][c+1] === TILE_WALL;
+
+                if (nN && nW) outDecorations.push({ x: wx - 0.35, y: h + 2.2, z: wz - 0.35, type: 'cobweb', rot: Math.PI/4 });
+                else if (nN && nE) outDecorations.push({ x: wx + 0.35, y: h + 2.2, z: wz - 0.35, type: 'cobweb', rot: -Math.PI/4 });
+                else if (nS && nW) outDecorations.push({ x: wx - 0.35, y: h + 2.2, z: wz + 0.35, type: 'cobweb', rot: Math.PI*0.75 });
+                else if (nS && nE) outDecorations.push({ x: wx + 0.35, y: h + 2.2, z: wz + 0.35, type: 'cobweb', rot: -Math.PI*0.75 });
+            }
         }
     }
 

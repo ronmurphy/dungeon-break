@@ -186,6 +186,12 @@ window.dismissPet  = function () {
     if (typeof logMsg === 'function') logMsg('Companion dismissed.');
 };
 
+window.triggerTorchFlash = function(amount) {
+    // amount is roughly fuel gained (e.g. 10-50)
+    // We scale it up for intensity. 50 fuel -> 2500 intensity boost.
+    torchFlashBoost = Math.max(torchFlashBoost, amount * 50);
+};
+
 // Expose live state objects to console for inspection
 // Using getters so reassignment of combatState is always reflected
 Object.defineProperty(window, 'game',         { get: () => game,        configurable: true });
@@ -2582,6 +2588,97 @@ function spawnBSPDecorations(decorations, _wallSheet) {
         scene.add(mesh);
         decorationMeshes.push(mesh);
     }
+
+    // ── Wall Sconces (Bracket + Glow) ─────────────────────────────────────────
+    const sconcePos = decorations.filter(d => d.type === 'sconce');
+    if (sconcePos.length > 0) {
+        // Bracket
+        const geo = new THREE.BoxGeometry(0.3, 0.1, 0.1);
+        geo.translate(0.15, 0, 0); // Pivot at wall end
+        const mat = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.7 });
+        const mesh = new THREE.InstancedMesh(geo, mat, sconcePos.length);
+        
+        // Glow (Billboard Plane)
+        const glowGeo = new THREE.PlaneGeometry(1.2, 1.2);
+        const glowTex = getClonedTexture('assets/images/textures/light_02.png');
+        const glowMat = new THREE.MeshBasicMaterial({ 
+            map: glowTex, color: 0xffaa00, transparent: true, 
+            blending: THREE.AdditiveBlending, depthWrite: false, opacity: 0.6, side: THREE.DoubleSide 
+        });
+        const glowMesh = new THREE.InstancedMesh(glowGeo, glowMat, sconcePos.length);
+
+        const dummy = new THREE.Object3D();
+        for (let i = 0; i < sconcePos.length; i++) {
+            const p = sconcePos[i];
+            // Bracket
+            dummy.position.set(p.x, p.y, p.z);
+            dummy.rotation.set(0, p.rot, 0);
+            dummy.scale.set(1, 1, 1);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+
+            // Glow (Offset slightly from bracket tip)
+            const tipOffset = 0.35;
+            dummy.position.set(p.x + Math.cos(p.rot)*tipOffset, p.y + 0.1, p.z - Math.sin(p.rot)*tipOffset);
+            dummy.rotation.set(0, 0, 0); // Always face camera? No, billboard shader better, but flat is ok for now
+            // Actually, let's just face it parallel to wall for a "wash" effect
+            dummy.rotation.set(0, p.rot + Math.PI/2, 0); 
+            dummy.updateMatrix();
+            glowMesh.setMatrixAt(i, dummy.matrix);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        glowMesh.instanceMatrix.needsUpdate = true;
+        scene.add(mesh);
+        scene.add(glowMesh);
+        decorationMeshes.push(mesh, glowMesh);
+    }
+
+    // ── Hanging Chains ────────────────────────────────────────────────────────
+    const chainPos = decorations.filter(d => d.type === 'chain');
+    if (chainPos.length > 0) {
+        const geo = new THREE.CylinderGeometry(0.03, 0.03, 1.8, 5);
+        geo.translate(0, -0.9, 0); // Hang down from pivot
+        const mat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 });
+        const mesh = new THREE.InstancedMesh(geo, mat, chainPos.length);
+        
+        const dummy = new THREE.Object3D();
+        for (let i = 0; i < chainPos.length; i++) {
+            const p = chainPos[i];
+            dummy.position.set(p.x, p.y, p.z);
+            dummy.rotation.set((Math.random()-0.5)*0.1, Math.random()*Math.PI, (Math.random()-0.5)*0.1);
+            dummy.scale.set(1, 0.8 + Math.random()*0.4, 1);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        scene.add(mesh);
+        decorationMeshes.push(mesh);
+    }
+
+    // ── Cobwebs ───────────────────────────────────────────────────────────────
+    const webPos = decorations.filter(d => d.type === 'cobweb');
+    if (webPos.length > 0) {
+        const geo = new THREE.PlaneGeometry(1.5, 1.5);
+        const tex = getClonedTexture('assets/images/textures/twirl_01.png');
+        const mat = new THREE.MeshBasicMaterial({ 
+            map: tex, color: 0xaaaaaa, transparent: true, 
+            opacity: 0.15, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending 
+        });
+        const mesh = new THREE.InstancedMesh(geo, mat, webPos.length);
+        
+        const dummy = new THREE.Object3D();
+        for (let i = 0; i < webPos.length; i++) {
+            const p = webPos[i];
+            dummy.position.set(p.x, p.y, p.z);
+            dummy.rotation.set(0, p.rot, 0);
+            dummy.scale.setScalar(0.8 + Math.random()*0.4);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+        }
+        mesh.instanceMatrix.needsUpdate = true;
+        scene.add(mesh);
+        decorationMeshes.push(mesh);
+    }
 }
 
 function on3DContextMenu(e) {
@@ -2944,8 +3041,8 @@ function update3DScene() {
         // Torch Logic based on Fuel
         // Min baseDist 50: must reach camera (~35 units away) so floor tiles are lit even when drained
         // Min baseInt 2000: dungeon must be readable even at 0% charge; full charge (100) gives 5200
-        const baseDist = Math.max(50, 15 + (game.torchCharge * 1.5));
-        const baseInt  = Math.max(2000, 200 + (game.torchCharge * 50));
+        const baseDist = Math.max(65, 25 + (game.torchCharge * 1.5)); // Increased min range to cut through fog
+        const baseInt  = Math.max(2500, 500 + (game.torchCharge * 50)); // Increased min brightness
 
         if (game.equipment.weapon) {
             if (game.equipment.weapon.val >= 8 || hasLantern) {
@@ -3690,6 +3787,10 @@ function animate3D() {
         if (azureRoom && !modalOpen) {
             const dist = Math.hypot(azureRoom.gx - playerObj.position.x, azureRoom.gy - playerObj.position.z);
             if (dist < 3.0) {
+                console.log("%c--- AZURE FLAME PROXIMITY ---", "color:#44aaff; font-weight:bold;");
+                console.log("Current Torch Level (Charge):", game.torchCharge);
+                if (torchLight) console.log("Current Brightness (Intensity):", torchLight.intensity);
+
                 game.activeRoom = azureRoom;
                 showAzureFlamePrompt();
             }
@@ -4786,12 +4887,12 @@ function updateAtmosphere(floor) {
     // MIN_FOG_FAR guarantees the player can always see a playable area on low-end profiles.
     // On potato (LOD far=12) the box placeholder may occasionally be visible at the fog edge —
     // that's an acceptable tradeoff vs. the fog wall covering the entire screen.
-    const visibilityAtFar = 0.15; // 15% visible at the far LOD distance
+    const visibilityAtFar = 0.25; // Increased visibility (was 0.15) to make scene brighter
     const farDist = (gameSettings.lod && gameSettings.lod.far) ? gameSettings.lod.far : 80;
     // MIN_FOG_FAR = 80: cap fog density so low-end profiles don't make the dungeon unplayable.
     // At 0.024 density, camera-to-player (35 units) has ~42% visibility — always readable.
     // Old MIN_FOG_FAR=25 allowed density 0.076, making dungeon ~7% visible at camera distance.
-    const MIN_FOG_FAR = 80;
+    const MIN_FOG_FAR = 90; // Increased to push fog back further
     const effectiveFogFar = Math.max(farDist, MIN_FOG_FAR);
     const density = -Math.log(visibilityAtFar) / effectiveFogFar;
     scene.fog = new THREE.FogExp2(fogColor, isEditMode ? 0 : density);
@@ -5647,6 +5748,13 @@ window.handleAzureFlameChoice = function(choice) {
     if (choice === 'refuel') {
         game.torchCharge = 100;
         torchFlashBoost = 5000; // Visible burst as the flame surges back to full
+        
+        console.log("%c--- AZURE FLAME REFUEL ---", "color:#44aaff; font-weight:bold;");
+        console.log("New Torch Level:", game.torchCharge);
+        // Calculate expected base intensity since the render loop hasn't updated the light object yet
+        const baseInt = Math.max(2000, 200 + (game.torchCharge * 50));
+        console.log("New Brightness Level (Base Calculated):", baseInt);
+
         logMsg("The Azure Flame restores your torch. The darkness retreats.");
         spawnFloatingText("TORCH REFUELED!", window.innerWidth / 2, window.innerHeight / 2, '#44aaff', 36);
         updateUI();

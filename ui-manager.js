@@ -1632,6 +1632,7 @@ export function burnTrophy(idx) {
     // Add Fuel
     const fuelGain = card.val * 2;
     game.torchCharge = Math.min(100, (game.torchCharge || 0) + fuelGain);
+    if (window.triggerTorchFlash) window.triggerTorchFlash(fuelGain);
 
     logMsg(`Burned ${card.name}. +${fuelGain} Fuel.`);
 
@@ -1649,6 +1650,7 @@ window.burnAllTrophies = function () {
     game.slainStack.forEach(card => { totalFuel += (card.val || 1) * 2; });
     game.slainStack = [];
     game.torchCharge = Math.min(100, (game.torchCharge || 0) + totalFuel);
+    if (window.triggerTorchFlash) window.triggerTorchFlash(totalFuel);
     spawnFloatingText(`Burned ${count} trophies! +${totalFuel} Fuel`, window.innerWidth / 2, window.innerHeight / 2, '#ff8800');
     updateUI();
     renderInventoryUI();

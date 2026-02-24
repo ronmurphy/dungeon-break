@@ -370,4 +370,4 @@ Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–1
 - **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets.
 
 ### Brad Notes:
-Pathfinding is in now, it is in the optionsModal for enable or disable, works well in bsd-dungeon, untested in battle island and overworld / camp map. pre-map caching during generation is how it works. 
+Pathfinding is in now, it is in the optionsModal for enable or disable, works well in bsd-dungeon, untested in battle island and overworld / camp map. pre-map caching during generation is how it works.   elevated dungeons is mostly in, and sloped floors makes the dungeon feel more worn down and ruined.  added in decorative blocks, hanging chains, cobwebs sconces, all not blocking, had to fix a bug where pillars could block a corridor, niow it wont do that. 
