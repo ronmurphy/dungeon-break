@@ -284,6 +284,7 @@ window.testDungeon       = function (floor = 1) {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     bspHeightGrid = bsp.heightGrid;
+    _bspWallMesh = bsp.wallMesh || null; _bspWallTorchState = null;
     Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bsp.doorPositions);
     spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
@@ -427,14 +428,21 @@ window.goMap = function (map) {
         globalFloorMesh = bsp.mesh;
         bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
         bspHeightGrid  = bsp.heightGrid;
+        _bspWallMesh = bsp.wallMesh || null; _bspWallTorchState = null;
         Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
         spawnBSPDoors(bsp.doorPositions);
+        spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
+        updateAtmosphere(floor);
         initWanderers();
         updateUI();
         enterRoom(0);
-        // Short delay lets the scene settle before the boss prompt appears
-        setTimeout(() => { game.isBossFight = false; startBossEncounter(); }, 800);
-        console.log(`%c[goMap BI] Click "ENTER THE LAIR" to load Battle Island`, 'color:#d4af37;font-weight:bold');
+        // Short delay lets the scene settle, then jump straight to Battle Island
+        setTimeout(() => {
+            game.isBossFight = true;
+            game.activeRoom  = game.rooms.find(r => r.isFinal) || game.rooms[0];
+            enterBossArena();
+        }, 800);
+        console.log(`%c[goMap BI] Jumping to Battle Island...`, 'color:#d4af37;font-weight:bold');
 
     } else {
         console.warn(`goMap: unknown map "${map}". Valid options: "BSP", "CA", "BI"`);
@@ -634,6 +642,8 @@ const collisionRaycaster = new THREE.Raycaster(); // New raycaster for walls/obs
 
 let globalFloorMesh = null; // Reference for terrain manipulation
 let bspGrid = null, bspHeightGrid = null, bspCols = 0, bspRows = 0; // BSP tile grid for wall collision
+let _bspWallMesh = null; // cached BSP wall mesh for runtime emissive tint
+let _bspWallTorchState = null; // tracks last torch state applied to walls
 let caGrid = null, caHeightGrid = null, caCols = 0, caRows = 0, caBoundsOffset = 0; // CA tile grid (mirrors BSP — avoids per-frame raycasting)
 
 // ── Camp day/night cycle state ─────────────────────────────────────────────────
@@ -2110,7 +2120,7 @@ function loadPlayerModel() {
         // Position correctly if game is running
         const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
         if (currentRoom) {
-            playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
+            playerMesh.position.set(currentRoom.gx, (currentRoom.floorHeight || 0) + 0.1, currentRoom.gy);
         }
     }, 0.7, configKey);
 }
@@ -3488,6 +3498,16 @@ function update3DScene() {
         }
         torchLight.position.set(playerObj.position.x, playerObj.position.y + 2.0, playerObj.position.z);
 
+        // BSP wall emissive tint: faint warm glow when torch is off for readability
+        if (_bspWallMesh && game.useBSP) {
+            const _wantTint = !game.torchEnabled;
+            if (_bspWallTorchState !== _wantTint) {
+                _bspWallTorchState = _wantTint;
+                _bspWallMesh.material.emissive.setHex(_wantTint ? 0x221500 : 0x000000);
+                _bspWallMesh.material.emissiveIntensity = _wantTint ? 0.07 : 0;
+            }
+        }
+
         game.rooms.forEach(r => {
             const dist = Math.sqrt(Math.pow(r.gx - playerObj.position.x, 2) + Math.pow(r.gy - playerObj.position.z, 2));
             const isVisible = isAttractMode || (dist < vRad);
@@ -4292,9 +4312,10 @@ function animate3D() {
     if (!isCombatView && !isEngagingCombat && !_combatModalOpen && !isAttractMode && !isEditMode) {
         const playerObj = playerMesh;
         if (playerObj) {
-            // Find which room we are physically in
-            const physicalRoom = game.rooms.find(r => 
-                Math.abs(r.gx - playerObj.position.x) < r.w/2 - 0.1 && 
+            // Find which room we are physically in — skip waypoints (logical corridor nodes, not enterable by proximity)
+            const physicalRoom = game.rooms.find(r =>
+                !r.isWaypoint &&
+                Math.abs(r.gx - playerObj.position.x) < r.w/2 - 0.1 &&
                 Math.abs(r.gy - playerObj.position.z) < r.h/2 - 0.1
             );
 
@@ -5196,6 +5217,28 @@ function _syncTimeIndicator() {
     _ctiIcon.textContent     = _icon;
     _ctiIcon.style.color     = _color;
     _ctiEl.style.borderColor = _border;
+
+    // Per-frame torch widget sync for non-camp maps (camp does this in updateCampDayNight)
+    if (!game.campMap) {
+        const _torchOn = game.torchEnabled && game.torchCharge > 0;
+        const _torchSrc = _torchOn
+            ? 'assets/images/ui/inventory/torch_lit.png'
+            : 'assets/images/ui/inventory/torch_unlit.png';
+        const _hudWrap = document.getElementById('torchFuelWidget');
+        const _hudImg  = document.getElementById('torchToggleImg');
+        if (_hudWrap) {
+            _hudWrap.style.borderColor = _torchOn ? '#44cc66' : '#444';
+            _hudWrap.style.opacity     = game.torchCharge <= 0 ? '0.35' : '1';
+        }
+        if (_hudImg) _hudImg.src = _torchSrc;
+        const _invImg = document.getElementById('torchToggleImgInventory');
+        if (_invImg) _invImg.src = _torchSrc;
+        const _invLbl = document.getElementById('torchInventoryLabel');
+        if (_invLbl) {
+            _invLbl.textContent = _torchOn ? '🔥 ON' : '🔥 OFF';
+            _invLbl.style.color = _torchOn ? '#ffaa44' : '#666';
+        }
+    }
 }
 
 function updateCampDayNight(dt) {
@@ -6093,6 +6136,7 @@ function finalizeStartDive() {
     globalFloorMesh = bspNew.mesh;
     bspGrid = bspNew.tileGrid; bspCols = bspNew.cols; bspRows = bspNew.rows;
     bspHeightGrid = bspNew.heightGrid;
+    _bspWallMesh = bspNew.wallMesh || null; _bspWallTorchState = null;
     Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bspNew.doorPositions);
     spawnBSPDecorations(bspNew.decorations || [], bspNew.wallSheet);
@@ -6299,6 +6343,7 @@ function descendToNextFloor() {
     globalFloorMesh = bsp.mesh;
     bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
     bspHeightGrid = bsp.heightGrid;
+    _bspWallMesh = bsp.wallMesh || null; _bspWallTorchState = null;
     Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bsp.doorPositions);
     spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
@@ -7247,6 +7292,7 @@ function enterBossArena() {
     logMsg("You step into the Guardian's Lair...");
     const _biCti = document.getElementById('campTimeIndicator');
     if (_biCti) _biCti.style.display = 'flex';
+    _syncTorchUI(); // Ensure torch widget stays visible on battle island
 
     // Save dungeon return position BEFORE moving the player
     const dungeonReturnPos = playerMesh ? playerMesh.position.clone() : new THREE.Vector3();
@@ -9173,6 +9219,7 @@ function _returnViaCampPortal() {
         globalFloorMesh = bsp.mesh;
         bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
         bspHeightGrid = bsp.heightGrid;
+        _bspWallMesh = bsp.wallMesh || null; _bspWallTorchState = null;
         Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
         spawnBSPDoors(bsp.doorPositions);
         spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
@@ -9201,6 +9248,7 @@ function _returnViaCampPortal() {
     setTimeout(() => echo.dispose(), 3500);
 
     _portalState = null;
+    _azureFlameReadyAt = Date.now() + 4000; // Grace period on portal return
     spawnFloatingText('Back in the dungeon!', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa88ff');
     logMsg('The dungeon closes around you once more.');
     enterRoom(game.currentRoomIdx);
@@ -10196,6 +10244,7 @@ function loadGame() {
         globalFloorMesh = bspLoad.mesh;
         bspGrid = bspLoad.tileGrid; bspCols = bspLoad.cols; bspRows = bspLoad.rows;
         bspHeightGrid = bspLoad.heightGrid;
+        _bspWallMesh = bspLoad.wallMesh || null; _bspWallTorchState = null;
         Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
         spawnBSPDoors(bspLoad.doorPositions);
         spawnBSPDecorations(bspLoad.decorations || [], bspLoad.wallSheet);
@@ -10220,11 +10269,22 @@ function loadGame() {
     // Start Audio
     updateMusicForFloor();
 
+    _azureFlameReadyAt = Date.now() + 30000; // Keep proximity from re-firing immediately after we show it directly
     updateUI();
     logMsg("Game Loaded.");
 
     // If loaded into a room that isn't cleared, trigger it
     enterRoom(game.currentRoomIdx);
+
+    // BSP: always show the Azure Flame prompt on load — it's the save/refuel point
+    // (proximity can't reliably fire since the player may be anywhere on the floor)
+    if (game.useBSP && !game.campMap) {
+        const azureRoom = game.rooms.find(r => r.id === 0);
+        if (azureRoom) {
+            game.activeRoom = azureRoom;
+            showAzureFlamePrompt();
+        }
+    }
 }
 
 function deleteSave() {
@@ -12056,18 +12116,22 @@ function updateMovementIndicator() {
 
 window.reloadScene = function () {
     const currentRoom = game.rooms.find(r => r.id === game.currentRoomIdx);
+    const _savedRooms = game.rooms;
+    game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     clear3DScene();
     init3D();
+    game.rooms = _savedRooms;
     const bspReload = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
     globalFloorMesh = bspReload.mesh;
     bspGrid = bspReload.tileGrid; bspCols = bspReload.cols; bspRows = bspReload.rows;
     bspHeightGrid = bspReload.heightGrid;
+    _bspWallMesh = bspReload.wallMesh || null; _bspWallTorchState = null;
     Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
     spawnBSPDoors(bspReload.doorPositions);
     spawnBSPDecorations(bspReload.decorations || [], bspReload.wallSheet);
     createDungeonDustMotes();
     updateAtmosphere(game.floor);
-    if (currentRoom && playerMesh) playerMesh.position.set(currentRoom.gx, 0.1, currentRoom.gy);
+    if (currentRoom && playerMesh) playerMesh.position.set(currentRoom.gx, (currentRoom.floorHeight || 0) + 0.1, currentRoom.gy);
 
     if (Object.keys(roomConfig).length === 0) {
         loadRoomConfig().then(() => window.reloadScene());

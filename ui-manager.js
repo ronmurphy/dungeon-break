@@ -70,6 +70,7 @@ export function showAzureFlamePrompt() {
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
     overlay.style.pointerEvents = 'auto';
+    overlay.style.background = 'rgba(0,0,0,0.85)'; // Always restore backdrop — closeCombat() zeroes it out
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'none';
 

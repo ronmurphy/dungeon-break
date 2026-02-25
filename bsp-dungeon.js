@@ -672,6 +672,7 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
 
     const floorMesh = makeMesh(floorPos, floorUVs, floorIdx, floorMat);
     const wallMesh  = makeMesh(wallPos,  wallUVs,  wallIdx,  wallMat);
+    wallMesh.userData.isBSPWall = true;
 
     scene.add(floorMesh);
     scene.add(wallMesh);
@@ -680,7 +681,7 @@ function buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getC
         scene.add(makeMesh(voidPos, voidUVs, voidIdx, voidMat));
     }
 
-    return floorMesh; // returned for raycasting
+    return { floorMesh, wallMesh }; // floorMesh for raycasting, wallMesh for runtime tint
 }
 
 // ─── Game room graph ─────────────────────────────────────────────────────────
@@ -879,7 +880,7 @@ export function generateBSPFloor(scene, floor, rng, loadTexture, getClonedTextur
 
     // ── Three.js geometry ─────────────────────────────────────────────────────
     const decorations = [];
-    const mesh = buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getClonedTexture, rng, decorations);
+    const { floorMesh: mesh, wallMesh } = buildSceneGeometry(scene, floor, tileGrid, heightGrid, cols, rows, getClonedTexture, rng, decorations);
 
     // ── Game room graph ───────────────────────────────────────────────────────
     const rooms = buildRoomGraph(bspRooms, bspConns, cols, rows);
@@ -888,5 +889,5 @@ export function generateBSPFloor(scene, floor, rng, loadTexture, getClonedTextur
     const doorPositions = findDoorPositions(tileGrid, cols, rows);
 
     const wallSheet = getThemeForFloor(floor).sheet || 'assets/images/block.png';
-    return { rooms, mesh, tileGrid, heightGrid, cols, rows, doorPositions, decorations, wallSheet };
+    return { rooms, mesh, wallMesh, tileGrid, heightGrid, cols, rows, doorPositions, decorations, wallSheet };
 }
