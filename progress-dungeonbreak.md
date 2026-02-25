@@ -380,4 +380,4 @@ BIG CHANGE: Camp / cellular automata, always level 1, wanderers can be adjusted 
 
 2-25-26:
 
-a bad code pull or github, idk, messed things up, doing emergency management and recovery.  fixed time indicator and time on all three maps, ca, bsp and battle island.fixed  torch button actually does on / on now with a small night vision for the player when torch = off. fixed bsp-dungeon 'room' no move issues.  fixed waypoint issueson bsp.  fixed goMap("bi") not going to battle island.   
+a bad code pull or github, idk, messed things up, doing emergency management and recovery.  fixed time indicator and time on all three maps, ca, bsp and battle island.fixed  torch button actually does on / on now with a small night vision for the player when torch = off. fixed bsp-dungeon 'room' no move issues.  fixed waypoint issueson bsp.  fixed goMap("bi") not going to battle island. Claude fixed the azure and guardian bug.   

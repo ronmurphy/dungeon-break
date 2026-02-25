@@ -4228,14 +4228,11 @@ function animate3D() {
     // fire immediately while the player is standing on top of it.
     if (!isCombatView && !isEngagingCombat && !isAttractMode && !isEditMode && playerObj && Date.now() >= _azureFlameReadyAt) {
         const azureRoom = game.rooms.find(r => r.id === 0);
-        // Azure Flame always overrides whatever modal is open — it's the only safe point
-        if (azureRoom) {
+        const _modal = document.getElementById('combatModal');
+        const _modalOpen = _modal && _modal.style.display === 'flex';
+        if (azureRoom && !_modalOpen) {
             const dist = Math.hypot(azureRoom.gx - playerObj.position.x, azureRoom.gy - playerObj.position.z);
             if (dist < 3.0) {
-                console.log("%c--- AZURE FLAME PROXIMITY ---", "color:#44aaff; font-weight:bold;");
-                console.log("Current Torch Level (Charge):", game.torchCharge);
-                if (torchLight) console.log("Current Brightness (Intensity):", torchLight.intensity);
-
                 game.activeRoom = azureRoom;
                 showAzureFlamePrompt();
             }
