@@ -8,6 +8,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Crimson+Text:ital,wght@0,400;0,700;1,400&family=Special+Elite&display=swap"
         rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
     <link href="style.css?v=2" rel="stylesheet">
 
 
@@ -81,6 +82,18 @@
     <button id="gameplayOptionsBtn" class="v2-btn" title="Options" style="position:fixed; top:20px; left:20px; width:40px; height:40px; padding:0; display:flex; align-items:center; justify-content:center; z-index:9005; box-shadow:0 0 10px #000;">
         ⚙
     </button>
+
+    <!-- Camp Day/Night Time Indicator — shown only on camp island -->
+    <div id="campTimeIndicator"
+         style="position:fixed; top:20px; left:70px; width:40px; height:40px;
+                background:rgba(0,0,0,0.75); border:1px solid #446; border-radius:2px;
+                display:none; align-items:center; justify-content:center;
+                z-index:9005; box-shadow:0 0 10px #000;"
+         title="Time of day">
+        <span id="campTimeIcon"
+              class="material-symbols-outlined"
+              style="font-size:22px; color:#99aadd; user-select:none;">dark_mode</span>
+    </div>
     
     <!-- Gameplay Inventory Bar (Bottom Center) -->
     <div id="gameplayInventoryBar" style="position:fixed; bottom:20px; left:50%; transform:translateX(-50%); display:none; align-items:center; gap:10px; z-index:9005; background:rgba(0,0,0,0.85); padding:8px 15px; border:2px solid var(--gold); border-radius:30px; box-shadow:0 0 15px #000;">
@@ -89,14 +102,22 @@
             <!-- Durability indicator gets injected here -->
         </div>
         
-        <!-- Fuel Bar (Vertical Meter) -->
-        <div class="fuel-meter-container" style="width:12px; height:36px; background:#111; border:1px solid #444; position:relative; margin:0 5px; box-shadow:inset 0 0 4px #000;" title="Torch Fuel">
-            <div id="mapFuelBar" style="position:absolute; bottom:0; left:0; width:100%; background:linear-gradient(to top, #ff4400, #ffaa44); height:50%; transition:height 0.3s;"></div>
+        <!-- Hotbar Slots in Map View -->
+        <div id="mapHotbar" style="display:flex; gap:4px;">
+            <!-- Injected by JS -->
         </div>
 
-        <!-- Hotbar Slots in Map View -->
-        <div id="mapHotbar" style="display:flex; gap:6px;">
-            <!-- Injected by JS -->
+        <!-- Torch / Fuel Widget — fuel bar always visible, torch image + click only on camp -->
+        <div id="torchFuelWidget"
+             onclick="window._toggleTorch()"
+             style="width:28px; height:52px; background:#111; border:1px solid #444; border-radius:2px; position:relative; flex-shrink:0; cursor:default; box-shadow:inset 0 0 4px #000; overflow:hidden;"
+             title="Torch Fuel">
+            <!-- Fuel fill — always visible, overlaid at bottom -->
+            <div id="mapFuelBar" style="position:absolute; bottom:0; left:0; width:100%; background:linear-gradient(to top, #ff4400, #ffaa44); height:50%; transition:height 0.3s; opacity:0.75; pointer-events:none;"></div>
+            <!-- Torch image — shown only on camp; driven by updateCampDayNight -->
+            <img id="torchToggleImg"
+                 src="assets/images/ui/inventory/torch_lit.png"
+                 style="position:absolute; top:0; left:0; width:100%; height:100%; object-fit:contain; display:none; z-index:2; pointer-events:none;">
         </div>
     </div>
     
@@ -217,6 +238,16 @@
                         <!-- Trophy Shelf -->
                         <div class="trophy-container" id="trophyShelf">
                             <!-- Injected by JS -->
+                        </div>
+
+                        <!-- Torch Toggle (camp only) — placed after trophies, before hotbar ends -->
+                        <div id="torchInventoryBlock" style="display:none; flex-direction:column; align-items:center; justify-content:flex-end; padding-bottom:4px; margin-left:8px;">
+                            <img id="torchToggleImgInventory"
+                                 src="assets/images/ui/inventory/torch_lit.png"
+                                 onclick="window._toggleTorch(); if(window.updateUI) updateUI();"
+                                 style="height:68px; width:auto; cursor:pointer; filter:drop-shadow(0 0 6px #ff8822);"
+                                 title="Toggle torch">
+                            <span id="torchInventoryLabel" style="font-size:0.65rem; font-family:'Cinzel',serif; color:#ffaa44; margin-top:3px; letter-spacing:1px;">ON</span>
                         </div>
                     </div>
                 </div>

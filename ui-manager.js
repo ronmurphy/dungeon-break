@@ -582,7 +582,7 @@ function updateMapHUD() {
             for (let i = 0; i < 6; i++) {
                 const item = game.hotbar[i];
                 const slot = document.createElement('div');
-                slot.style.cssText = "width:40px; height:40px; border:1px solid #555; background:rgba(0,0,0,0.5); position:relative; cursor:pointer;";
+                slot.style.cssText = "width:36px; height:36px; border:1px solid #555; background:rgba(0,0,0,0.5); position:relative; cursor:pointer;";
                 if (item) {
                     const img = document.createElement('div');
                     const asset = getAssetData(item.type, item.val || item.id, item.suit);

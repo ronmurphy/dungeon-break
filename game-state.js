@@ -165,7 +165,9 @@ export const game = {
     level: 1,
     xp: 0,
     seed: 1,
-    useBSP: false
+    useBSP: false,
+    torchEnabled: true,
+    campMap: false
 };
 window.game = game;
 

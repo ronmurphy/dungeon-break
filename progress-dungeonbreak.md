@@ -370,6 +370,10 @@ Cell index = `val - 2` for deck weapons (val 2–11 = cells 0–9). Cells 10–1
 - **Tauri** — Lightweight desktop wrapper (~3MB vs Electron's ~150MB). Uses OS native webview. Nearly zero porting effort since the game is already `index.html` + assets.
 
 ### Brad Notes: 2/23/2026 - 2/26/2026
+
+2-23-26:
 Pathfinding is in now, it is in the optionsModal for enable or disable, works well in bsd-dungeon, untested in battle island and overworld / camp map. pre-map caching during generation is how it works.   elevated dungeons is mostly in, and sloped floors makes the dungeon feel more worn down and ruined.  added in decorative blocks, hanging chains, cobwebs & sconces, all not blocking, had to fix a bug where pillars could block a corridor, niow it wont do that.  combat menu items > equip works, new tactics, Brace, Trip, Taunt and Second Wind.  possibly having some graphical issues with the new floor and enemies, one 'jumped' out of bounds (between walls) and then hopped in big leaps all over the map.  definetly a bug but idk where. maybe the tactic shove? (Trip?) and a auto mapped was added in.   update: bug may be fixed, evidently shove > enemy > walls > out of bounds somehow. maybe fixed.  made page 2 of the tactics menu with one square intentionally blank.  added quality performance mode for 1080 res monitors or potato pcs. 
 
-BIG CHANGE: Camp / cellular automata, always level 1, wanderers can be adjusted in code as needed, more hills, less holes, setting upop for the base plot to the entire game, the campfire with Joe and Old Pell.
+
+2-24-26:
+BIG CHANGE: Camp / cellular automata, always level 1, wanderers can be adjusted in code as needed, more hills, less holes, setting upop for the base plot to the entire game, the campfire with Joe and Old Pell.  day and night in now, along with wanderers spawning from shadows and at night, the campfire and the azure flame literally stop them form coming in and hurting you.  night spawned wanderers, about half vanish when daylight comes. fog disabled permently in camp, could not get it to work right.  it's a small map anyway, 70x70 something units.  when the torch gets low it turns off, there is a torch toggle in inventory, need to refill it. 

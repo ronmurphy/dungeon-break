@@ -278,9 +278,40 @@ window.goMap = function (map) {
         globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 50, false, null, true);
         extractCAGrid(globalFloorMesh);
         updateAtmosphere(floor);
+        // Camp: no fog — the island is open air, player should see the whole terrain
+        scene.fog = null;
+        scene.background = new THREE.Color(0x0a0d18); // Clear dark-blue night sky
         initWanderers();
         updateUI();
         enterRoom(0);
+
+        // Camp day/night — start at dawn so the player sees the island in sunrise light
+        campTime = 0.22;
+        _dawnCleanPending = false; // Suppress immediate cleanup on first cycle
+        campSafeZones = game.rooms
+            .filter(r => r.isBonfire)
+            .map(r => ({ x: r.gx, z: r.gy, radius: 5 }));
+        // Sun directional light — swept along arc each frame by updateCampDayNight
+        if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
+        _sunLight = new THREE.DirectionalLight(0xffeedd, 0);
+        _sunLight.castShadow = false;
+        scene.add(_sunLight);
+        // Show torch image overlay and make widget clickable (camp only)
+        const _tBtn = document.getElementById('torchToggleImg');
+        if (_tBtn) _tBtn.style.display = 'block';
+        const _tWidget = document.getElementById('torchFuelWidget');
+        if (_tWidget) _tWidget.style.cursor = 'pointer';
+        const _tBtnI = document.getElementById('torchInventoryBlock');
+        if (_tBtnI) _tBtnI.style.display = 'flex';
+        const _cti = document.getElementById('campTimeIndicator');
+        if (_cti) _cti.style.display = 'flex';
+
+        // Reset camera to a known close position — prevents landing in black fog
+        // (same fix applied in testDungeon and floor descent)
+        camera.position.set(20, 20, 20);
+        camera.lookAt(0, 0, 0);
+        controls.target.set(0, 0, 0);
+        controls.update();
 
         // ── Place 6 marker GLBs around the camp ──────────────────────────────
         const CAMP_MARKERS = [
@@ -311,6 +342,8 @@ window.goMap = function (map) {
             }
             // Use CA height grid for ground Y — same as wanderers, no raycast needed
             const groundY = getCAHeightAt(pos.x, pos.z);
+            // Exclude wanderers from the marker's immediate area
+            campSafeZones.push({ x: pos.x, z: pos.z, radius: 3 });
 
             const anchor = new THREE.Mesh(
                 new THREE.BoxGeometry(0.5, 1.5, 0.5),
@@ -399,6 +432,13 @@ window.whereAmI = function() {
     console.log(`%cDeck size:   %c${game.deck ? game.deck.length : '?'} cards`, 'color:#aaa', w);
     console.log(`%cHP:          %c${game.hp} / ${game.maxHp}`, 'color:#aaa', w);
     console.log(`%cGold:        %c${game.gold || 0}`, 'color:#aaa', w);
+};
+
+// Torch toggle — the 🔦 button in the inventory bar (camp maps only)
+window._toggleTorch = function() {
+    if (!game.campMap) return;       // Only works on camp island
+    if (game.torchCharge <= 0) return; // Can't relight a dead torch
+    game.torchEnabled = !game.torchEnabled;
 };
 
 // Store player pos before teleporting to Battle Island
@@ -530,6 +570,14 @@ let globalFloorMesh = null; // Reference for terrain manipulation
 let bspGrid = null, bspHeightGrid = null, bspCols = 0, bspRows = 0; // BSP tile grid for wall collision
 let caGrid = null, caHeightGrid = null, caCols = 0, caRows = 0, caBoundsOffset = 0; // CA tile grid (mirrors BSP — avoids per-frame raycasting)
 
+// ── Camp day/night cycle state ─────────────────────────────────────────────────
+let campTime          = 0.22;  // 0→1 over 1800 s; 0=midnight 0.25=dawn 0.5=noon 0.75=dusk
+let campSafeZones     = [];    // [{x,z,radius}] bonfire rooms + markers — wanderer exclusion areas
+let _sunLight         = null;  // Directional light swept along a daytime arc
+let _shadowSpawnTimer = 0;     // Accumulates while: day + torch on (shadow-spawn pressure)
+let _nightSpawnTimer  = 0;     // Accumulates while: night (ambient-spawn pressure)
+let _dawnCleanPending = true;  // Fires once per dawn crossing to dissolve night wanderers
+
 function isBSPWallAt(wx, wz) {
     if (!bspGrid) return false;
     const col = Math.round(wx + bspCols / 2);
@@ -574,6 +622,11 @@ function getCAHeightAt(wx, wz) {
     const h0 = caHeightGrid[r][c]   * (1 - fx) + caHeightGrid[r][c+1]   * fx;
     const h1 = caHeightGrid[r+1][c] * (1 - fx) + caHeightGrid[r+1][c+1] * fx;
     return h0 * (1 - fz) + h1 * fz;
+}
+
+// Camp safe zones — bonfire pits and key markers; wanderers won't enter or target these areas
+function isCampSafeZone(x, z) {
+    return campSafeZones.some(sz => Math.hypot(x - sz.x, z - sz.z) < sz.radius);
 }
 
 // Bresenham grid scan — returns true if a TILE_WALL tile lies between fromPos and toPos
@@ -709,6 +762,7 @@ let ghosts = []; // Active ghost sprites
 let viewMode = 1; // 0: 2D, 1: 3D Iso (Default), 2: 3D Free/FPS
 let isAttractMode = false; // Title screen mode
 let playerMesh; // 3D Model
+let _camFollowPos = null; // Smooth camera-follow intermediate point (lerp drag)
 let mixer; // Animation Mixer
 let actions = {}; // Animation Actions (Idle, Walk)
 const clock = new THREE.Clock();
@@ -1731,7 +1785,7 @@ function init3D() {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enablePan = false;   // Dungeon default: camera follows player, no manual panning
     controls.enableRotate = true; // Restore spinning for Map View
-    controls.maxPolarAngle = Math.PI * 0.42; // ~75° — prevent top-down flip
+    controls.maxPolarAngle = Math.PI * 0.48; // ~86° — allows tilting low to look up hills/peaks
     controls.maxZoom = 2;
     controls.minZoom = 0.5;
     controls.mouseButtons = {
@@ -2006,7 +2060,8 @@ function initWanderers() {
     }
 
     // Subtract already-killed enemies (persisted across saves)
-    count = Math.max(0, count - (game.floorKills || 0));
+    // Camp map is a separate place — dungeon kill count doesn't apply here
+    if (!game.campMap) count = Math.max(0, count - (game.floorKills || 0));
 
     for (let i = 0; i < count; i++) {
         const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
@@ -2043,6 +2098,9 @@ function initWanderers() {
                 sz = Math.sin(angle) * r;
 
                 if (game.rooms.some(r => Math.hypot(r.gx - sx, r.gy - sz) < 4)) continue;
+
+                // Camp safe zones — don't spawn inside bonfire pits or marker auras
+                if (game.campMap && isCampSafeZone(sx, sz)) continue;
 
                 let nearCorr = false;
                 for (const m of corridorMeshes.values()) {
@@ -2166,6 +2224,9 @@ function pickWandererTarget(wanderer) {
         // Avoid Rooms
         if (game.rooms.some(r => Math.hypot(r.gx - x, r.gy - z) < 4)) continue;
 
+        // Camp safe zones (bonfire pits + marker auras)
+        if (game.campMap && isCampSafeZone(x, z)) continue;
+
         // Avoid Corridors
         let nearCorr = false;
         for (const m of corridorMeshes.values()) {
@@ -2175,7 +2236,16 @@ function pickWandererTarget(wanderer) {
 
         // Validate target is on walkable floor — use grid if available, otherwise raycast
         if (caGrid) {
-            if (!isCAVoidAt(x, z)) valid = true;
+            if (!isCAVoidAt(x, z)) {
+                // Extra margin check: all 4 cardinal neighbours must also be valid
+                // This prevents targeting cells on the island edge where paths immediately fall off
+                const _margin = 1.2;
+                const edgeSafe = !isCAVoidAt(x + _margin, z) &&
+                                 !isCAVoidAt(x - _margin, z) &&
+                                 !isCAVoidAt(x, z + _margin) &&
+                                 !isCAVoidAt(x, z - _margin);
+                if (edgeSafe) valid = true;
+            }
         } else if (globalFloorMesh) {
             terrainRaycaster.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0));
             const hits = terrainRaycaster.intersectObject(globalFloorMesh);
@@ -2220,6 +2290,14 @@ function pickWandererTarget(wanderer) {
                         currentY = getBSPHeightAt(wanderer.mesh.position.x, wanderer.mesh.position.z) + WANDERER_Y_LIFT;
                         if (!wanderer.isJumping) wanderer.mesh.position.y = currentY;
                     } else if (caGrid && targetMesh === globalFloorMesh) {
+                        // Abort immediately if current position is already over void
+                        if (isCAVoidAt(wanderer.mesh.position.x, wanderer.mesh.position.z)) {
+                            if (wanderer.tween) wanderer.tween.stop();
+                            wanderer.tween = null;
+                            wanderer.mesh.position.copy(startPos);
+                            pickWandererTarget(wanderer);
+                            return;
+                        }
                         currentY = getCAHeightAt(wanderer.mesh.position.x, wanderer.mesh.position.z) + WANDERER_Y_LIFT;
                         if (!wanderer.isJumping) wanderer.mesh.position.y = currentY;
                     } else {
@@ -2232,7 +2310,7 @@ function pickWandererTarget(wanderer) {
                     }
 
                     // 2. Look Ahead (Cliff/Wall Check)
-                    const lookAheadDist = 0.6;
+                    const lookAheadDist = (caGrid && targetMesh === globalFloorMesh) ? 1.5 : 0.6;
                     const aheadPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
                     let stop = false;
@@ -3281,7 +3359,13 @@ function update3DScene() {
         // Note: This check is cheap in the loop map
         // if (audio.initialized) audio.startLoop('torch', 'torch_loop', { volume: 0 });
 
-        torchLight.position.set(playerObj.position.x, 2.5, playerObj.position.z);
+        // Camp torch toggle: player can extinguish the torch (creates no shadows, blocks shadow spawns)
+        if (game.campMap && !game.torchEnabled) {
+            torchLight.intensity = 0;
+            if (torchGlowOuter) torchGlowOuter.visible = false;
+            if (torchGlowInner) torchGlowInner.visible = false;
+        }
+        torchLight.position.set(playerObj.position.x, playerObj.position.y + 2.0, playerObj.position.z);
 
         game.rooms.forEach(r => {
             const dist = Math.sqrt(Math.pow(r.gx - playerObj.position.x, 2) + Math.pow(r.gy - playerObj.position.z, 2));
@@ -4230,12 +4314,22 @@ function animate3D() {
 
     const dt = clock.getDelta();
 
+    // Advance tweens FIRST so all objects (player, FX, etc.) are at their
+    // current-frame positions before the camera target is sampled and before
+    // wanderer AI measures player distance.
+    if (window.TWEEN) TWEEN.update();
+
     // Handle Free Movement (only on main map)
     if (isInHouse) {
         // Custom movement logic for inside the house can go here if needed
     } else {
         updatePlayerMovement(dt);
+        // Re-sync camera to the new player position immediately — eliminates follow lag.
+        if (!isAttractMode) controls.update();
     }
+
+    // Camp day/night cycle (sky colour, sun arc, spawn timers) — only when on the camp island
+    if (game.campMap && !isAttractMode) updateCampDayNight(dt);
 
     // Proximity Combat Trigger
     // NOTE: We still run during isCombatView so wanderers can chase and JOIN an active fight.
@@ -4342,6 +4436,16 @@ function animate3D() {
                             const moveDist = speed * dt;
                             // Only move if not already in combat range
                             if (distance > 1.2) {
+                                // Void pre-check (CA terrain): bail to patrol before stepping off island edge
+                                if (caGrid && !inHelixZone && !isCombatView) {
+                                    const _nx = wandererPos.x + dir.x * moveDist;
+                                    const _nz = wandererPos.z + dir.z * moveDist;
+                                    if (isCAVoidAt(_nx, _nz)) {
+                                        wanderer.state = 'patrol';
+                                        pickWandererTarget(wanderer);
+                                        continue;
+                                    }
+                                }
                                 wanderer.mesh.position.add(dir.multiplyScalar(moveDist));
                                 // Snap to floor to prevent flying/sinking
                                 const targetMesh = inHelixZone ? helixFloorGroup
@@ -4429,8 +4533,6 @@ function animate3D() {
         }
         lastRenderTime = now;
     }
-
-    if (window.TWEEN) TWEEN.update();
 
     // Update Animation Mixer
     const delta = Math.min(dt, 0.1); // Cap delta to prevent "super fast" catch-up glitches (shared with pet AI below)
@@ -4840,11 +4942,216 @@ function stopMovement() {
 }
 
 function updatePlayerMovement(dt) {
-    // Camera Follow — player is always the orbit pivot; dungeon scrolls around them
     const playerObj = playerMesh;
     if (playerObj && !isAttractMode && !isCombatView && !inHelixZone) {
-        controls.target.copy(playerObj.position);
+        // Lazy-init: snap follow point to player on first use or after map change
+        if (!_camFollowPos) {
+            _camFollowPos = playerObj.position.clone();
+            controls.target.copy(_camFollowPos);
+            return;
+        }
+        // Exponential drag: follow point chases player, camera orbits the follow point.
+        // Factor of 5/sec gives ~1-3 unit soft lag at walking/running speeds.
+        // Only lerp X/Z — keeping Y fixed at 0 means OrbitControls always orbits the
+        // ground plane, so moving uphill never tilts the camera vertically instead of panning.
+        const factor = Math.min(1.0, 5.0 * dt);
+        _camFollowPos.x += (playerObj.position.x - _camFollowPos.x) * factor;
+        _camFollowPos.z += (playerObj.position.z - _camFollowPos.z) * factor;
+        _camFollowPos.y = 0;
+        controls.target.copy(_camFollowPos);
     }
+}
+
+// ── Camp day/night cycle ──────────────────────────────────────────────────────
+// 30 min full cycle (15 min day + 15 min night including dawn/dusk/twilight).
+// campTime: 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk.
+function updateCampDayNight(dt) {
+    const FULL_DAY_S = 1800;
+    campTime = (campTime + dt / FULL_DAY_S) % 1.0;
+
+    // Keep torch flag in sync with fuel level
+    if (game.torchCharge <= 0) game.torchEnabled = false;
+
+    // ── Sun arc ───────────────────────────────────────────────────────────────
+    // sunPhase: 0=dawn, 0.25=noon, 0.5=dusk, 0.75-1=night
+    const sunPhase = ((campTime - 0.25 + 1.0) % 1.0);
+    const sunAlt   = Math.sin(sunPhase * Math.PI);         // 1 at noon, 0 at horizon, <0 underground
+    const sunAz    = (sunPhase - 0.5) * Math.PI;           // -π/2 east (dawn) → 0 overhead → π/2 west (dusk)
+    if (_sunLight) {
+        _sunLight.position.set(Math.cos(sunAz) * 40, Math.max(-10, sunAlt * 50), Math.sin(sunAz) * 20);
+        _sunLight.intensity = Math.max(0, sunAlt) * 2.0;
+        // Orange at horizons → warm white at noon
+        const warmth = Math.max(0, 1.0 - Math.abs(sunPhase - 0.25) * 3.5);
+        _sunLight.color.setRGB(1.0, 0.65 + warmth * 0.35, 0.30 + warmth * 0.60);
+    }
+
+    // ── Sky/ambient colour keyframes ─────────────────────────────────────────
+    const SKY = [
+        { t:0.00, bg:[0.02,0.03,0.10], a:[0.07,0.05,0.13], i:0.12 }, // midnight
+        { t:0.18, bg:[0.06,0.03,0.15], a:[0.10,0.06,0.18], i:0.15 }, // pre-dawn
+        { t:0.23, bg:[0.85,0.28,0.06], a:[0.82,0.46,0.10], i:0.38 }, // sunrise
+        { t:0.32, bg:[0.26,0.53,0.80], a:[0.38,0.62,0.84], i:0.72 }, // morning
+        { t:0.50, bg:[0.50,0.67,0.88], a:[0.60,0.78,0.95], i:0.90 }, // noon
+        { t:0.68, bg:[0.26,0.53,0.80], a:[0.38,0.62,0.84], i:0.72 }, // afternoon
+        { t:0.77, bg:[0.80,0.20,0.04], a:[0.76,0.32,0.08], i:0.38 }, // sunset
+        { t:0.83, bg:[0.14,0.04,0.22], a:[0.09,0.04,0.14], i:0.16 }, // twilight
+        { t:1.00, bg:[0.02,0.03,0.10], a:[0.07,0.05,0.13], i:0.12 }, // midnight (wrap)
+    ];
+    let k0 = SKY[0], k1 = SKY[1];
+    for (let i = 0; i < SKY.length - 1; i++) {
+        if (campTime >= SKY[i].t && campTime < SKY[i+1].t) { k0 = SKY[i]; k1 = SKY[i+1]; break; }
+    }
+    const f  = (campTime - k0.t) / ((k1.t - k0.t) || 1);
+    const lr = (a, b) => [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f, a[2]+(b[2]-a[2])*f];
+    const bgC  = lr(k0.bg, k1.bg);
+    const ambC = lr(k0.a,  k1.a);
+    const ambI = k0.i + (k1.i - k0.i) * f;
+    if (scene) {
+        scene.background = new THREE.Color(bgC[0], bgC[1], bgC[2]);
+        const ambLight = scene.children.find(c => c.isAmbientLight);
+        if (ambLight) { ambLight.color.setRGB(ambC[0], ambC[1], ambC[2]); ambLight.intensity = ambI; }
+        if (hemisphereLight) hemisphereLight.intensity = 0.08 + Math.max(0, sunAlt) * 0.40;
+    }
+
+    // ── Phase flags ──────────────────────────────────────────────────────────
+    const isNight = campTime < 0.22 || campTime > 0.78;
+    const isDawn  = campTime >= 0.21 && campTime < 0.27;
+
+    // Dawn cleanup — dissolve ~50 % of non-combat wanderers as the sun rises
+    if (isDawn && _dawnCleanPending) {
+        _dawnCleanPending = false;
+        const targets = wanderers.filter(w => w.state !== 'combat');
+        const n = Math.ceil(targets.length * 0.5);
+        for (let i = 0; i < n; i++) dismissCampWanderer(targets[i]);
+        if (n > 0) logMsg(`Dawn breaks — ${n} creature${n > 1 ? 's' : ''} melt back into shadow.`);
+    }
+    if (!isDawn) _dawnCleanPending = true; // re-arm for next cycle
+
+    // Night spawn — every 45 s, up to 12 wanderers total
+    if (isNight) {
+        _nightSpawnTimer += dt;
+        if (_nightSpawnTimer >= 45 && wanderers.length < 12) {
+            _nightSpawnTimer -= 45;
+            spawnOneCampWanderer(false);
+            logMsg("Something stirs in the dark...");
+        }
+    } else {
+        _nightSpawnTimer = 0;
+    }
+
+    // Shadow spawn — torch on during day, every 90 s, up to 8 wanderers total
+    if (!isNight && game.torchEnabled && game.torchCharge > 0) {
+        _shadowSpawnTimer += dt;
+        if (_shadowSpawnTimer >= 90 && wanderers.length < 8) {
+            _shadowSpawnTimer -= 90;
+            spawnOneCampWanderer(true);
+            logMsg("A shadow detaches from the light...");
+        }
+    } else {
+        _shadowSpawnTimer = Math.max(0, _shadowSpawnTimer - dt * 0.3);
+    }
+
+    // Sync torch toggle imgs (HUD + inventory modal)
+    const _torchOn = game.torchEnabled && game.torchCharge > 0;
+    const _torchSrc = _torchOn
+        ? 'assets/images/ui/inventory/torch_lit.png'
+        : 'assets/images/ui/inventory/torch_unlit.png';
+    const _hudWrap = document.getElementById('torchFuelWidget');
+    const _hudImg  = document.getElementById('torchToggleImg');
+    if (_hudWrap) {
+        _hudWrap.style.borderColor = _torchOn ? '#44cc66' : '#444';
+        _hudWrap.style.opacity     = game.torchCharge <= 0 ? '0.35' : '1';
+    }
+    if (_hudImg) _hudImg.src = _torchSrc;
+    const _invImg = document.getElementById('torchToggleImgInventory');
+    if (_invImg) _invImg.src = _torchSrc;
+    const _invLbl = document.getElementById('torchInventoryLabel');
+    if (_invLbl) {
+        _invLbl.textContent = _torchOn ? '🔥 ON' : '🔥 OFF';
+        _invLbl.style.color = _torchOn ? '#ffaa44' : '#666';
+    }
+
+    // Sync camp time indicator icon + colour
+    const _ctiEl   = document.getElementById('campTimeIndicator');
+    const _ctiIcon = document.getElementById('campTimeIcon');
+    if (_ctiEl && _ctiIcon) {
+        let _icon, _color, _border;
+        const _isDawn = campTime >= 0.21 && campTime < 0.28;
+        const _isDusk = campTime >= 0.72 && campTime < 0.79;
+        const _isNight = campTime < 0.21 || campTime >= 0.79;
+        if (_isNight) {
+            _icon   = 'dark_mode';
+            _color  = '#99aadd';
+            _border = '#223';
+        } else if (_isDawn || _isDusk) {
+            _icon   = 'wb_twilight';
+            _color  = '#ff9944';
+            _border = '#553311';
+        } else {
+            _icon   = 'light_mode';
+            _color  = '#ffdd44';
+            _border = '#554400';
+        }
+        _ctiIcon.textContent        = _icon;
+        _ctiIcon.style.color        = _color;
+        _ctiEl.style.borderColor    = _border;
+    }
+}
+
+// Spawn a single wanderer on the camp island.
+// nearPlayer=true: shadow spawn 6-16 units away; false: night annular ring 12-28.
+function spawnOneCampWanderer(nearPlayer = false) {
+    if (!scene || !caGrid) return;
+    const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
+    let sx = 0, sz = 0, sy = 0, valid = false, attempts = 0;
+    while (!valid && attempts < 60) {
+        attempts++;
+        let r, a;
+        if (nearPlayer && playerMesh) {
+            r = 6 + Math.random() * 10;
+            a = Math.random() * Math.PI * 2;
+            sx = playerMesh.position.x + Math.cos(a) * r;
+            sz = playerMesh.position.z + Math.sin(a) * r;
+        } else {
+            r = 12 + Math.random() * 16;
+            a = Math.random() * Math.PI * 2;
+            sx = Math.cos(a) * r; sz = Math.sin(a) * r;
+        }
+        if (isCampSafeZone(sx, sz)) continue;
+        if (isCAVoidAt(sx, sz)) continue;
+        if (game.rooms.some(rm => Math.hypot(rm.gx - sx, rm.gy - sz) < 4)) continue;
+        sy = getCAHeightAt(sx, sz) + WANDERER_Y_LIFT;
+        valid = true;
+    }
+    if (!valid) return;
+    loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
+        const lod = new THREE.LOD();
+        lod.autoUpdate = false;
+        lod.addLevel(model, gameSettings.lod.near || 40);
+        lod.addLevel(new THREE.Mesh(new THREE.BoxGeometry(0.6,1.8,0.6), new THREE.MeshBasicMaterial({color:0x1a1a1a})), gameSettings.lod.far || 80);
+        lod.position.set(sx, sy, sz);
+        scene.add(lod);
+        const wMixer = new THREE.AnimationMixer(model);
+        const findA = (terms) => { for (const t of terms) { const c = animations.find(a => a.name.toLowerCase().includes(t)); if (c) return c; } return null; };
+        const wActs = {};
+        const walkClip = findA(['walk','run','move']) || animations[0];
+        const idleClip = findA(['idle','stand','wait']);
+        if (walkClip) { wActs.walk = wMixer.clipAction(walkClip); wActs.walk.play(); }
+        if (idleClip)   wActs.idle = wMixer.clipAction(idleClip);
+        const wanderer = { mesh: lod, mixer: wMixer, actions: wActs, filename: file };
+        wanderers.push(wanderer);
+        pickWandererTarget(wanderer);
+    }, 0.7);
+}
+
+// Dissolve a camp wanderer at dawn with a magic-puff FX.
+function dismissCampWanderer(wanderer) {
+    if (!wanderer || !wanderer.mesh) return;
+    const idx = wanderers.indexOf(wanderer);
+    if (idx !== -1) wanderers.splice(idx, 1);
+    if (wanderer.tween) wanderer.tween.stop();
+    if (wanderer.mesh.position) spawn3DImpact(wanderer.mesh.position.clone(), 0x9955cc, 'magic_04.png');
+    scene.remove(wanderer.mesh);
 }
 
 function movePlayerSprite(oldId, newId) {
@@ -5178,6 +5485,17 @@ function clear3DScene() {
     globalFloorMesh = null;
     bspGrid = null; bspHeightGrid = null; bspCols = 0; bspRows = 0;
     caGrid = null; caHeightGrid = null; caCols = 0; caRows = 0; caBoundsOffset = 0;
+    _camFollowPos = null; // Re-init on next map load to player's actual spawn position
+    campSafeZones = []; _nightSpawnTimer = 0; _shadowSpawnTimer = 0; _dawnCleanPending = true;
+    if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
+    const _tbc = document.getElementById('torchToggleImg');
+    if (_tbc) _tbc.style.display = 'none';
+    const _tbcW = document.getElementById('torchFuelWidget');
+    if (_tbcW) { _tbcW.style.cursor = 'default'; _tbcW.style.borderColor = '#444'; _tbcW.style.opacity = '1'; }
+    const _tbci = document.getElementById('torchInventoryBlock');
+    if (_tbci) _tbci.style.display = 'none';
+    const _ctiH = document.getElementById('campTimeIndicator');
+    if (_ctiH) _ctiH.style.display = 'none';
     Minimap.clear();
     dungeonDustMotes = null; // scene.remove already happened via while loop above
 
@@ -6868,7 +7186,7 @@ function enterHelixZone() {
         controls.minDistance   = 18;
         controls.maxDistance   = 80;
         controls.minPolarAngle = 0;
-        controls.maxPolarAngle = Math.PI * 0.42; // ~75° — can't flip below horizon
+        controls.maxPolarAngle = Math.PI * 0.48; // ~86° — allows tilting low to look up hills/peaks
 
         controls.update(); // bake spherical offset before first frame
     }
@@ -9096,6 +9414,25 @@ function loadGame() {
         globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 50, false, null, true);
         extractCAGrid(globalFloorMesh);
         updateAtmosphere(1);
+        scene.fog = null;
+        scene.background = new THREE.Color(0x0a0d18);
+        // Day/night state — resume mid-cycle (dawn so player sees the island)
+        campTime = 0.22; _dawnCleanPending = false;
+        campSafeZones = game.rooms
+            .filter(r => r.isBonfire)
+            .map(r => ({ x: r.gx, z: r.gy, radius: 5 }));
+        if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
+        _sunLight = new THREE.DirectionalLight(0xffeedd, 0);
+        _sunLight.castShadow = false;
+        scene.add(_sunLight);
+        const _ltBtn = document.getElementById('torchToggleImg');
+        if (_ltBtn) _ltBtn.style.display = 'block';
+        const _ltWidget = document.getElementById('torchFuelWidget');
+        if (_ltWidget) _ltWidget.style.cursor = 'pointer';
+        const _ltBtnI = document.getElementById('torchInventoryBlock');
+        if (_ltBtnI) _ltBtnI.style.display = 'flex';
+        const _ltCti = document.getElementById('campTimeIndicator');
+        if (_ltCti) _ltCti.style.display = 'flex';
     } else if (!savedUseBSP) {
         // ── Restore standard CA floor ────────────────────────────────────────
         game.useBSP = false;
@@ -9128,6 +9465,7 @@ function loadGame() {
     camera.position.set(px + 20, 20, pz + 20);
     camera.lookAt(px, 0, pz);
     controls.target.set(px, 0, pz);
+    _camFollowPos = new THREE.Vector3(px, 0, pz); // Snap follow point to load position
 
     // Start Audio
     updateMusicForFloor();
@@ -10617,7 +10955,7 @@ function exitCombatView() {
     controls.enableRotate = true;
     controls.enablePan = false; // Dungeon follows player; battle island sets its own pan in enterBossArena
     controls.autoRotate = false;
-    controls.maxPolarAngle = Math.PI * 0.42; // ~75° — matches init3D default, prevents top-down lock
+    controls.maxPolarAngle = Math.PI * 0.48; // ~86° — allows tilting low to look up hills/peaks
     controls.minDistance = 0;
     controls.maxDistance = Infinity;
     controls.mouseButtons = {
