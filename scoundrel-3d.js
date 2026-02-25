@@ -291,7 +291,7 @@ window.goMap = function (map) {
         _dawnCleanPending = false; // Suppress immediate cleanup on first cycle
         campSafeZones = game.rooms
             .filter(r => r.isBonfire)
-            .map(r => ({ x: r.gx, z: r.gy, radius: 5 }));
+            .map(r => ({ x: r.gx, z: r.gy, radius: 10 }));
         // Sun directional light — swept along arc each frame by updateCampDayNight
         if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
         _sunLight = new THREE.DirectionalLight(0xffeedd, 0);
@@ -3360,7 +3360,7 @@ function update3DScene() {
         const baseInt  = Math.max(2500, 500 + (game.torchCharge * 50)); // Increased min brightness
 
         if (game.equipment.weapon) {
-            if (game.equipment.weapon.val >= 8 || hasLantern) {
+            if ((game.torchEnabled && game.torchCharge > 0) && (game.equipment.weapon.val >= 8 || hasLantern)) {
                 torchLight.color.setHex(0x00ccff); torchLight.intensity = baseInt * 1.6;
                 torchLight.distance = baseDist * 1.5; vRad = 8.0;
             } else if (game.equipment.weapon.val >= 6 || hasLantern) {
@@ -4452,6 +4452,23 @@ function animate3D() {
 
                     // Ranger's Mask: wanderers cannot detect the player (id:14 active item)
                     if (game.maskRooms > 0) canSee = false;
+
+                    // Bonfire safe zone: player is with the trio — wanderers leave them alone
+                    const playerInBonfireSanctuary = game.campMap && isCampSafeZone(playerPos.x, playerPos.z);
+                    if (playerInBonfireSanctuary) {
+                        canSee = false;
+                        if (wanderer.state === 'chase') {
+                            wanderer.state = 'cooldown';
+                            if (wanderer.actions.walk) wanderer.actions.walk.stop();
+                            if (wanderer.actions.idle) wanderer.actions.idle.play();
+                            setTimeout(() => {
+                                if (wanderer.state === 'cooldown') {
+                                    wanderer.state = 'patrol';
+                                    pickWandererTarget(wanderer);
+                                }
+                            }, 1500);
+                        }
+                    }
 
                     // State Machine
                     if (!wanderer.state) wanderer.state = 'patrol';
@@ -6229,14 +6246,11 @@ function enterRoom(id) {
         return;
     }
     if (room.isBonfire && room.state !== 'cleared') {
+        // Don't interrupt active card combat or 3D combat with the trio scene
+        const _cardCombatActive = document.getElementById('combatContainer')?.style.display === 'flex';
+        if (isCombatView || isEngagingCombat || _cardCombatActive) return;
         game.activeRoom = room;
-        // Check if generatedContent exists (it should via map gen), 
-        // but for bonfires we use room.restRemaining directly. 
-        // We don't use combatCards for persistent bonfire UI.
-
-        // Persistence Check (ensure restRemaining is set if valid room)
         if (room.restRemaining === undefined) room.restRemaining = 3;
-
         game.chosenCount = 0; game.potionsUsedThisTurn = false;
         showBonfireUI();
         return;
@@ -8347,82 +8361,264 @@ function closeCombat() {
 window.closeCombat = closeCombat; // Expose for onClick events
 
 function showBonfireUI() {
+    // Safety net: never open over active combat
+    const _cardCombatActive = document.getElementById('combatContainer')?.style.display === 'flex';
+    if (isCombatView || isEngagingCombat || _cardCombatActive) return;
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'flex';
     const trapUI = document.getElementById('trapUI');
     if (trapUI) trapUI.style.display = 'none';
-    // Ensure merchant portrait is hidden when showing bonfire UI
     const mp = document.getElementById('merchantPortrait');
     if (mp) mp.style.display = 'none';
-
-    // Ensure the native 'Leave' button is visible
-    const leaveBtn = document.getElementById('bonfireNotNowBtn');
-    if (leaveBtn) leaveBtn.style.display = 'inline-block';
-    updateBonfireUI();
+    window._renderBonfireTrio();
 }
 
-window.handleBonfire = function (cost) {
-    const room = game.activeRoom;
-    if (room.restRemaining < cost) return;
+// ---------- BONFIRE TRIO SCENE ----------
 
-    room.restRemaining -= cost;
-    // Herbs Check (ID 5) + Pell's Bowl (ID 15)
-    const hasHerbs = game.hotbar.some(i => i && i.type === 'item' && i.id === 5);
-    const hasPellBowl = game.hotbar.some(i => i && i.id === 15);
-    const heal = Math.min((5 * cost) + (hasHerbs ? 5 : 0) + (hasPellBowl ? 3 : 0), game.maxHp - game.hp);
-    game.hp += heal;
-
-    // Ensure we don't exceed max? (Assuming logic allows overheal or not? usually clamped)
-    // For now, update UI immediately
-    updateBonfireUI();
-
-    game.bonfireUsed = true;
-    spawnAboveModalTexture('flame_03.png', window.innerWidth / 2, window.innerHeight / 2, 30, { tint: '#ff6600', blend: 'lighter', sizeRange: [48, 160], intensity: 1.45 });
-    logMsg(`Bonfire Rest: +${heal} Vitality.`);
-
-    if (room.restRemaining <= 0) {
-        room.state = 'cleared';
-        logMsg("The fire fades.");
-        audio.stopLoop(`bonfire_${room.id}`);
-        updateUI(); // Update HP display before closing
-        closeCombat();
-    } else {
-        updateBonfireUI();
-        updateUI();
-    }
+window._renderBonfireTrio = function () {
+    const ui = document.getElementById('bonfireUI');
+    ui.style.width = '100%';
+    ui.innerHTML = `
+        <div style="
+            width:100%; height:100%;
+            background: url('assets/images/DBStory/trio_campfire_scene.png') center/cover no-repeat;
+            display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+            padding-bottom:60px; box-sizing:border-box;">
+            <h2 style="font-family:'Cinzel'; font-size:2.4rem; color:#ffd080;
+                text-shadow:0 0 24px #ff6600, 0 2px 6px #000; margin-bottom:28px;">Talk to who?</h2>
+            <div style="display:flex; gap:24px; margin-bottom:20px;">
+                <button class="v2-btn" onclick="bonfireTalkTo('joe')" style="min-width:120px; font-size:1.1rem;">Joe</button>
+                <button class="v2-btn" onclick="bonfireTalkTo('mira')" style="min-width:120px; font-size:1.1rem;">Mira</button>
+                <button class="v2-btn" onclick="bonfireTalkTo('pell')" style="min-width:120px; font-size:1.1rem;">Old Pell</button>
+            </div>
+            <button class="v2-btn" onclick="closeCombat()" style="background:#333; color:#aaa; min-width:120px;">Leave</button>
+        </div>
+    `;
 };
 
-function updateBonfireUI() {
-    const room = game.activeRoom;
-    document.getElementById('bonfireStatus').innerText = `${room.restRemaining} kindle remaining.`;
+window.bonfireTalkTo = function (npc) {
+    if (npc === 'joe') _renderBonfireJoe();
+    else if (npc === 'mira') _renderBonfireMira();
+    else if (npc === 'pell') _renderBonfirePell();
+};
 
-    // Update HP Display
-    const hpCur = document.getElementById('bonfireHpDisplay');
-    const hpMax = document.getElementById('bonfireMaxHpDisplay');
-    if (hpCur) hpCur.innerText = game.hp;
-    if (hpMax) hpMax.innerText = game.maxHp;
+// -- Joe: Soul Broker shop, joe_campfire_scene bg, no portrait --
+function _renderBonfireJoe() {
+    const ui = document.getElementById('bonfireUI');
+    const mp = document.getElementById('merchantPortrait');
+    if (mp) mp.style.display = 'none';
+    const discount = game.classId === 'merchant' ? 0.8 : 1.0;
 
-    // Set Avatar Image
-    const bgUrl = `assets/images/rest_${game.sex}_large.png`;
-    document.getElementById('bonfireImage').style.backgroundImage = `url('${bgUrl}')`;
+    const shopPool = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
+    shuffle(shopPool);
+    const shopItems = shopPool.slice(0, 4);
 
-    // Dim/Disable Buttons
-    ['btnRest1', 'btnRest2', 'btnRest3'].forEach((id, idx) => {
-        const cost = idx + 1;
-        const btn = document.getElementById(id);
-        if (room.restRemaining < cost) {
-            btn.disabled = true;
-            btn.style.opacity = '0.3';
-            btn.style.cursor = 'not-allowed';
-        } else {
-            btn.disabled = false;
-            btn.style.opacity = '1';
-            btn.style.cursor = 'pointer';
-        }
-    });
+    ui.innerHTML = `
+        <div style="
+            width:100%; height:100%;
+            background: url('assets/images/DBStory/joe_campfire_scene.png') center/cover no-repeat;
+            display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
+            padding-top:24px; box-sizing:border-box; overflow-y:auto;">
+            <div style="font-family:'Cinzel'; font-size:1.9rem; color:#d4af37; text-shadow:0 0 12px #ff6600; margin-bottom:6px;">Joe's Wares</div>
+            <div style="color:#d4af37; font-size:1.15rem; margin-bottom:14px;">
+                Soul Coins: <span id="joeCoinDisplay" style="color:#fff;">${game.soulCoins}</span>
+            </div>
+            <div id="joeShopGrid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:15px; width:320px; margin-bottom:16px;"></div>
+            <div style="display:flex; gap:18px; margin-top:10px; margin-bottom:16px;">
+                <button class="v2-btn" onclick="_renderBonfireTrio()" style="background:#444; color:#ccc;">← Back</button>
+                <button class="v2-btn" onclick="closeCombat()" style="background:#333; color:#888;">Leave</button>
+            </div>
+        </div>
+    `;
+
+    const coinDisplay = document.getElementById('joeCoinDisplay');
+
+    const renderGrid = () => {
+        const grid = document.getElementById('joeShopGrid');
+        if (!grid) return;
+        grid.innerHTML = '';
+        shopItems.forEach(item => {
+            const finalCost = Math.floor(item.cost * discount);
+            const asset = getAssetData(item.type, item.id || item.val, null);
+            const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
+            const sheetCount = asset.sheetCount || 9;
+            const bgSize = `${sheetCount * 100}% 100%`;
+            const bgPos = sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * sheetCount) / (sheetCount - 1) * 100}% 0%`;
+            const card = document.createElement('div');
+            card.className = 'card shop-item';
+            card.innerHTML = `
+                <div class="card-art-container" style="background-image: url('assets/images/${asset.file}'); background-size: ${bgSize}; background-position: ${bgPos}; ${tint}"></div>
+                <div class="name" style="bottom: 40px; font-size: 14px; ${item.isCursed ? 'color:#adff2f;' : ''}">${item.name}</div>
+                <div class="val" style="font-size: 16px; color: #ffd700;">${finalCost}</div>
+                <div style="position:absolute; bottom:5px; width:100%; text-align:center; font-size:10px; color:#aaa;">${item.type === 'armor' ? `+${item.ap} AP` : (item.isCursed ? 'Cursed' : 'Item')}</div>
+            `;
+            card.onclick = () => {
+                if (game.soulCoins >= finalCost) {
+                    if (getFreeBackpackSlot() === -1) { spawnFloatingText('Backpack Full!', window.innerWidth / 2, window.innerHeight / 2, '#ffaa00'); return; }
+                    game.soulCoins -= finalCost;
+                    if (coinDisplay) coinDisplay.innerText = game.soulCoins;
+                    if (item.id === 'cursed_ring') { game.maxHp += 10; game.hp += 10; logMsg('The Ring of Burden binds to you. (+10 Max HP)'); }
+                    addToBackpack(item);
+                    spawnFloatingText('Purchased!', window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
+                    card.style.opacity = '0.5';
+                    card.style.pointerEvents = 'none';
+                    updateUI();
+                } else {
+                    spawnFloatingText('Not enough coins!', window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
+                }
+            };
+            card.onmouseenter = () => {
+                const t = document.getElementById('gameTooltip');
+                if (t) {
+                    t.style.display = 'block';
+                    t.innerHTML = `<strong style="color:${item.isCursed ? '#adff2f' : '#ffd700'}; font-size:16px;">${item.name}</strong><br/><span style="color:#aaa; font-size:12px;">${item.type === 'armor' ? `+${item.ap} AP` : 'Item'}</span><br/><div style="margin-top:4px; color:#ddd;">${item.desc || ''}</div>`;
+                    const rect = card.getBoundingClientRect();
+                    t.style.left = (rect.right + 10) + 'px';
+                    t.style.top = rect.top + 'px';
+                }
+            };
+            card.onmouseleave = () => { const t = document.getElementById('gameTooltip'); if (t) t.style.display = 'none'; };
+            grid.appendChild(card);
+        });
+    };
+
+    // Hourglass (id:4) can reroll Joe's stock
+    window._shopReroll = () => {
+        const fresh = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
+        shuffle(fresh);
+        shopItems.length = 0;
+        fresh.slice(0, 4).forEach(x => shopItems.push(x));
+        renderGrid();
+    };
+
+    renderGrid();
 }
+
+// -- Mira: key → scroll trader, mira_cartographer_scene bg --
+function _renderBonfireMira() {
+    const ui = document.getElementById('bonfireUI');
+
+    // Count keys across BOTH hotbar and backpack
+    const countKeys = () =>
+        [...(game.hotbar || []), ...(game.backpack || [])]
+            .filter(i => i && i.id === 2).length;
+
+    const rebuildTrades = () => {
+        const area = document.getElementById('miraTradeArea');
+        if (!area) return;
+        area.innerHTML = '';
+        const keyCount = countKeys();
+
+        if (keyCount === 0) {
+            area.innerHTML = `<p style="color:#aaa; font-style:italic; margin:0;">&ldquo;No keys? Come back when you have some.&rdquo;</p>`;
+            return;
+        }
+
+        // Dropdown: 0 = no trade, 1..keyCount
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; align-items:center; gap:14px; flex-wrap:wrap; justify-content:center; margin-bottom:10px;';
+
+        const label = document.createElement('span');
+        label.style.cssText = 'color:#ccc; font-size:1rem;';
+        label.innerText = `You have ${keyCount} key${keyCount !== 1 ? 's' : ''}. Trade how many?`;
+
+        const sel = document.createElement('select');
+        sel.style.cssText = 'background:#1a1a2e; color:#d4af37; border:1px solid #555; padding:6px 12px; font-size:1rem; font-family:inherit; border-radius:4px; cursor:pointer;';
+        for (let n = 0; n <= keyCount; n++) {
+            const opt = document.createElement('option');
+            opt.value = n;
+            opt.innerText = n === 0 ? '0 — No trade' : `${n} key${n > 1 ? 's' : ''} → ${n} scroll${n > 1 ? 's' : ''}`;
+            sel.appendChild(opt);
+        }
+
+        const tradeBtn = document.createElement('button');
+        tradeBtn.className = 'v2-btn';
+        tradeBtn.innerText = 'Trade';
+        tradeBtn.onclick = () => {
+            const count = parseInt(sel.value, 10);
+            if (count === 0) { spawnFloatingText('Nothing traded.', window.innerWidth / 2, window.innerHeight / 2 - 80, '#aaa'); return; }
+
+            let removed = 0;
+            // Remove from hotbar first, then backpack
+            for (let j = 0; j < count && removed < count; j++) {
+                const hi = game.hotbar.findIndex(x => x && x.id === 2);
+                if (hi !== -1) { game.hotbar[hi] = null; removed++; }
+            }
+            for (let j = removed; j < count; j++) {
+                const bi = game.backpack.findIndex(x => x && x.id === 2);
+                if (bi !== -1) { game.backpack[bi] = null; }
+            }
+
+            const scroll = ITEM_DATA.find(x => x.id === 9);
+            for (let j = 0; j < count; j++) addToBackpack({ ...scroll, type: 'item' });
+
+            spawnFloatingText(`+${count} Scroll${count > 1 ? 's' : ''}!`, window.innerWidth / 2, window.innerHeight / 2 - 80, '#88ffcc');
+            logMsg(`Mira: Traded ${count} key${count > 1 ? 's' : ''} for ${count} Town Portal Scroll${count > 1 ? 's' : ''}.`);
+            updateUI();
+            rebuildTrades();
+        };
+
+        row.appendChild(label);
+        row.appendChild(sel);
+        row.appendChild(tradeBtn);
+        area.appendChild(row);
+    };
+
+    ui.innerHTML = `
+        <div style="
+            width:100%; height:100%;
+            background: url('assets/images/DBStory/mira_cartographer_scene.png') center/cover no-repeat;
+            display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+            padding-bottom:50px; box-sizing:border-box;">
+            <div style="background:rgba(0,0,0,0.78); border-radius:10px; padding:22px 36px; text-align:center; min-width:320px; max-width:460px;">
+                <div style="font-family:'Cinzel'; font-size:1.7rem; color:#88ccff; margin-bottom:8px;">Mira the Cartographer</div>
+                <p style="color:#ccc; font-style:italic; margin-bottom:18px; font-size:0.95rem;">&ldquo;Keys are useless if you're lost. Let me turn them into something useful.&rdquo;</p>
+                <div id="miraTradeArea" style="display:flex; flex-direction:column; align-items:center; gap:6px; margin-bottom:18px;"></div>
+                <div style="display:flex; gap:18px; justify-content:center;">
+                    <button class="v2-btn" onclick="_renderBonfireTrio()" style="background:#444; color:#ccc;">← Back</button>
+                    <button class="v2-btn" onclick="closeCombat()" style="background:#333; color:#888;">Leave</button>
+                </div>
+            </div>
+        </div>
+    `;
+    rebuildTrades();
+}
+
+// -- Old Pell: auto-heal 10 HP + refill torch, pell_campfire_scene bg --
+function _renderBonfirePell() {
+    const ui = document.getElementById('bonfireUI');
+    const actualHeal = Math.min(10, game.maxHp - game.hp);
+    game.hp = Math.min(game.maxHp, game.hp + 10);
+    game.torchCharge = 100;
+    spawnAboveModalTexture('flame_03.png', window.innerWidth / 2, window.innerHeight / 2, 20, { tint: '#00ff88', blend: 'lighter', sizeRange: [32, 96], intensity: 1.2 });
+    spawnFloatingText(`+${actualHeal} HP`, window.innerWidth / 2, window.innerHeight / 2 - 80, '#88ff88');
+    logMsg('Old Pell: Healed 10 HP and refilled torch.');
+    updateUI();
+
+    ui.innerHTML = `
+        <div style="
+            width:100%; height:100%;
+            background: url('assets/images/DBStory/pell_campfire_scene.png') center/cover no-repeat;
+            display:flex; flex-direction:column; align-items:center; justify-content:flex-end;
+            padding-bottom:60px; box-sizing:border-box;">
+            <div style="background:rgba(0,0,0,0.78); border-radius:10px; padding:22px 36px; text-align:center; min-width:300px;">
+                <div style="font-family:'Cinzel'; font-size:1.7rem; color:#aaffaa; margin-bottom:8px;">Old Pell</div>
+                <p style="color:#ccc; font-style:italic; margin-bottom:10px; font-size:0.95rem;">&ldquo;Rest now, child. The road ahead is long.&rdquo;</p>
+                <p style="color:#88ff88; font-size:1.1rem; margin-bottom:20px;">+${actualHeal} HP restored &middot; Torch refilled</p>
+                <div style="display:flex; gap:18px; justify-content:center;">
+                    <button class="v2-btn" onclick="_renderBonfireTrio()" style="background:#444; color:#ccc;">← Back</button>
+                    <button class="v2-btn" onclick="closeCombat()" style="min-width:120px;">Leave</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Stubs kept for safety — original bonfire rest logic retired
+window.handleBonfire = function () {};
+function updateBonfireUI() {}
 
 function showTrapUI() {
     const overlay = document.getElementById('combatModal');
@@ -9719,7 +9915,7 @@ function loadGame() {
         campTime = 0.22; _dawnCleanPending = false;
         campSafeZones = game.rooms
             .filter(r => r.isBonfire)
-            .map(r => ({ x: r.gx, z: r.gy, radius: 5 }));
+            .map(r => ({ x: r.gx, z: r.gy, radius: 10 }));
         if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
         _sunLight = new THREE.DirectionalLight(0xffeedd, 0);
         _sunLight.castShadow = false;
