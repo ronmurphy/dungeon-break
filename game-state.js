@@ -19,7 +19,9 @@ export const ARMOR_DATA = [
     { id: 5, name: "Reinforced Leather", ap: 2, cost: 30, slot: "chest", desc: "Hardened leather chestpiece." },
     { id: 6, name: "Chainmail Hauberk", ap: 3, cost: 40, slot: "chest", desc: "Interlinked metal rings." },
     { id: 7, name: "Steel Breastplate", ap: 4, cost: 55, slot: "chest", desc: "Solid steel chest protection." },
-    { id: 8, name: "Gothic Plate", ap: 5, cost: 75, slot: "chest", desc: "Masterwork full plate." }
+    { id: 8, name: "Gothic Plate", ap: 5, cost: 75, slot: "chest", desc: "Masterwork full plate." },
+    { id: 9, name: "Ranger's Mask", ap: 1, cost: 40, slot: "head", desc: "+1 AP. 20% chance wanderers won't engage you in combat." },
+    { id: 10, name: "Cultist's Mask", ap: 3, cost: 50, slot: "head", desc: "+3 AP. Wanderers are drawn to you — doubled detection range, no blind spots." },
 ];
 
 export const ITEM_DATA = [
@@ -268,9 +270,11 @@ export function getAssetData(type, value, suit, extra) {
     if (type === 'item' && value === 10) return { file: 'items/item_backpack.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     if (type === 'item' && value === 11) return { file: 'items/item_spellbook.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     if (type === 'item' && value === 12) return { file: 'items/item_unmarked_map.png',  uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
-    if (type === 'item' && value === 13) return { file: 'items/item_toy_duck.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
-    if (type === 'item' && value === 14) return { file: 'items/item_female_mask.png',   uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
-    if (type === 'item' && value === 15) return { file: 'items/item_pell_bowl.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item'  && value === 13) return { file: 'items/item_toy_duck.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item'  && value === 14) return { file: 'items/item_female_mask.png',   uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item'  && value === 15) return { file: 'items/item_pell_bowl.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value ===  9) return { file: 'items/item_female_mask.png',   uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 10) return { file: 'items/item_male_mask.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     const isStrip = !file.includes('rest');
     return { file, uv: getUVForCell(cellIdx, sheetCount), isStrip, sheetCount };
 }

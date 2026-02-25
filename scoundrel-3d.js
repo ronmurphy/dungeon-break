@@ -533,6 +533,15 @@ const WANDERER_MODELS = [
     'queen-web.glb',
 'a-female_twin-web.glb', 'a_male_twin-web.glb'
 ];
+
+// Elite wanderer name pool — one is chosen at random when isElite is set
+const ELITE_NAMES = [
+    '⚔ Thornbound Revenant', '⚔ Ironmarrow Curse', '⚔ Duskpiercer',
+    '⚔ Veilhunger', '⚔ Ashcrown Knight', '⚔ Gravemantle',
+    '⚔ Blackvein Champion', '⚔ Cindercoil Warden', '⚔ Hollow Sovereign',
+    '⚔ Rot-Sworn Titan', '⚔ Emberthorn Herald', '⚔ Soulscorch Reaver',
+    '⚔ Bonepact Juggernaut', '⚔ Dreadmarrow Shade', '⚔ Void-Touched Ravager',
+];
 // Boss-only — NOT added to WANDERER_MODELS (spawned exclusively by the twin boss encounter)
 // i made better versions so the old versions can be harder, uncommon enemies. --brad
 //  'Boss_Twin_Female-web.glb','Boss_Twin_Male-web.glb'
@@ -630,6 +639,26 @@ function getCAHeightAt(wx, wz) {
 // Camp safe zones — bonfire pits and key markers; wanderers won't enter or target these areas
 function isCampSafeZone(x, z) {
     return campSafeZones.some(sz => Math.hypot(x - sz.x, z - sz.z) < sz.radius);
+}
+
+/**
+ * Returns true when the player is physically inside a "protected" room —
+ * bonfire, shrine, fountain — where wanderers should not be able to chase
+ * or trigger combat. Uses the room's bounding box plus a small margin.
+ * On the camp map this also checks the radius-based campSafeZones.
+ */
+function isPlayerInSafeRoom() {
+    if (!playerMesh) return false;
+    const px = playerMesh.position.x;
+    const pz = playerMesh.position.z;
+    // Camp bonfire / marker zones (radius-based)
+    if (game.campMap && isCampSafeZone(px, pz)) return true;
+    // Dungeon protected rooms — bounding-box check with a 1-unit margin
+    return game.rooms.some(r =>
+        (r.isBonfire || r.isShrine || r.isFountain) &&
+        Math.abs(r.gx - px) < (r.w / 2) + 1 &&
+        Math.abs(r.gy - pz) < (r.h / 2) + 1
+    );
 }
 
 // Bresenham grid scan — returns true if a TILE_WALL tile lies between fromPos and toPos
@@ -2181,6 +2210,27 @@ function initWanderers() {
                     const mats = Array.isArray(child.material) ? child.material : [child.material];
                     const ghosted = mats.map(m => { const c = m.clone(); c.transparent = true; c.opacity = 0.35; c.depthWrite = false; return c; });
                     child.material = Array.isArray(child.material) ? ghosted : ghosted[0];
+                });
+            }
+
+            // ~10% chance of Elite (mutually exclusive with ghost)
+            if (!wanderer.isGhost && Math.random() < 0.10) {
+                wanderer.isElite = true;
+                wanderer.eliteName = ELITE_NAMES[Math.floor(Math.random() * ELITE_NAMES.length)];
+                lod.scale.setScalar(1.5);
+                model.traverse(child => {
+                    if (!child.isMesh || !child.material) return;
+                    const mats = Array.isArray(child.material) ? child.material : [child.material];
+                    child.material = mats.map(m => {
+                        const e = m.clone();
+                        e.emissive = e.emissive ? e.emissive : new THREE.Color(0);
+                        e.emissive.set(0xff2200);
+                        e.emissiveIntensity = 0.65;
+                        e.needsUpdate = true;
+                        return e;
+                    });
+                    if (!Array.isArray(child.material)) return; // already set
+                    if (child.material.length === 1) child.material = child.material[0];
                 });
             }
 
@@ -4423,7 +4473,9 @@ function animate3D() {
                     const distance = wandererPos.distanceTo(playerPos);
 
                     // AI Parameters
-                    const visionRange = 4.0; // Reduced from 6.0
+                    // Cultist's Mask (armor id:10): doubles wanderer vision range
+                    const _cultistMask = game.equipment && game.equipment.head && game.equipment.head.id === 10;
+                    const visionRange = _cultistMask ? 8.0 : 4.0;
                     const escapeRange = 10.0;
                     const personalSpaceRadius = 1.5;
                     const visionConeAngleCos = 0.5; // 120 degrees
@@ -4431,17 +4483,22 @@ function animate3D() {
                     // Determine Visibility
                     let canSee = false;
                     if (distance < visionRange) {
-                        const wandererForward = new THREE.Vector3();
-                        wanderer.mesh.getWorldDirection(wandererForward);
-                        wandererForward.y = 0; wandererForward.normalize();
-
-                        const toPlayer = new THREE.Vector3().subVectors(playerPos, wandererPos);
-                        toPlayer.y = 0; toPlayer.normalize();
-
-                        const dot = wandererForward.dot(toPlayer);
-
-                        if (distance < personalSpaceRadius || dot > visionConeAngleCos) {
+                        if (_cultistMask) {
+                            // Cultist's Mask: wanderers feel your presence — no blind spots
                             canSee = true;
+                        } else {
+                            const wandererForward = new THREE.Vector3();
+                            wanderer.mesh.getWorldDirection(wandererForward);
+                            wandererForward.y = 0; wandererForward.normalize();
+
+                            const toPlayer = new THREE.Vector3().subVectors(playerPos, wandererPos);
+                            toPlayer.y = 0; toPlayer.normalize();
+
+                            const dot = wandererForward.dot(toPlayer);
+
+                            if (distance < personalSpaceRadius || dot > visionConeAngleCos) {
+                                canSee = true;
+                            }
                         }
                     }
 
@@ -4450,12 +4507,14 @@ function animate3D() {
                         if (bspWallBlocksLOS(wandererPos, playerPos)) canSee = false;
                     }
 
-                    // Ranger's Mask: wanderers cannot detect the player (id:14 active item)
-                    if (game.maskRooms > 0) canSee = false;
+                    // Ranger's Mask (armor id:9): 20% chance wanderers don't notice the player
+                    if (canSee && game.equipment && game.equipment.head && game.equipment.head.id === 9) {
+                        if (Math.random() < 0.20) canSee = false;
+                    }
 
-                    // Bonfire safe zone: player is with the trio — wanderers leave them alone
-                    const playerInBonfireSanctuary = game.campMap && isCampSafeZone(playerPos.x, playerPos.z);
-                    if (playerInBonfireSanctuary) {
+                    // Bonfire / shrine / fountain safe zone: player is protected — wanderers back off
+                    const playerInSafeRoom = isPlayerInSafeRoom();
+                    if (playerInSafeRoom) {
                         canSee = false;
                         if (wanderer.state === 'chase') {
                             wanderer.state = 'cooldown';
@@ -4549,9 +4608,9 @@ function animate3D() {
                             }
 
                             // Combat Trigger (Touch)
-                            // Guard: don't start combat if another modal (bonfire, azure flame, fountain etc) is already open
-                            const _anyModalOpen = document.getElementById('combatModal')?.style.display === 'flex';
-                            if (distance < 1.2 && !_anyModalOpen) {
+                            // Guard: only block if player is inside a protected room (bonfire/shrine/fountain).
+                            // Reinforcements can still join an open-world fight — no modal check here.
+                            if (distance < 1.2 && !isPlayerInSafeRoom()) {
                                 if (isDebugWandererActive) {
                                     console.log(`[Combat Trigger] Distance: ${distance.toFixed(2)} < 1.2. Calling startCombat...`);
                                 }
@@ -5265,6 +5324,27 @@ function spawnOneCampWanderer(nearPlayer = false, isShadow = false) {
                     s.needsUpdate = true;
                     return s;
                 });
+                if (child.material.length === 1) child.material = child.material[0];
+            });
+        }
+
+        // ~10% chance of Elite (mutually exclusive with shadow)
+        if (!isShadow && Math.random() < 0.10) {
+            wanderer.isElite = true;
+            wanderer.eliteName = ELITE_NAMES[Math.floor(Math.random() * ELITE_NAMES.length)];
+            lod.scale.setScalar(1.5);
+            model.traverse(child => {
+                if (!child.isMesh || !child.material) return;
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                child.material = mats.map(m => {
+                    const e = m.clone();
+                    e.emissive = e.emissive ? e.emissive : new THREE.Color(0);
+                    e.emissive.set(0xff2200);
+                    e.emissiveIntensity = 0.65;
+                    e.needsUpdate = true;
+                    return e;
+                });
+                if (!Array.isArray(child.material)) return;
                 if (child.material.length === 1) child.material = child.material[0];
             });
         }
@@ -6181,17 +6261,6 @@ function enterRoom(id) {
     // Hardcore Auto-Save on Room Entry
     if (game.mode === 'hardcore') saveGame();
 
-    // Ranger's Mask: count down per active (non-cleared, non-waypoint) room entered
-    if (game.maskRooms > 0 && !room.isWaypoint && !room.isBonfire && room.state !== 'cleared') {
-        game.maskRooms--;
-        if (game.maskRooms === 0) {
-            spawnFloatingText('Mask worn off!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#ffcc44');
-            logMsg("Ranger's Mask: Disguise has worn off.");
-        } else {
-            logMsg(`Ranger's Mask: ${game.maskRooms} encounter(s) of disguise remaining.`);
-        }
-    }
-
     if (room.isWaypoint) {
         logMsg("Traversing corridors...");
 
@@ -6247,7 +6316,9 @@ function enterRoom(id) {
     }
     if (room.isBonfire && room.state !== 'cleared') {
         // Don't interrupt active card combat or 3D combat with the trio scene
-        const _cardCombatActive = document.getElementById('combatContainer')?.style.display === 'flex';
+        // card combat = combatModal visible AND combatContainer visible
+        const _cardCombatActive = document.getElementById('combatModal')?.style.display === 'flex' &&
+                                  document.getElementById('combatContainer')?.style.display === 'flex';
         if (isCombatView || isEngagingCombat || _cardCombatActive) return;
         game.activeRoom = room;
         if (room.restRemaining === undefined) room.restRemaining = 3;
@@ -8362,7 +8433,9 @@ window.closeCombat = closeCombat; // Expose for onClick events
 
 function showBonfireUI() {
     // Safety net: never open over active combat
-    const _cardCombatActive = document.getElementById('combatContainer')?.style.display === 'flex';
+    // card combat = combatModal visible AND combatContainer visible
+    const _cardCombatActive = document.getElementById('combatModal')?.style.display === 'flex' &&
+                              document.getElementById('combatContainer')?.style.display === 'flex';
     if (isCombatView || isEngagingCombat || _cardCombatActive) return;
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
@@ -8415,18 +8488,32 @@ function _renderBonfireJoe() {
     shuffle(shopPool);
     const shopItems = shopPool.slice(0, 4);
 
+    // --- sell carousel state ---
+    let sellIdx = 0;
+
+    const getSellables = () => [
+        ...game.hotbar.map((it, i) => it ? { item: it, src: 'hotbar', idx: i } : null).filter(Boolean),
+        ...game.backpack.map((it, i) => it ? { item: it, src: 'backpack', idx: i } : null).filter(Boolean),
+    ];
+
     ui.innerHTML = `
         <div style="
             width:100%; height:100%;
             background: url('assets/images/DBStory/joe_campfire_scene.png') center/cover no-repeat;
             display:flex; flex-direction:column; align-items:center; justify-content:flex-start;
-            padding-top:24px; box-sizing:border-box; overflow-y:auto;">
-            <div style="font-family:'Cinzel'; font-size:1.9rem; color:#d4af37; text-shadow:0 0 12px #ff6600; margin-bottom:6px;">Joe's Wares</div>
-            <div style="color:#d4af37; font-size:1.15rem; margin-bottom:14px;">
+            padding-top:18px; box-sizing:border-box; overflow-y:auto;">
+            <div style="font-family:'Cinzel'; font-size:1.7rem; color:#d4af37; text-shadow:0 0 12px #ff6600; margin-bottom:4px;">Joe's Wares</div>
+            <div style="color:#d4af37; font-size:1.05rem; margin-bottom:10px;">
                 Soul Coins: <span id="joeCoinDisplay" style="color:#fff;">${game.soulCoins}</span>
             </div>
-            <div id="joeShopGrid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:15px; width:320px; margin-bottom:16px;"></div>
-            <div style="display:flex; gap:18px; margin-top:10px; margin-bottom:16px;">
+            <!-- BUY grid -->
+            <div id="joeShopGrid" style="display:grid; grid-template-columns:repeat(4,1fr); gap:10px; width:400px; margin-bottom:12px;"></div>
+            <!-- SELL carousel -->
+            <div style="background:rgba(0,0,0,0.75); border-radius:8px; padding:12px 20px; text-align:center; min-width:320px; margin-bottom:12px;">
+                <div style="font-family:'Cinzel'; font-size:1rem; color:#d4af37; margin-bottom:8px; letter-spacing:1px;">SELL TO JOE</div>
+                <div id="joeSellArea" style="display:flex; flex-direction:column; align-items:center; gap:8px;"></div>
+            </div>
+            <div style="display:flex; gap:18px; margin-bottom:12px;">
                 <button class="v2-btn" onclick="_renderBonfireTrio()" style="background:#444; color:#ccc;">← Back</button>
                 <button class="v2-btn" onclick="closeCombat()" style="background:#333; color:#888;">Leave</button>
             </div>
@@ -8435,6 +8522,7 @@ function _renderBonfireJoe() {
 
     const coinDisplay = document.getElementById('joeCoinDisplay');
 
+    // ---- BUY grid ----
     const renderGrid = () => {
         const grid = document.getElementById('joeShopGrid');
         if (!grid) return;
@@ -8448,11 +8536,11 @@ function _renderBonfireJoe() {
             const bgPos = sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * sheetCount) / (sheetCount - 1) * 100}% 0%`;
             const card = document.createElement('div');
             card.className = 'card shop-item';
+            card.style.cssText = 'width:88px; height:120px; font-size:11px; position:relative; flex-shrink:0;';
             card.innerHTML = `
                 <div class="card-art-container" style="background-image: url('assets/images/${asset.file}'); background-size: ${bgSize}; background-position: ${bgPos}; ${tint}"></div>
-                <div class="name" style="bottom: 40px; font-size: 14px; ${item.isCursed ? 'color:#adff2f;' : ''}">${item.name}</div>
-                <div class="val" style="font-size: 16px; color: #ffd700;">${finalCost}</div>
-                <div style="position:absolute; bottom:5px; width:100%; text-align:center; font-size:10px; color:#aaa;">${item.type === 'armor' ? `+${item.ap} AP` : (item.isCursed ? 'Cursed' : 'Item')}</div>
+                <div class="name" style="bottom: 30px; font-size: 11px; ${item.isCursed ? 'color:#adff2f;' : ''}">${item.name}</div>
+                <div class="val" style="font-size: 13px; color: #ffd700;">${finalCost}</div>
             `;
             card.onclick = () => {
                 if (game.soulCoins >= finalCost) {
@@ -8484,6 +8572,85 @@ function _renderBonfireJoe() {
         });
     };
 
+    // ---- SELL carousel ----
+    const renderSell = () => {
+        const area = document.getElementById('joeSellArea');
+        if (!area) return;
+        area.innerHTML = '';
+        const sellables = getSellables();
+        if (sellables.length === 0) {
+            area.innerHTML = `<p style="color:#888; font-style:italic; margin:0; font-size:0.9rem;">&ldquo;Nothing to sell? Come back loaded.&rdquo;</p>`;
+            return;
+        }
+        // Clamp index
+        if (sellIdx >= sellables.length) sellIdx = 0;
+        const entry = sellables[sellIdx];
+        const item = entry.item;
+        const sellPrice = Math.max(0, Math.floor((item.cost || 0) / 2));
+
+        const asset = getAssetData(item.type, item.id || item.val, null);
+        const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
+        const sheetCount = asset.sheetCount || 9;
+        const bgSize = `${sheetCount * 100}% 100%`;
+        const bgPos = sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * sheetCount) / (sheetCount - 1) * 100}% 0%`;
+
+        // Carousel row
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; align-items:center; gap:14px;';
+
+        const prevBtn = document.createElement('button');
+        prevBtn.className = 'v2-btn';
+        prevBtn.style.cssText = 'width:36px; height:36px; padding:0; font-size:1.3rem;';
+        prevBtn.innerText = '‹';
+        prevBtn.onclick = () => { sellIdx = (sellIdx - 1 + getSellables().length) % Math.max(1, getSellables().length); renderSell(); };
+
+        const miniCard = document.createElement('div');
+        miniCard.className = 'card';
+        miniCard.style.cssText = 'width:72px; height:100px; font-size:10px; position:relative; flex-shrink:0; cursor:default;';
+        miniCard.innerHTML = `
+            <div class="card-art-container" style="background-image: url('assets/images/${asset.file}'); background-size: ${bgSize}; background-position: ${bgPos}; ${tint}"></div>
+        `;
+
+        const nextBtn = document.createElement('button');
+        nextBtn.className = 'v2-btn';
+        nextBtn.style.cssText = 'width:36px; height:36px; padding:0; font-size:1.3rem;';
+        nextBtn.innerText = '›';
+        nextBtn.onclick = () => { sellIdx = (sellIdx + 1) % Math.max(1, getSellables().length); renderSell(); };
+
+        row.appendChild(prevBtn);
+        row.appendChild(miniCard);
+        row.appendChild(nextBtn);
+        area.appendChild(row);
+
+        // Item info + counter
+        const info = document.createElement('div');
+        info.style.cssText = 'color:#ccc; font-size:0.9rem; text-align:center;';
+        info.innerHTML = `<strong style="color:#ffd700;">${item.name}</strong> &nbsp;·&nbsp; ${entry.src}<br/>
+            <span style="color:#aaa; font-size:0.8rem;">${sellIdx + 1} / ${sellables.length}</span>`;
+        area.appendChild(info);
+
+        // Sell button
+        const sellBtn = document.createElement('button');
+        sellBtn.className = 'v2-btn';
+        sellBtn.style.cssText = 'background:#3a1800; border-color:#d4af37; color:#d4af37; min-width:160px;';
+        sellBtn.innerText = sellPrice > 0 ? `Sell for ${sellPrice} coins` : `Discard (worthless)`;
+        sellBtn.onclick = () => {
+            // Remove from source
+            if (entry.src === 'hotbar') game.hotbar[entry.idx] = null;
+            else game.backpack[entry.idx] = null;
+            game.soulCoins += sellPrice;
+            if (coinDisplay) coinDisplay.innerText = game.soulCoins;
+            spawnFloatingText(`+${sellPrice} coins`, window.innerWidth / 2, window.innerHeight / 2 - 80, '#d4af37');
+            logMsg(`Sold ${item.name} to Joe for ${sellPrice} soul coins.`);
+            updateUI();
+            // Recalibrate index after removal
+            const remaining = getSellables().length;
+            if (sellIdx >= remaining) sellIdx = Math.max(0, remaining - 1);
+            renderSell();
+        };
+        area.appendChild(sellBtn);
+    };
+
     // Hourglass (id:4) can reroll Joe's stock
     window._shopReroll = () => {
         const fresh = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
@@ -8494,6 +8661,7 @@ function _renderBonfireJoe() {
     };
 
     renderGrid();
+    renderSell();
 }
 
 // -- Mira: key → scroll trader, mira_cartographer_scene bg --
@@ -8809,12 +8977,9 @@ window.useItem = function (idx) {
         spawnFloatingText('Use in 3D combat!', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa55ff', 26);
         logMsg('Spellbook: Open your inventory mid-combat to unleash the arcane blast.');
 
-    } else if (item.id === 14) { // Ranger's Mask — wanderers ignore you for 2 encounters
-        game.maskRooms = (game.maskRooms || 0) + 2;
-        game.hotbar[idx] = null;
-        spawnFloatingText('Disguised! (2 rooms)', window.innerWidth / 2, window.innerHeight / 2, '#aaffee', 26);
-        logMsg("Ranger's Mask: Wanderers will ignore you for 2 room encounters.");
-        updateUI();
+    } else if (item.id === 14) { // Ranger's Mask (legacy item) — prompt to equip as armor instead
+        spawnFloatingText('Equip as armor!', window.innerWidth / 2, window.innerHeight / 2, '#aaffee', 26);
+        logMsg("Ranger's Mask: This mask can now be equipped as head armor. Drag it to your equipment slot.");
     }
 };
 
@@ -11198,6 +11363,14 @@ function initWandererForCombat(wanderer) {
             wanderer.stats.maxHp = wanderer.stats.hp;
             wanderer.stats.ac = Math.max(0, wanderer.stats.ac - 1);
             wanderer.stats.name = `Shade of ${wanderer.stats.name}`;
+        }
+        // Elites: +50% to all combat stats, unique name
+        if (wanderer.isElite) {
+            wanderer.stats.hp   = Math.ceil(wanderer.stats.hp  * 1.5);
+            wanderer.stats.maxHp = wanderer.stats.hp;
+            wanderer.stats.ac   = Math.ceil(wanderer.stats.ac  * 1.5);
+            wanderer.stats.str  = Math.ceil(wanderer.stats.str * 1.5);
+            wanderer.stats.name = wanderer.eliteName || `⚔ Elite ${wanderer.stats.name}`;
         }
     }
 
