@@ -109,7 +109,7 @@
 
         <!-- Torch / Fuel Widget — fuel bar always visible, torch image + click only on camp -->
         <div id="torchFuelWidget"
-             onclick="window._toggleTorch()"
+             onclick="window._toggleTorch(event)"
              style="width:28px; height:52px; background:#111; border:1px solid #444; border-radius:2px; position:relative; flex-shrink:0; cursor:default; box-shadow:inset 0 0 4px #000; overflow:hidden;"
              title="Torch Fuel">
             <!-- Fuel fill — always visible, overlaid at bottom -->
@@ -244,7 +244,7 @@
                         <div id="torchInventoryBlock" style="display:none; flex-direction:column; align-items:center; justify-content:flex-end; padding-bottom:4px; margin-left:8px;">
                             <img id="torchToggleImgInventory"
                                  src="assets/images/ui/inventory/torch_lit.png"
-                                 onclick="window._toggleTorch(); if(window.updateUI) updateUI();"
+                                 onclick="window._toggleTorch(event); if(window.updateUI) updateUI();"
                                  style="height:68px; width:auto; cursor:pointer; filter:drop-shadow(0 0 6px #ff8822);"
                                  title="Toggle torch">
                             <span id="torchInventoryLabel" style="font-size:0.65rem; font-family:'Cinzel',serif; color:#ffaa44; margin-top:3px; letter-spacing:1px;">ON</span>

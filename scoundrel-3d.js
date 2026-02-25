@@ -220,6 +220,7 @@ window.testDungeon       = function (floor = 1) {
     game.deck  = createDeck();
     game.currentRoomIdx = 0;
     game.isBossFight = false;
+    game.campMap = false; // Always entering a dungeon — clear camp flag
     game.visitedWaypoints = [];
     isAttractMode = false;
     game.useBSP = true;
@@ -435,8 +436,10 @@ window.whereAmI = function() {
 };
 
 // Torch toggle — the 🔦 button in the inventory bar (camp maps only)
-window._toggleTorch = function() {
+window._toggleTorch = function(e) {
+    if (e) { e.stopPropagation(); e.preventDefault(); } // Don't bubble — prevents accidental on3DClick
     if (!game.campMap) return;       // Only works on camp island
+    if (isCombatView || isEngagingCombat) return; // Never toggle during combat
     if (game.torchCharge <= 0) return; // Can't relight a dead torch
     game.torchEnabled = !game.torchEnabled;
 };
@@ -454,6 +457,7 @@ let playerReturnPos = null;
 let isEngagingCombat = false; // Prevent combat trigger spam
 // Wanderer State
 let wanderers = [];
+const _wandererPool = new Map(); // filename → dormant wanderer objects (scene-removed but alive in memory)
 let BASE_CAMP_WANDERERS = 4; // Baseline NPC count for camp; set higher before initWanderers() for story events
 const WANDERER_Y_LIFT = 0.08; // Keep enemies just under player height (0.1) so range circles are visible and overlap cleanly
 const JUMP_MAX_GAP = 2.2;         // Max horizontal gap (world units) player/wanderer can jump across
@@ -543,7 +547,6 @@ const GALLERY_MODELS = [
     'door-web.glb',
     'Dreadspire_Citadel-web.glb',
     'Eldritch_Hex_Cube-marker-web.glb',
-    'Emberwatch_Tower-web.glb',
     'gothic_tower-web.glb',
     'openchest-web.glb',
     // 'room_dome-web.glb',
@@ -807,6 +810,8 @@ let combatState = {
 };
 
 let savedMapState = null; // For True Dungeon recursion
+let _portalState = null;        // Active Town Portal context
+let _portalTransitioning = false; // Guard against double-trigger during portal transit
 
 let benchmarkState = {
     active: false,
@@ -2039,12 +2044,47 @@ function updateLODs() {
     });
 }
 
+// ── Wanderer Pool helpers ─────────────────────────────────────────────────────
+// Release a wanderer back to the pool (scene.remove but keep Three.js objects alive).
+// Shadow-tinted, ghost, and helix wanderers are NOT pooled (modified materials).
+function _releaseWanderer(wanderer) {
+    if (!wanderer || !wanderer.mesh) return;
+    if (wanderer.isShadow || wanderer.isGhost || wanderer._isHelixWanderer) {
+        // Unpoolable — just discard
+        if (wanderer.tween) wanderer.tween.stop();
+        if (wanderer.mixer) wanderer.mixer.stopAllAction();
+        scene.remove(wanderer.mesh);
+        return;
+    }
+    if (wanderer.tween) { wanderer.tween.stop(); wanderer.tween = null; }
+    if (wanderer.mixer) wanderer.mixer.stopAllAction();
+    scene.remove(wanderer.mesh);
+    wanderer.state     = 'patrol';
+    wanderer.isJumping = false;
+    if (!_wandererPool.has(wanderer.filename)) _wandererPool.set(wanderer.filename, []);
+    _wandererPool.get(wanderer.filename).push(wanderer);
+}
+
+// Acquire a dormant wanderer from the pool, re-position and re-add to scene.
+// Returns the wanderer object, or null if the pool is empty for this filename.
+function _acquireWanderer(filename, sx, sy, sz) {
+    const pool = _wandererPool.get(filename);
+    if (!pool || pool.length === 0) return null;
+    const wanderer = pool.pop();
+    wanderer.mesh.position.set(sx, sy, sz);
+    wanderer.state     = 'patrol';
+    wanderer.isJumping = false;
+    wanderer.isShadow  = false;
+    scene.add(wanderer.mesh);
+    if (wanderer.actions.walk) wanderer.actions.walk.reset().play();
+    else if (wanderer.actions.idle) wanderer.actions.idle.reset().play();
+    return wanderer;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function initWanderers() {
-    // Cleanup existing
-    wanderers.forEach(w => {
-        if (w.tween) w.tween.stop();
-        scene.remove(w.mesh);
-    });
+    // Release existing back to pool rather than discarding
+    wanderers.forEach(w => _releaseWanderer(w));
     wanderers = [];
 
     // Revert to standard enemy count for normal floors
@@ -2056,85 +2096,68 @@ function initWanderers() {
     // Apply Benchmark Math ONLY for True Dungeon
     if (game.inTrueDungeon) {
         const fps = gameSettings.benchmarkFPS || 30;
-        count = Math.floor(fps / 2); // FPS / 2 enemies
+        count = Math.floor(fps / 2);
     }
 
     // Subtract already-killed enemies (persisted across saves)
-    // Camp map is a separate place — dungeon kill count doesn't apply here
     if (!game.campMap) count = Math.max(0, count - (game.floorKills || 0));
 
+    // Pre-compute spawn positions BEFORE loading models so pool hits are fully synchronous
+    const spawnPoints = [];
     for (let i = 0; i < count; i++) {
         const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
+        let valid = false, sx = 0, sz = 0, sy = 0, attempts = 0;
+        while (!valid && attempts < 50) {
+            attempts++;
+            const rMin = game.campMap ? 12 : 5;
+            const rMax = game.campMap ? 28 : 12 + (game.floor * 2);
+            const r = rMin + Math.random() * (rMax - rMin);
+            const angle = Math.random() * Math.PI * 2;
+            sx = Math.cos(angle) * r;
+            sz = Math.sin(angle) * r;
+            if (game.rooms.some(r => Math.hypot(r.gx - sx, r.gy - sz) < 4)) continue;
+            if (game.campMap && isCampSafeZone(sx, sz)) continue;
+            let nearCorr = false;
+            for (const m of corridorMeshes.values()) {
+                if (Math.hypot(m.position.x - sx, m.position.z - sz) < 2.5) { nearCorr = true; break; }
+            }
+            if (nearCorr) continue;
+            if (game.useBSP) {
+                if (!isBSPWallAt(sx, sz) && !isBSPVoidAt(sx, sz)) { sy = getBSPHeightAt(sx, sz) + WANDERER_Y_LIFT; valid = true; }
+            } else if (caGrid) {
+                if (!isCAVoidAt(sx, sz)) { sy = getCAHeightAt(sx, sz) + WANDERER_Y_LIFT; valid = true; }
+            } else if (globalFloorMesh) {
+                terrainRaycaster.set(new THREE.Vector3(sx, 50, sz), new THREE.Vector3(0, -1, 0));
+                const hits = terrainRaycaster.intersectObject(globalFloorMesh);
+                if (hits.length > 0) { sy = hits[0].point.y + WANDERER_Y_LIFT; valid = true; }
+            }
+        }
+        if (valid) spawnPoints.push({ file, sx, sy, sz });
+    }
 
-        loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
-            // --- NEW LOD LOGIC ---
+    for (const sp of spawnPoints) {
+        // Pool hit — instant, no GLB parse
+        const pooled = _acquireWanderer(sp.file, sp.sx, sp.sy, sp.sz);
+        if (pooled) {
+            wanderers.push(pooled);
+            pickWandererTarget(pooled);
+            continue;
+        }
+
+        // Pool miss — load fresh
+        loadGLB(`assets/images/glb/wanderers/${sp.file}`, (model, animations) => {
             const lod = new THREE.LOD();
-            lod.autoUpdate = false; // Manual player-distance LOD — prevents camera-distance override
-
-            // Level 0: Full model
+            lod.autoUpdate = false;
             lod.addLevel(model, gameSettings.lod.near || 40);
-
-            // Level 1: Placeholder box
-            const boxGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6); // Approx size
+            const boxGeo = new THREE.BoxGeometry(0.6, 1.8, 0.6);
             const boxMat = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
             const box = new THREE.Mesh(boxGeo, boxMat);
-            box.name = "LOD_Placeholder_Box";
+            box.name = 'LOD_Placeholder_Box';
             lod.addLevel(box, gameSettings.lod.far || 80);
-
-            // The mixer needs to animate the original model, which is now a child of the LOD
-            // Find valid spawn point
-            let valid = false;
-            let sx = 0, sz = 0, sy = 0;
-            let attempts = 0;
-
-            while (!valid && attempts < 50) {
-                attempts++;
-                // Camp map: annular ring 12–28 — avoids central rooms, stays well within island radius
-                const rMin = game.campMap ? 12 : 5;
-                const rMax = game.campMap ? 28 : 12 + (game.floor * 2);
-                const r = rMin + Math.random() * (rMax - rMin);
-                const angle = Math.random() * Math.PI * 2;
-                sx = Math.cos(angle) * r;
-                sz = Math.sin(angle) * r;
-
-                if (game.rooms.some(r => Math.hypot(r.gx - sx, r.gy - sz) < 4)) continue;
-
-                // Camp safe zones — don't spawn inside bonfire pits or marker auras
-                if (game.campMap && isCampSafeZone(sx, sz)) continue;
-
-                let nearCorr = false;
-                for (const m of corridorMeshes.values()) {
-                    if (Math.hypot(m.position.x - sx, m.position.z - sz) < 2.5) { nearCorr = true; break; }
-                }
-                if (nearCorr) continue;
-
-                // Validate spawn position — BSP uses grid (flat floor), others use raycast
-                if (game.useBSP) {
-                    if (!isBSPWallAt(sx, sz) && !isBSPVoidAt(sx, sz)) {
-                        sy = getBSPHeightAt(sx, sz) + WANDERER_Y_LIFT;
-                        valid = true;
-                    }
-                } else if (caGrid) {
-                    if (!isCAVoidAt(sx, sz)) {
-                        sy = getCAHeightAt(sx, sz) + WANDERER_Y_LIFT;
-                        valid = true;
-                    }
-                } else if (globalFloorMesh) {
-                    terrainRaycaster.set(new THREE.Vector3(sx, 50, sz), new THREE.Vector3(0, -1, 0));
-                    const hits = terrainRaycaster.intersectObject(globalFloorMesh);
-                    if (hits.length > 0) {
-                        sy = hits[0].point.y + WANDERER_Y_LIFT;
-                        valid = true;
-                    }
-                }
-            }
-
-            lod.position.set(sx, sy, sz);
+            lod.position.set(sp.sx, sp.sy, sp.sz);
             scene.add(lod);
 
-            const mixer = new THREE.AnimationMixer(model); // Animate the high-poly model inside the LOD
-
-            // Improved Animation Discovery
+            const mixer = new THREE.AnimationMixer(model);
             const findAnim = (terms) => {
                 for (const term of terms) {
                     const clip = animations.find(a => a.name.toLowerCase().includes(term));
@@ -2142,36 +2165,21 @@ function initWanderers() {
                 }
                 return null;
             };
-
             const walkClip = findAnim(['walk', 'run', 'move']) || animations[0];
             const idleClip = findAnim(['idle', 'stand', 'wait']);
-
             const actions = {};
-            if (walkClip) {
-                actions.walk = mixer.clipAction(walkClip);
-                actions.walk.play(); // Default state
-            }
-            if (idleClip) {
-                actions.idle = mixer.clipAction(idleClip);
-            }
+            if (walkClip) { actions.walk = mixer.clipAction(walkClip); actions.walk.play(); }
+            if (idleClip)   actions.idle = mixer.clipAction(idleClip);
 
-            // Store the LOD object as the mesh
-            const wanderer = { mesh: lod, mixer: mixer, actions: actions, filename: file };
+            const wanderer = { mesh: lod, mixer, actions, filename: sp.file };
 
             // ~15% chance of spawning as a Shade (ghost) on floor 2+
-            // Shades use the same models but are semi-transparent — lower HP, eerie look.
             if (game.floor >= 2 && Math.random() < 0.15) {
                 wanderer.isGhost = true;
                 model.traverse(child => {
                     if (!child.isMesh || !child.material) return;
                     const mats = Array.isArray(child.material) ? child.material : [child.material];
-                    const ghosted = mats.map(m => {
-                        const c = m.clone();
-                        c.transparent = true;
-                        c.opacity = 0.35;
-                        c.depthWrite = false;
-                        return c;
-                    });
+                    const ghosted = mats.map(m => { const c = m.clone(); c.transparent = true; c.opacity = 0.35; c.depthWrite = false; return c; });
                     child.material = Array.isArray(child.material) ? ghosted : ghosted[0];
                 });
             }
@@ -2310,7 +2318,9 @@ function pickWandererTarget(wanderer) {
                     }
 
                     // 2. Look Ahead (Cliff/Wall Check)
-                    const lookAheadDist = (caGrid && targetMesh === globalFloorMesh) ? 1.5 : 0.6;
+                    // CA terrain: sample multiple points along the path so narrow holes on slopes
+                    // can't be skipped over by a single far-point check.
+                    const lookAheadDist = (caGrid && targetMesh === globalFloorMesh) ? 1.6 : 0.6;
                     const aheadPos = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(lookAheadDist));
 
                     let stop = false;
@@ -2319,7 +2329,11 @@ function pickWandererTarget(wanderer) {
                     if (game.useBSP && targetMesh === globalFloorMesh) {
                         if (isBSPWallAt(aheadPos.x, aheadPos.z) || isBSPVoidAt(aheadPos.x, aheadPos.z)) stop = true;
                     } else if (caGrid && targetMesh === globalFloorMesh) {
-                        if (isCAVoidAt(aheadPos.x, aheadPos.z)) stop = true;
+                        // Multi-sample: check every 0.4 units so narrow holes on slopes can't be skipped
+                        for (let _s = 0.4; _s <= lookAheadDist; _s += 0.4) {
+                            const _sp = wanderer.mesh.position.clone().add(moveDir.clone().multiplyScalar(_s));
+                            if (isCAVoidAt(_sp.x, _sp.z)) { stop = true; break; }
+                        }
                     } else {
                         terrainRaycaster.set(new THREE.Vector3(aheadPos.x, rayOriginHeight, aheadPos.z), down);
                         const aheadHits = terrainRaycaster.intersectObject(targetMesh, true);
@@ -2332,6 +2346,17 @@ function pickWandererTarget(wanderer) {
                     }
 
                     if (stop && !wanderer.isJumping) {
+                        // Camp map: never jump — holes are island-edge voids, not crossable gaps.
+                        // Just stop and pick a new patrol target.
+                        if (game.campMap) {
+                            if (wanderer.tween) wanderer.tween.stop();
+                            wanderer.tween = null;
+                            if (wanderer.actions.idle) {
+                                if (wanderer.actions.walk) wanderer.actions.walk.stop();
+                                wanderer.actions.idle.play();
+                            }
+                            setTimeout(() => pickWandererTarget(wanderer), 500 + Math.random() * 1000);
+                        } else {
                         // Check if the void ahead is a jumpable gap
                         const isWinged = WINGED_MODELS.includes(wanderer.filename);
                         const maxScan = isWinged ? 3.6 : JUMP_MAX_GAP;
@@ -2379,6 +2404,7 @@ function pickWandererTarget(wanderer) {
                             }
                             setTimeout(() => pickWandererTarget(wanderer), 500 + Math.random() * 1000);
                         }
+                        } // end else (non-camp jump logic)
                     }
                 }
             })
@@ -2589,6 +2615,10 @@ function spawnLootSprite(pos, item) {
         texPath = 'assets/images/weapons_final.png';
         cols = 20;
         cellIdx = Math.max(0, Math.min(19, (item.val || 2) - 2));
+    } else if (item.id === 9) { // Town Portal Scroll — standalone image
+        texPath = 'assets/images/items/item_scroll.png';
+        cols = 1;
+        cellIdx = 0;
     } else {
         texPath = 'assets/images/items.png';
         cols = 10;
@@ -3523,9 +3553,8 @@ function update3DScene() {
                 } else if (r.isBonfire) {
                     // Circular Campfire Ring 
                     // Use a Cylinder. radius ~ min(w,h)/2.
-                    // Use Campfire Tower GLB
-                    // Randomize between Campfire Tower and Emberwatch Tower
-                    customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/campfire_tower-web.glb' : 'assets/images/glb/Emberwatch_Tower-web.glb';
+                    // Camp bonfires: id=1 → campfire_tower, id=2 → Emberwatch
+                    customModelPath = (r.id % 2 !== 0) ? 'assets/images/glb/campfire_tower-web.glb' : 'assets/images/glb/Spiralwood_Tower-web.glb';
                     customScale = 2.0; // Increased size
                     const rad = Math.min(rw, rh) * 0.4;
                     geo = new THREE.CylinderGeometry(rad, rad, rDepth, 16);
@@ -4071,7 +4100,7 @@ function animate3D() {
     // Azure Flame proximity (Start Room — always present, never cleared)
     // _azureFlameReadyAt gives a 4s grace on spawn/floor entry so the modal doesn't
     // fire immediately while the player is standing on top of it.
-    if (!isCombatView && !isAttractMode && !isEditMode && playerObj && Date.now() >= _azureFlameReadyAt) {
+    if (!isCombatView && !isEngagingCombat && !isAttractMode && !isEditMode && playerObj && Date.now() >= _azureFlameReadyAt) {
         const azureRoom = game.rooms.find(r => r.id === 0);
         const modal = document.getElementById('combatModal');
         const modalOpen = modal && modal.style.display === 'flex';
@@ -4146,7 +4175,9 @@ function animate3D() {
     }
 
     // Room Entry via Proximity (Free Movement support)
-    if (!isCombatView && !isAttractMode && !isEditMode) {
+    // Guard: skip entirely if card combat is in progress or combat modal is open
+    const _combatModalOpen = document.getElementById('combatModal')?.style.display === 'flex';
+    if (!isCombatView && !isEngagingCombat && !_combatModalOpen && !isAttractMode && !isEditMode) {
         const playerObj = playerMesh;
         if (playerObj) {
             // Find which room we are physically in
@@ -4331,6 +4362,17 @@ function animate3D() {
     // Camp day/night cycle (sky colour, sun arc, spawn timers) — only when on the camp island
     if (game.campMap && !isAttractMode) updateCampDayNight(dt);
 
+    // Town Portal — trigger return trip when player steps into the camp-side portal
+    if (_portalState && _portalState.campPortal && game.campMap && playerMesh &&
+            !isCombatView && !isEngagingCombat && !isAttractMode && !_portalTransitioning) {
+        const _pp = playerMesh.position, _cp = _portalState.campPortal.group.position;
+        if ((_pp.x - _cp.x) ** 2 + (_pp.z - _cp.z) ** 2 < 2.25) { // within 1.5 units
+            _portalTransitioning = true;
+            spawnFloatingText('Returning to dungeon...', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa88ff');
+            setTimeout(() => { _returnViaCampPortal(); _portalTransitioning = false; }, 800);
+        }
+    }
+
     // Proximity Combat Trigger
     // NOTE: We still run during isCombatView so wanderers can chase and JOIN an active fight.
     // Wanderers already in 'combat' state are skipped below.
@@ -4339,11 +4381,11 @@ function animate3D() {
     // Enemy counter HUD — update every ~90 frames
     if (_aiFrameCount % 90 === 0) updateEnemyCounter();
 
-    // Void safety — remove wanderers that have fallen off the world
+    // Void safety — release wanderers that have fallen off the world back to pool
     for (let _vi = wanderers.length - 1; _vi >= 0; _vi--) {
         const _vw = wanderers[_vi];
         if (_vw.mesh && _vw.mesh.position.y < -3) {
-            scene.remove(_vw.mesh);
+            _releaseWanderer(_vw);
             wanderers.splice(_vi, 1);
         }
     }
@@ -4467,7 +4509,9 @@ function animate3D() {
                             }
 
                             // Combat Trigger (Touch)
-                            if (distance < 1.2) {
+                            // Guard: don't start combat if another modal (bonfire, azure flame, fountain etc) is already open
+                            const _anyModalOpen = document.getElementById('combatModal')?.style.display === 'flex';
+                            if (distance < 1.2 && !_anyModalOpen) {
                                 if (isDebugWandererActive) {
                                     console.log(`[Combat Trigger] Distance: ${distance.toFixed(2)} < 1.2. Calling startCombat...`);
                                 }
@@ -4966,7 +5010,7 @@ function updatePlayerMovement(dt) {
 // 30 min full cycle (15 min day + 15 min night including dawn/dusk/twilight).
 // campTime: 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk.
 function updateCampDayNight(dt) {
-    const FULL_DAY_S = 1800;
+    const FULL_DAY_S =  600 //1800;
     campTime = (campTime + dt / FULL_DAY_S) % 1.0;
 
     // Keep torch flag in sync with fuel level
@@ -5027,11 +5071,11 @@ function updateCampDayNight(dt) {
     }
     if (!isDawn) _dawnCleanPending = true; // re-arm for next cycle
 
-    // Night spawn — every 45 s, up to 12 wanderers total
+    // Night spawn — every 15 s, up to 20 wanderers total
     if (isNight) {
         _nightSpawnTimer += dt;
-        if (_nightSpawnTimer >= 45 && wanderers.length < 12) {
-            _nightSpawnTimer -= 45;
+        if (_nightSpawnTimer >= 15 && wanderers.length < 20) {
+            _nightSpawnTimer -= 15;
             spawnOneCampWanderer(false);
             logMsg("Something stirs in the dark...");
         }
@@ -5039,11 +5083,11 @@ function updateCampDayNight(dt) {
         _nightSpawnTimer = 0;
     }
 
-    // Shadow spawn — torch on during day, every 90 s, up to 8 wanderers total
+    // Shadow spawn — torch on during day, every 30 s, up to 10 wanderers total
     if (!isNight && game.torchEnabled && game.torchCharge > 0) {
         _shadowSpawnTimer += dt;
-        if (_shadowSpawnTimer >= 90 && wanderers.length < 8) {
-            _shadowSpawnTimer -= 90;
+        if (_shadowSpawnTimer >= 30 && wanderers.length < 10) {
+            _shadowSpawnTimer -= 30;
             spawnOneCampWanderer(true, true);
             logMsg("A shadow detaches from the light...");
         }
@@ -5125,6 +5169,17 @@ function spawnOneCampWanderer(nearPlayer = false, isShadow = false) {
         valid = true;
     }
     if (!valid) return;
+    // Pool hit — reuse existing Three.js objects, just reposition
+    if (!isShadow) {
+        const pooled = _acquireWanderer(file, sx, sy, sz);
+        if (pooled) {
+            wanderers.push(pooled);
+            pickWandererTarget(pooled);
+            return;
+        }
+    }
+
+    // Pool miss (or shadow) — load fresh
     loadGLB(`assets/images/glb/wanderers/${file}`, (model, animations) => {
         const lod = new THREE.LOD();
         lod.autoUpdate = false;
@@ -5171,9 +5226,8 @@ function dismissCampWanderer(wanderer) {
     if (!wanderer || !wanderer.mesh) return;
     const idx = wanderers.indexOf(wanderer);
     if (idx !== -1) wanderers.splice(idx, 1);
-    if (wanderer.tween) wanderer.tween.stop();
     if (wanderer.mesh.position) spawn3DImpact(wanderer.mesh.position.clone(), 0x9955cc, 'magic_04.png');
-    scene.remove(wanderer.mesh);
+    _releaseWanderer(wanderer); // Returns to pool if eligible, discards shadow/ghost
 }
 
 function movePlayerSprite(oldId, newId) {
@@ -5521,10 +5575,7 @@ function clear3DScene() {
     Minimap.clear();
     dungeonDustMotes = null; // scene.remove already happened via while loop above
 
-    wanderers.forEach(w => {
-        if (w.tween) w.tween.stop();
-        scene.remove(w.mesh);
-    });
+    wanderers.forEach(w => _releaseWanderer(w));
     wanderers = [];
 
     // Clear ghosts
@@ -7367,11 +7418,8 @@ function cleanupHelixZone() {
         });
         scene.remove(helixFloorGroup);
     }
-    // Remove helix guardians from scene and wanderers[]
-    wanderers.filter(w => w._isHelixWanderer).forEach(w => {
-        if (w.mesh) scene.remove(w.mesh);
-        if (w.mixer) w.mixer.stopAllAction();
-    });
+    // Remove helix guardians from scene and wanderers[] (not pooled — special models)
+    wanderers.filter(w => w._isHelixWanderer).forEach(w => _releaseWanderer(w));
     wanderers = wanderers.filter(w => !w._isHelixWanderer);
 
     helixGroup           = null;
@@ -8476,11 +8524,150 @@ window.useItem = function (idx) {
             if (c.type === 'monster') c.val = Math.max(0, c.val - 2);
         });
         if (!saveItem) game.hotbar[idx] = null;
-        else logMsg("Conservation: Music Box saved!");
+        else logMsg('Conservation: Music Box saved!');
         updateUI();
         showCombat();
+    } else if (item.id === 9) { // Town Portal Scroll
+        activatePortalScroll(idx); // handles hotbar removal internally
     }
 };
+
+// ── Town Portal Scroll (Item ID 9) ──────────────────────────────────────────
+// Creates a glowing purple ring portal mesh at world position (x, y, z).
+// Returns { group, dispose() } — call dispose() to stop tweens and remove from scene.
+function _createPortalMesh(x, y, z) {
+    const grp = new THREE.Group();
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0x8844ff });
+    const ring    = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.15, 8, 48), ringMat);
+    grp.add(ring);
+    const fillMat = new THREE.MeshBasicMaterial({ color: 0x4422cc, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+    grp.add(new THREE.Mesh(new THREE.CircleGeometry(1.15, 48), fillMat));
+    const glowMat = new THREE.MeshBasicMaterial({ color: 0x6622dd, transparent: true, opacity: 0.22 });
+    grp.add(new THREE.Mesh(new THREE.TorusGeometry(1.55, 0.3, 6, 48), glowMat));
+    grp.add(new THREE.PointLight(0x8844ff, 350, 9));
+    grp.position.set(x, y + 1.5, z);
+    scene.add(grp);
+    const spinTw  = new TWEEN.Tween(ring.rotation).to({ z: Math.PI * 2 }, 3500).repeat(Infinity).start();
+    const pulseTw = new TWEEN.Tween({ o: 0.35 }).to({ o: 0.75 }, 1100)
+        .easing(TWEEN.Easing.Sinusoidal.InOut).yoyo(true).repeat(Infinity)
+        .onUpdate(s => { fillMat.opacity = s.o; }).start();
+    return { group: grp, dispose() { spinTw.stop(); pulseTw.stop(); scene.remove(grp); } };
+}
+
+// Called when player uses the Town Portal Scroll from the hotbar.
+function activatePortalScroll(hotbarIdx) {
+    if (!playerMesh) return;
+    if (game.campMap)                    { spawnFloatingText('Already in camp!',         window.innerWidth / 2, window.innerHeight / 2 - 60, '#ffaa44'); return; }
+    if (isCombatView || isEngagingCombat){ spawnFloatingText('Not during combat!',       window.innerWidth / 2, window.innerHeight / 2 - 60, '#ff8844'); return; }
+    if (_portalTransitioning)            { spawnFloatingText('Portal already opening...', window.innerWidth / 2, window.innerHeight / 2 - 60, '#ffaa44'); return; }
+
+    // Consume scroll immediately
+    game.hotbar[hotbarIdx] = null;
+    updateUI();
+    _portalTransitioning = true;
+
+    const px = playerMesh.position.x, pz = playerMesh.position.z;
+    const py = getTerrainY(px, pz);
+
+    spawnFloatingText('Portal opening...', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa88ff');
+    spawnTextureParticles('spark', window.innerWidth / 2, window.innerHeight / 2, 18, { color: '#8844ff', size: 14 });
+
+    // Spawn dungeon-side portal at player's feet (visual only — player is leaving)
+    const dungeonPortal = _createPortalMesh(px, py, pz);
+
+    // Save full dungeon state
+    _portalState = {
+        dungeonPortal,
+        campPortal: null,
+        savedState: {
+            rooms:          game.rooms.map(r => { const c = { ...r }; delete c.mesh; return c; }),
+            floor:          game.floor,
+            currentRoomIdx: game.currentRoomIdx,
+            useBSP:         game.useBSP,
+            camPos:         camera.position.clone(),
+            camTarget:      controls.target.clone(),
+            dungeonPortalPos: new THREE.Vector3(px, py, pz),
+        }
+    };
+
+    setTimeout(() => { _enterCampViaPortal(); }, 1200);
+}
+
+// Load the camp map and place the return portal there.
+function _enterCampViaPortal() {
+    window.goMap('ca'); // synchronous — camp scene is fully built on return
+    // Create the camp-side return portal near the player spawn point
+    const cpx = 5, cpz = 5;
+    const cpy = (typeof getCAHeightAt === 'function') ? getCAHeightAt(cpx, cpz) : 0;
+    if (_portalState) {
+        _portalState.campPortal = _createPortalMesh(cpx, cpy, cpz);
+    }
+    if (playerMesh) playerMesh.position.set(cpx + 2, cpy, cpz);
+    logMsg('A shimmering portal hums nearby — walk through to return to the dungeon.');
+    spawnFloatingText('Portal is open!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#aa88ff');
+    _portalTransitioning = false;
+}
+
+// Called when player walks into the camp portal — restores the dungeon.
+function _returnViaCampPortal() {
+    if (!_portalState || !_portalState.savedState) return;
+    const state = _portalState.savedState;
+    if (_portalState.campPortal) _portalState.campPortal.dispose();
+
+    // Restore dungeon game state before clearing scene
+    game.campMap        = false;
+    game.useBSP         = state.useBSP;
+    game.floor          = state.floor;
+    game.currentRoomIdx = state.currentRoomIdx;
+    game.rooms          = state.rooms;
+
+    // Hide camp-only UI
+    const _tBtn = document.getElementById('torchToggleImg');       if (_tBtn)    _tBtn.style.display = 'none';
+    const _tWidget = document.getElementById('torchFuelWidget');   if (_tWidget) _tWidget.style.cursor = 'default';
+    const _tBtnI = document.getElementById('torchInventoryBlock'); if (_tBtnI)   _tBtnI.style.display = 'none';
+    const _cti = document.getElementById('campTimeIndicator');     if (_cti)     _cti.style.display = 'none';
+    if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
+
+    clear3DScene(); init3D(); preloadFXTextures();
+
+    if (state.useBSP) {
+        const bsp = generateBSPFloor(scene, state.floor, _rngMulberry32(floorSeed(state.floor)), loadTexture, getClonedTexture);
+        globalFloorMesh = bsp.mesh;
+        bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+        bspHeightGrid = bsp.heightGrid;
+        Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
+        spawnBSPDoors(bsp.doorPositions);
+        spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
+    } else {
+        globalFloorMesh = generateFloorCA(scene, state.floor, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, null, false);
+        extractCAGrid(globalFloorMesh);
+    }
+
+    updateAtmosphere(state.floor);
+    initWanderers();
+    updateUI();
+
+    // Restore camera
+    camera.position.copy(state.camPos);
+    controls.target.copy(state.camTarget);
+    controls.update();
+
+    // Place player slightly in front of the original portal so they don't immediately retrigger
+    if (playerMesh) {
+        const rpx = state.dungeonPortalPos.x, rpz = state.dungeonPortalPos.z + 3;
+        playerMesh.position.set(rpx, getTerrainY(rpx, rpz), rpz);
+    }
+
+    // Brief echo portal at the original dungeon location — fades/disposes after 3.5 s
+    const echo = _createPortalMesh(state.dungeonPortalPos.x, getTerrainY(state.dungeonPortalPos.x, state.dungeonPortalPos.z), state.dungeonPortalPos.z);
+    setTimeout(() => echo.dispose(), 3500);
+
+    _portalState = null;
+    spawnFloatingText('Back in the dungeon!', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa88ff');
+    logMsg('The dungeon closes around you once more.');
+    enterRoom(game.currentRoomIdx);
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function ensureMerchantPortrait() {
     // Remove duplicates if any exist (fixes "Double Merchant" bug)

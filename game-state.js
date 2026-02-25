@@ -31,7 +31,8 @@ export const ITEM_DATA = [
     { id: 5, name: "Protective Herbs", cost: 25, type: 'passive', desc: "+5 HP from Bonfires." },
     { id: 6, name: "Silver Mirror", cost: 60, type: 'passive', desc: "Survive fatal blow once." },
     { id: 7, name: "Music Box", cost: 35, type: 'active', desc: "-2 to all monsters in room." },
-    { id: 8, name: "Iron-Bound Tome", cost: 50, type: 'passive', desc: "+2 Soul Coins per kill." }
+    { id: 8, name: "Iron-Bound Tome", cost: 50, type: 'passive', desc: "+2 Soul Coins per kill." },
+    { id: 9, name: "Town Portal Scroll", cost: 45, type: 'active', desc: "Opens a portal back to camp. Walk through again to return." }
 ];
 
 export const CLASS_DATA = {
@@ -255,6 +256,10 @@ export function getAssetData(type, value, suit, extra) {
         else if (v === 13) cellIdx = 7;
         else if (v === 14) cellIdx = 8;
         else cellIdx = 0;
+    }
+    // Standalone single-image items — return directly, bypassing spritesheet UV math
+    if (type === 'item' && value === 9) {
+        return { file: 'items/item_scroll.png', uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     }
     const isStrip = !file.includes('rest');
     return { file, uv: getUVForCell(cellIdx, sheetCount), isStrip, sheetCount };

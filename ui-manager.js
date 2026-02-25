@@ -265,8 +265,8 @@ export function updateUI() {
                 let tint = (item.type === 'armor' && isArmorBroken) ? 'filter: sepia(1) hue-rotate(-50deg) saturate(5) contrast(0.8);' : '';
                 if (item.isCursed) tint = 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);';
 
-                const bgSize = `${asset.sheetCount * 100}% 100%`;
-                const bgPos = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
+                const bgSize = asset.sheetCount <= 1 ? '100% 100%' : `${asset.sheetCount * 100}% 100%`;
+                const bgPos  = asset.sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
 
                 slot.innerHTML = `<div style="width:100%; height:100%; background-image:url('assets/images/${asset.file}'); background-size:${bgSize}; background-position:${bgPos}; ${tint}" onclick="window.useHotbarItem(${i})"></div>`;
 
@@ -295,8 +295,8 @@ export function updateUI() {
                 let tint = (item.type === 'armor' && isArmorBroken) ? 'filter: sepia(1) hue-rotate(-50deg) saturate(5) contrast(0.8);' : '';
                 if (item.isCursed) tint = 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);';
 
-                const bgSize = `${asset.sheetCount * 100}% 100%`;
-                const bgPos = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
+                const bgSize = asset.sheetCount <= 1 ? '100% 100%' : `${asset.sheetCount * 100}% 100%`;
+                const bgPos  = asset.sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
 
                 slot.innerHTML = `<div style="width:100%; height:100%; background-image:url('assets/images/${asset.file}'); background-size:${bgSize}; background-position:${bgPos}; ${tint}" onclick="window.useHotbarItem(${i})"></div>`;
 
@@ -588,8 +588,8 @@ function updateMapHUD() {
                     const asset = getAssetData(item.type, item.val || item.id, item.suit);
                     img.style.width = '100%'; img.style.height = '100%';
                     img.style.backgroundImage = `url('assets/images/${asset.file}')`;
-                    img.style.backgroundSize = `${asset.sheetCount * 100}% 100%`;
-                    img.style.backgroundPosition = `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
+                    img.style.backgroundSize = asset.sheetCount <= 1 ? '100% 100%' : `${asset.sheetCount * 100}% 100%`;
+                    img.style.backgroundPosition = asset.sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * asset.sheetCount) / (asset.sheetCount - 1) * 100}% 0%`;
                     if (item.type === 'potion') img.style.filter = 'hue-rotate(-50deg) saturate(1.5)';
                     slot.appendChild(img);
                     slot.onclick = () => { window.useHotbarItem(i); };

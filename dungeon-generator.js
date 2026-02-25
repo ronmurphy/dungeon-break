@@ -273,16 +273,17 @@ function insertWaypoints(r1, r2, allRooms) {
 // ── Town / Camp map ──────────────────────────────────────────────────────────
 // Returns exactly 3 rooms sized for a cozy camp scene:
 //   Room 0 → room_rect-web.glb      (player start, big hall)
-//   Room 1 → Emberwatch_Tower-web.glb  (isBonfire + odd id)
+//   Room 1 → Spiralwood_Tower-web.glb  (isBonfire + even id)
 //   Room 2 → campfire_tower-web.glb    (isBonfire + even id)
 // No connections so there are no path corridors cut across the terrain.
 export function generateCampRooms() {
     return [
-        { id: 0, gx:  0, gy:  0, w: 8, h: 8, shape: 'rect', connections: [1, 2], state: 'normal',
+        // Azure Flame — placed near the island edge so it can't be sandwiched between other landmarks
+        { id: 0, gx: 42, gy:  0, w: 8, h: 8, shape: 'rect', connections: [1, 2], state: 'normal',
           cards: [], isWaypoint: false, isFinal: false, isBonfire: false, isSpecial: false,
           isAlchemy: false, isTrap: false, isLocked: false, isVanished: false },
         { id: 1, gx: -9, gy: -9, w: 5, h: 5, shape: 'round', connections: [0, 2], state: 'normal',
-          cards: [], isWaypoint: false, isFinal: false, isBonfire: true,  isSpecial: false,
+          cards: [], isWaypoint: false, isFinal: false, isBonfire: false,  isSpecial: false,
           isAlchemy: false, isTrap: false, isLocked: false, isVanished: false },
         { id: 2, gx:  9, gy:  9, w: 5, h: 5, shape: 'round', connections: [0, 1], state: 'normal',
           cards: [], isWaypoint: false, isFinal: false, isBonfire: true,  isSpecial: false,
@@ -388,8 +389,8 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
     // ========================================
     // STEP 2: CA Steps
     // ========================================
-    // Camp map uses 2 passes — less smoothing preserves organic, varied terrain shapes
-    for (let step = 0; step < (isCampMap ? 2 : 3); step++) {
+    // Camp map uses 6 passes to ensure a dense, hole-free interior
+    for (let step = 0; step < (isCampMap ? 6 : 3); step++) {
         let nextGrid = JSON.parse(JSON.stringify(grid));
         for (let x = -bounds; x <= bounds; x++) {
             for (let z = -bounds; z <= bounds; z++) {
@@ -415,6 +416,29 @@ export function generateFloorCA(scene, floor, rooms, corridorMeshes, decorationM
             }
         }
         grid = nextGrid;
+    }
+
+    // Post-smooth hole-fill for camp: any interior void cell surrounded by 5+ solid neighbours
+    // is guaranteed solid — eliminates isolated holes while leaving the organic shoreline intact
+    if (isCampMap) {
+        const interiorCutoff = CAMP_ISLAND_RADIUS - CAMP_ISLAND_TAPER; // ~40
+        let changed = true;
+        while (changed) {
+            changed = false;
+            for (let x = -bounds; x <= bounds; x++) {
+                for (let z = -bounds; z <= bounds; z++) {
+                    if (grid[x] && grid[x][z]) continue; // already solid
+                    const dist = Math.sqrt(x * x + z * z);
+                    if (dist > interiorCutoff) continue; // shoreline taper — leave organic
+                    const n = countNeighbors(grid, x, z, bounds);
+                    if (n >= 5) {
+                        if (!grid[x]) grid[x] = {};
+                        grid[x][z] = true;
+                        changed = true;
+                    }
+                }
+            }
+        }
     }
 
     // ========================================
