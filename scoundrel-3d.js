@@ -5044,7 +5044,7 @@ function updateCampDayNight(dt) {
         _shadowSpawnTimer += dt;
         if (_shadowSpawnTimer >= 90 && wanderers.length < 8) {
             _shadowSpawnTimer -= 90;
-            spawnOneCampWanderer(true);
+            spawnOneCampWanderer(true, true);
             logMsg("A shadow detaches from the light...");
         }
     } else {
@@ -5100,7 +5100,8 @@ function updateCampDayNight(dt) {
 
 // Spawn a single wanderer on the camp island.
 // nearPlayer=true: shadow spawn 6-16 units away; false: night annular ring 12-28.
-function spawnOneCampWanderer(nearPlayer = false) {
+// isShadow=true: tint model materials dark to look like a living shadow.
+function spawnOneCampWanderer(nearPlayer = false, isShadow = false) {
     if (!scene || !caGrid) return;
     const file = WANDERER_MODELS[Math.floor(Math.random() * WANDERER_MODELS.length)];
     let sx = 0, sz = 0, sy = 0, valid = false, attempts = 0;
@@ -5138,7 +5139,28 @@ function spawnOneCampWanderer(nearPlayer = false) {
         const idleClip = findA(['idle','stand','wait']);
         if (walkClip) { wActs.walk = wMixer.clipAction(walkClip); wActs.walk.play(); }
         if (idleClip)   wActs.idle = wMixer.clipAction(idleClip);
-        const wanderer = { mesh: lod, mixer: wMixer, actions: wActs, filename: file };
+        const wanderer = { mesh: lod, mixer: wMixer, actions: wActs, filename: file, isShadow };
+        // Shadow tint — darken all mesh materials to a near-black silhouette
+        if (isShadow) {
+            model.traverse(child => {
+                if (!child.isMesh) return;
+                const mats = Array.isArray(child.material) ? child.material : [child.material];
+                child.material = mats.map(m => {
+                    const s = m.clone();
+                    s.color.set(0x0d0a14);       // Deep shadow purple-black
+                    if (s.emissive) s.emissive.set(0x000000);
+                    s.emissiveIntensity = 0;
+                    s.roughness = 1;
+                    s.metalness = 0;
+                    s.map = null;                // Strip texture — pure silhouette
+                    s.transparent = true;
+                    s.opacity = 0.88;            // Slightly translucent like a real shadow
+                    s.needsUpdate = true;
+                    return s;
+                });
+                if (child.material.length === 1) child.material = child.material[0];
+            });
+        }
         wanderers.push(wanderer);
         pickWandererTarget(wanderer);
     }, 0.7);
