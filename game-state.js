@@ -22,6 +22,16 @@ export const ARMOR_DATA = [
     { id: 8, name: "Gothic Plate", ap: 5, cost: 75, slot: "chest", desc: "Masterwork full plate." },
     { id: 9, name: "Ranger's Mask", ap: 1, cost: 40, slot: "head", desc: "+1 AP. 20% chance wanderers won't engage you in combat." },
     { id: 10, name: "Cultist's Mask", ap: 3, cost: 50, slot: "head", desc: "+3 AP. Wanderers are drawn to you — doubled detection range, no blind spots." },
+    // ── Bone Set (drop-only) ─────────────────────────────────────────────────
+    { id: 11, name: "Bone Mask",         ap: 2, cost: 150, slot: "head",  setId: 'bone',     setName: 'Bone',     img: 'items/sets/item_bone_mask.png',      dropOnly: true, desc: "Bone Set 1/4. +2 AP. Full set: skeleton companions ignore you + summon a skeletal ally." },
+    { id: 12, name: "Bone Plate",        ap: 2, cost: 150, slot: "chest", setId: 'bone',     setName: 'Bone',     img: 'items/sets/item_bone_chest.png',     dropOnly: true, desc: "Bone Set 2/4. +2 AP. Full set: skeleton companions ignore you + summon a skeletal ally." },
+    { id: 13, name: "Bone Gauntlets",    ap: 2, cost: 150, slot: "hands", setId: 'bone',     setName: 'Bone',     img: 'items/sets/item_bone_gloves.png',    dropOnly: true, desc: "Bone Set 3/4. +2 AP. Full set: skeleton companions ignore you + summon a skeletal ally." },
+    { id: 14, name: "Bone Greaves",      ap: 2, cost: 150, slot: "legs",  setId: 'bone',     setName: 'Bone',     img: 'items/sets/item_bone_legs.png',      dropOnly: true, desc: "Bone Set 4/4. +2 AP. Full set: skeleton companions ignore you + summon a skeletal ally." },
+    // ── Infernal Set (drop-only) ─────────────────────────────────────────────
+    { id: 15, name: "Infernal Mask",     ap: 2, cost: 150, slot: "head",  setId: 'infernal', setName: 'Infernal', img: 'items/sets/item_infernal_mask.png',   dropOnly: true, desc: "Infernal Set 1/4. +2 AP. Full set: demons and the corrupted will not engage you." },
+    { id: 16, name: "Infernal Plate",    ap: 2, cost: 150, slot: "chest", setId: 'infernal', setName: 'Infernal', img: 'items/sets/item_infernal_chest.png',  dropOnly: true, desc: "Infernal Set 2/4. +2 AP. Full set: demons and the corrupted will not engage you." },
+    { id: 17, name: "Infernal Gauntlets",ap: 2, cost: 150, slot: "hands", setId: 'infernal', setName: 'Infernal', img: 'items/sets/item_infernal_gloves.png', dropOnly: true, desc: "Infernal Set 3/4. +2 AP. Full set: demons and the corrupted will not engage you." },
+    { id: 18, name: "Infernal Greaves",  ap: 2, cost: 150, slot: "legs",  setId: 'infernal', setName: 'Infernal', img: 'items/sets/item_infernal_legs.png',   dropOnly: true, desc: "Infernal Set 4/4. +2 AP. Full set: demons and the corrupted will not engage you." },
 ];
 
 export const ITEM_DATA = [
@@ -275,6 +285,14 @@ export function getAssetData(type, value, suit, extra) {
     if (type === 'item'  && value === 15) return { file: 'items/item_pell_bowl.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     if (type === 'armor' && value ===  9) return { file: 'items/item_female_mask.png',   uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     if (type === 'armor' && value === 10) return { file: 'items/item_male_mask.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 11) return { file: 'items/sets/item_bone_mask.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 12) return { file: 'items/sets/item_bone_chest.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 13) return { file: 'items/sets/item_bone_gloves.png',    uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 14) return { file: 'items/sets/item_bone_legs.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 15) return { file: 'items/sets/item_infernal_mask.png',  uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 16) return { file: 'items/sets/item_infernal_chest.png', uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 17) return { file: 'items/sets/item_infernal_gloves.png',uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'armor' && value === 18) return { file: 'items/sets/item_infernal_legs.png',  uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     const isStrip = !file.includes('rest');
     return { file, uv: getUVForCell(cellIdx, sheetCount), isStrip, sheetCount };
 }

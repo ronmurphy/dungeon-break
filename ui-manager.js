@@ -1083,6 +1083,17 @@ export function recalcStats() {
     });
     game.maxAp = totalArmorAP;
 
+    // ── Armor Set Detection (edge-triggered: fires callback only on transition to active) ──
+    const _equippedVals  = Object.values(game.equipment);
+    const _boneCount     = _equippedVals.filter(i => i && i.setId === 'bone').length;
+    const _infernalCount = _equippedVals.filter(i => i && i.setId === 'infernal').length;
+    const _wasBone       = game.boneSetActive;
+    const _wasInfernal   = game.infernalSetActive;
+    game.boneSetActive     = _boneCount     >= 4;
+    game.infernalSetActive = _infernalCount >= 4;
+    if (game.boneSetActive     && !_wasBone     && window._triggerBoneSet)     window._triggerBoneSet();
+    if (game.infernalSetActive && !_wasInfernal && window._triggerInfernalSet) window._triggerInfernalSet();
+
     // Clamp current values to new maximums
     if (game.hp > game.maxHp) game.hp = game.maxHp;
     if (game.ap > game.maxAp) game.ap = game.maxAp;

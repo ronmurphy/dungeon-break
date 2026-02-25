@@ -2729,6 +2729,15 @@ function spawnLootSprite(pos, item) {
         texPath = 'assets/images/weapons_final.png';
         cols = 20;
         cellIdx = Math.max(0, Math.min(19, (item.val || 2) - 2));
+    } else if (item.type === 'armor') {
+        // Armor set piece — each has its own standalone PNG
+        if (item.img) {
+            texPath = `assets/images/${item.img}`;
+        } else {
+            texPath = 'assets/images/armor.png';
+        }
+        cols = 1;
+        cellIdx = 0;
     } else if (item.id === 9) { // Town Portal Scroll — standalone image
         texPath = 'assets/images/items/item_scroll.png';
         cols = 1;
@@ -4586,6 +4595,17 @@ function animate3D() {
                         if (Math.random() < 0.20) canSee = false;
                     }
 
+                    // Bone Set (4/4): skeleton* wanderers are bound to ignore the wearer
+                    if (canSee && game.boneSetActive && wanderer.filename) {
+                        if (wanderer.filename.toLowerCase().includes('skeleton')) canSee = false;
+                    }
+
+                    // Infernal Set (4/4): female_evil*, male_evil*, demoness* are compelled to ignore the wearer
+                    if (canSee && game.infernalSetActive && wanderer.filename) {
+                        const _wfi = wanderer.filename.toLowerCase();
+                        if (_wfi.includes('female_evil') || _wfi.includes('male_evil') || _wfi.includes('demoness')) canSee = false;
+                    }
+
                     // Bonfire / shrine / fountain safe zone: player is protected — wanderers back off
                     const playerInSafeRoom = isPlayerInSafeRoom();
                     if (playerInSafeRoom) {
@@ -6075,6 +6095,7 @@ function finalizeStartDive() {
     game.soulCoins = 0; game.ap = 0; game.maxAp = 0;
     game.torchCharge = 60;
     game.equipment = { head: null, chest: null, hands: null, legs: null, weapon: null };
+    game.boneSetActive = false; game.infernalSetActive = false; game.boneSetPetSpawned = false;
     game.backpack = new Array(24).fill(null); game.hotbar = new Array(6).fill(null);
     game.currentRoomIdx = 0; game.lastAvoided = false;
     game.bonfireUsed = false; game.merchantUsed = false;
@@ -6223,7 +6244,7 @@ function startIntermission() {
     // Render Shop Items — wrapped so Hourglass (id:4) can call window._shopReroll() to reroll wares
     const _renderShopItems = () => {
         itemsContainer.innerHTML = '';
-        const freshPool = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
+        const freshPool = [...ARMOR_DATA.filter(a => !a.dropOnly).map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
         shuffle(freshPool);
 
         for (let i = 0; i < 4; i++) {
@@ -6326,6 +6347,7 @@ function descendToNextFloor() {
     game.isBossFight = false;
     game.currentTrack = null; // Force music re-eval
     game.visitedWaypoints = [];
+    game.boneSetActive = false; game.infernalSetActive = false; game.boneSetPetSpawned = false; // Re-detect set bonuses after scene rebuild
 
     game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     clear3DScene(); init3D();
@@ -6736,8 +6758,8 @@ window.showBrokerShop = function() {
 
     // Generate Shop Inventory if empty (8 items, Uncommon+)
     if (shopInventory.length === 0) {
-        const pool = [...ARMOR_DATA.map(a => ({...a, type:'armor'})), ...ITEM_DATA.map(i => ({...i, type:'item'})), ...CURSED_ITEMS];
-        // Filter for better items (Cost > 30)
+        const pool = [...ARMOR_DATA.filter(a => !a.dropOnly).map(a => ({...a, type:'armor'})), ...ITEM_DATA.map(i => ({...i, type:'item'})), ...CURSED_ITEMS];
+        // Filter for better items (Cost > 30) — set pieces are drop-only so already excluded
         const betterPool = pool.filter(i => i.cost >= 30);
         shuffle(betterPool);
         shopInventory = betterPool.slice(0, 8);
@@ -7226,6 +7248,21 @@ function spawnPet(name) {
         playerPet = { mesh: lod, mixer, actions, _followTimer: 0, name: displayName };
     }, 0.8);
 }
+
+// ── Armor Set Bonus Triggers ──────────────────────────────────────────────────
+// Called by ui-manager's recalcStats() on the frame the 4th set piece is equipped.
+// Uses window.* so ui-manager doesn't need a direct import of scoundrel-3d functions.
+window._triggerBoneSet = () => {
+    if (game.boneSetPetSpawned) return; // already summoned this floor
+    game.boneSetPetSpawned = true;
+    logMsg('The Bone Set pulses with dark energy — a skeleton rises from the shadows to serve you.');
+    spawnFloatingText('BONE SET COMPLETE!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#ccddff', 28);
+    setTimeout(() => spawnPet('skeleton-web.glb'), 500);
+};
+window._triggerInfernalSet = () => {
+    logMsg('The Infernal Set blazes with unholy fire — demons and the corrupted avert their gaze.');
+    spawnFloatingText('INFERNAL SET COMPLETE!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#ff4422', 28);
+};
 
 /**
  * Spawns a single boss helper wanderer at the given island offset position.
@@ -8614,7 +8651,7 @@ function _renderBonfireJoe() {
     if (mp) mp.style.display = 'none';
     const discount = game.classId === 'merchant' ? 0.8 : 1.0;
 
-    const shopPool = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
+    const shopPool = [...ARMOR_DATA.filter(a => !a.dropOnly).map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
     shuffle(shopPool);
     const shopItems = shopPool.slice(0, 4);
 
@@ -10270,6 +10307,7 @@ function loadGame() {
 
     _azureFlameReadyAt = Date.now() + 30000; // Proximity disabled — we show it directly below
     window._bossPromptCooldown = Date.now() + 3000; // Prevent boss from firing before player moves
+    game.boneSetActive = false; game.infernalSetActive = false; game.boneSetPetSpawned = false; // Re-detect set bonuses on load
     updateUI();
     logMsg("Game Loaded.");
 
@@ -11982,6 +12020,16 @@ function rollEnemyLoot(str) {
     const lck = (game.stats && game.stats.lck) || 0;
     const chance = Math.min(0.75, 0.20 + str * 0.05 + lck * 0.025); // base 20-55% + up to 12.5% from LCK
     if (Math.random() > chance) return null;
+
+    // Rare armor set piece drop (~5% when loot roll succeeds)
+    if (Math.random() < 0.05) {
+        const _setPieces = ARMOR_DATA.filter(a => a.dropOnly);
+        if (_setPieces.length > 0) {
+            const _sp = _setPieces[Math.floor(Math.random() * _setPieces.length)];
+            return { type: 'armor', id: _sp.id, name: _sp.name, ap: _sp.ap, slot: _sp.slot,
+                     setId: _sp.setId, setName: _sp.setName, img: _sp.img, cost: _sp.cost, desc: _sp.desc };
+        }
+    }
 
     const roll = Math.random();
     if (roll < 0.45) {
