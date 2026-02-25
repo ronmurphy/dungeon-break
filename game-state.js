@@ -27,12 +27,18 @@ export const ITEM_DATA = [
     { id: 1, name: "Spectral Lantern", cost: 50, type: 'passive', desc: "Permanent Gold Light." },
     { id: 2, name: "Skeleton Key", cost: 35, type: 'active', desc: "Avoid room (even if last avoided)." },
     { id: 3, name: "Leather Map", cost: 40, type: 'passive', desc: "Reveal all room locations." },
-    { id: 4, name: "Purple Hourglass", cost: 30, type: 'active', desc: "Redraw current room." },
+    { id: 4,  name: "Purple Hourglass",    cost: 30, type: 'active',  desc: "Re-roll the Soul Broker's wares. Use at the shop." },
     { id: 5, name: "Protective Herbs", cost: 25, type: 'passive', desc: "+5 HP from Bonfires." },
     { id: 6, name: "Silver Mirror", cost: 60, type: 'passive', desc: "Survive fatal blow once." },
     { id: 7, name: "Music Box", cost: 35, type: 'active', desc: "-2 to all monsters in room." },
     { id: 8, name: "Iron-Bound Tome", cost: 50, type: 'passive', desc: "+2 Soul Coins per kill." },
-    { id: 9, name: "Town Portal Scroll", cost: 45, type: 'active', desc: "Opens a portal back to camp. Walk through again to return." }
+    { id: 9,  name: "Town Portal Scroll",  cost: 45, type: 'active',  desc: "Opens a portal back to camp. Walk through again to return." },
+    { id: 10, name: "Adventurer's Pack",    cost: 40, type: 'active',  desc: "Permanently expand backpack by 3 slots. (Single use)" },
+    { id: 11, name: "Spellbook",            cost: 55, type: 'active',  desc: "Arcane blast: 1d8+STR+LCK to all enemies within 3 units." },
+    { id: 12, name: "Unmarked Map",         cost: 45, type: 'passive', desc: "Reveal all rooms. Soul coin pickups worth +15%." },
+    { id: 13, name: "Lucky Duck",           cost: 0,  type: 'passive', desc: "+1 LCK while in hotbar. Stackable up to 6. Find them in the Duck Dungeon." },
+    { id: 14, name: "Ranger's Mask",        cost: 40, type: 'active',  desc: "Wanderers ignore you for the next 2 room encounters." },
+    { id: 15, name: "Pell's Bowl",          cost: 35, type: 'passive', desc: "+3 HP whenever you rest at a bonfire." }
 ];
 
 export const CLASS_DATA = {
@@ -68,7 +74,7 @@ export const CLASS_DATA = {
     },
     priest: {
         name: "Confessor",
-        desc: "A holy healer. Heals 1 HP every 6 unique waypoints.",
+        desc: "A holy healer. Faith restores 1 HP every 40 paces walked.",
         hp: 20,
         items: [{ type: 'weapon', id: 'mace', val: 3, suit: '♣', name: "Cleric's Mace" }, { type: 'item', id: 5 }], // Herbs
         icon: { type: 'class-icon', val: 3 },
@@ -258,9 +264,13 @@ export function getAssetData(type, value, suit, extra) {
         else cellIdx = 0;
     }
     // Standalone single-image items — return directly, bypassing spritesheet UV math
-    if (type === 'item' && value === 9) {
-        return { file: 'items/item_scroll.png', uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
-    }
+    if (type === 'item' && value ===  9) return { file: 'items/item_scroll.png',       uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item' && value === 10) return { file: 'items/item_backpack.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item' && value === 11) return { file: 'items/item_spellbook.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item' && value === 12) return { file: 'items/item_unmarked_map.png',  uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item' && value === 13) return { file: 'items/item_toy_duck.png',      uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item' && value === 14) return { file: 'items/item_female_mask.png',   uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
+    if (type === 'item' && value === 15) return { file: 'items/item_pell_bowl.png',     uv: { u: 0, v: 0 }, isStrip: true, sheetCount: 1 };
     const isStrip = !file.includes('rest');
     return { file, uv: getUVForCell(cellIdx, sheetCount), isStrip, sheetCount };
 }

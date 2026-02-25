@@ -3351,7 +3351,7 @@ function update3DScene() {
         const hasLantern = game.hotbar.some(i => i && i.type === 'item' && i.id === 1);
 
         // Check for Map (ID 3)
-        const hasMap = game.hotbar.some(i => i && i.type === 'item' && i.id === 3);
+        const hasMap = game.hotbar.some(i => i && i.type === 'item' && (i.id === 3 || i.id === 12));
 
         // Torch Logic based on Fuel
         // Min baseDist 50: must reach camera (~35 units away) so floor tiles are lit even when drained
@@ -3484,6 +3484,8 @@ function update3DScene() {
                         modelPath = (r.id % 2 === 0) ? 'assets/images/glb/Warden_Cube-marker-web.glb' : 'assets/images/glb/Eldritch_Hex_Cube-marker-web.glb'; modelScale = 0.8;
                     } else if (r.isLocked) {
                         modelPath = 'assets/images/glb/dungeon/dungeon-holder-web.glb'; modelScale = 1.0;
+                    } else if (r.isDuckChest && !r.isCollected) {
+                        modelPath = 'assets/images/glb/duck-web.glb'; modelScale = 1.5;
                     } else {
                         return; // Regular rooms — no marker
                     }
@@ -3500,7 +3502,7 @@ function update3DScene() {
                         mesh.add(model);
                     }, modelScale, configKey);
                     roomMeshes.set(r.id, mesh);
-                    const bspNeedsRing = (r.isFountain || r.isAlchemy || r.isSpecial || r.isTrap || r.isLocked || r.isBonfire || r.id === 0) && !r.isFinal;
+                    const bspNeedsRing = (r.isFountain || r.isAlchemy || r.isSpecial || r.isTrap || r.isLocked || r.isBonfire || r.isDuckChest || r.id === 0) && !r.isFinal;
                     if (bspNeedsRing && !markerRings.has(r.id)) {
                         const ringGeo = new THREE.PlaneGeometry(3, 3);
                         const ringTex = loadTexture('assets/images/textures/circle_04.png');
@@ -3522,20 +3524,30 @@ function update3DScene() {
 
                 // --- DUCK DUNGEON OVERRIDE ---
                 if (game.inDuckDungeon && r.isDuckChest && !r.isCollected) {
-                    // Spawn Duck
-                    const duckGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5); // Fallback
-                    const duckMat = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+                    const duckGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+                    const duckMat = new THREE.MeshStandardMaterial({ visible: false });
                     const mesh = new THREE.Mesh(duckGeo, duckMat);
-                    
-                    loadGLB('assets/images/glb/duck.glb', (model) => {
-                        mesh.add(model);
-                        mesh.material.visible = false;
-                        // Bobbing animation
-                        // We can add a simple tween here or handle in animate loop
-                    }, 1.5, 'duck.glb');
-
                     mesh.position.set(r.gx, 0, r.gy);
                     scene.add(mesh);
+                    loadGLB('assets/images/glb/duck-web.glb', (model) => {
+                        const box = new THREE.Box3().setFromObject(model);
+                        model.position.set(0, -box.min.y, 0);
+                        mesh.add(model);
+                        // Gentle bob
+                        const baseY = mesh.position.y;
+                        new TWEEN.Tween(mesh.position)
+                            .to({ y: baseY + 0.18 }, 1400)
+                            .easing(TWEEN.Easing.Sinusoidal.InOut)
+                            .yoyo(true).repeat(Infinity).start();
+                        // Golden glow ring
+                        const rGeo = new THREE.PlaneGeometry(2.5, 2.5);
+                        const rTex = loadTexture('assets/images/textures/circle_04.png');
+                        const rMat = new THREE.MeshBasicMaterial({ map: rTex, transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
+                        const ring = new THREE.Mesh(rGeo, rMat);
+                        ring.rotation.x = -Math.PI / 2;
+                        ring.position.set(r.gx, 0.05, r.gy);
+                        scene.add(ring);
+                    }, 1.5, 'duck-web.glb');
                     roomMeshes.set(r.id, mesh);
                     return; // Skip standard room generation
                 }
@@ -3598,8 +3610,8 @@ function update3DScene() {
                         customScale = 0.5;
                     } else if (r.shape === 'spire') {
                         geo = new THREE.ConeGeometry(Math.min(rw, rh) * 0.6, rDepth, 4);
-                        // Randomize between Spire and Spiralwood Tower
-                        customModelPath = (r.id % 3 === 0) ? 'assets/images/glb/Spiralwood_Tower-web.glb' : 'assets/images/glb/room_spire-web.glb';
+                        // Even id → Spiralwood Tower, odd id → room_spire
+                        customModelPath = (r.id % 2 === 0) ? 'assets/images/glb/Spiralwood_Tower-web.glb' : 'assets/images/glb/room_spire-web.glb';
                         customScale = 0.5;
                     } else {
                         geo = new THREE.BoxGeometry(rw, rDepth, rh);
@@ -4030,9 +4042,11 @@ function animate3D() {
                 if (dist < 1.5) {
                     scene.remove(sc.mesh);
                     soulcoinSprites.splice(i, 1);
-                    game.soulCoins = (game.soulCoins || 0) + sc.coins;
-                    spawnFloatingText(`+${sc.coins} SOUL COINS`, window.innerWidth / 2, window.innerHeight / 2 + 30, '#ffd700', 26);
-                    logMsg(`Collected ${sc.coins} soul coins.`);
+                    const _mapBonus = game.hotbar.some(i => i && i.id === 12) ? Math.ceil(sc.coins * 0.15) : 0;
+                    const _coinTotal = sc.coins + _mapBonus;
+                    game.soulCoins = (game.soulCoins || 0) + _coinTotal;
+                    spawnFloatingText(`+${_coinTotal} SOUL COINS${_mapBonus > 0 ? ' ★' : ''}`, window.innerWidth / 2, window.innerHeight / 2 + 30, '#ffd700', 26);
+                    logMsg(`Collected ${_coinTotal} soul coins.${_mapBonus > 0 ? ` (Unmarked Map: +${_mapBonus})` : ''}`);
                     updateUI();
                 }
             }
@@ -4159,12 +4173,18 @@ function animate3D() {
                     r.isCollected = true;
                     game.ducksFound++;
                     audio.play('quack', { volume: 0.8 });
-                    spawnFloatingText(`QUACK! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700');
-                    
-                    const mesh = roomMeshes.get(r.id);
-                    if (mesh) scene.remove(mesh);
 
-                    updateUI(); // Update counter
+                    // Give the player a Lucky Duck item (+1 LCK passive)
+                    const duckItem = { type: 'item', id: 13, name: 'Lucky Duck', cost: 0, desc: '+1 LCK per duck in your hotbar. Stackable.' };
+                    if (!addToHotbar(duckItem)) addToBackpack(duckItem);
+
+                    spawnFloatingText(`🦆 QUACK! Got Lucky Duck! (${game.ducksFound}/${game.ducksToFind})`, window.innerWidth/2, window.innerHeight/2 - 100, '#ffd700', 22);
+                    logMsg(`Found a Lucky Duck! (+1 LCK while in hotbar) (${game.ducksFound}/${game.ducksToFind})`);
+
+                    const mesh = roomMeshes.get(r.id);
+                    if (mesh) { scene.remove(mesh); TWEEN.remove(mesh); }
+
+                    updateUI();
 
                     if (game.ducksFound >= game.ducksToFind) {
                         setTimeout(exitTrueDungeon, 1000);
@@ -4429,6 +4449,9 @@ function animate3D() {
                     if (canSee && game.useBSP && !inHelixZone && !inBattleIsland) {
                         if (bspWallBlocksLOS(wandererPos, playerPos)) canSee = false;
                     }
+
+                    // Ranger's Mask: wanderers cannot detect the player (id:14 active item)
+                    if (game.maskRooms > 0) canSee = false;
 
                     // State Machine
                     if (!wanderer.state) wanderer.state = 'patrol';
@@ -4804,6 +4827,18 @@ function movePlayerTo(targetVec, isRunning = false, onCompleteCb = null, options
     // D&D turns are ~6 seconds; a torch doesn't meaningfully deplete in a fight
     if (!isCombatView) {
         game.torchCharge = Math.max(0, game.torchCharge - (dist * 0.025)); // Halved — movement speed doubled
+        // Confessor (Priest) Passive: Pilgrimage — heal 1 HP every 40 world-units walked
+        if (game.classId === 'priest') {
+            game.pilgrimDist = (game.pilgrimDist || 0) + dist;
+            if (game.pilgrimDist >= 40) {
+                game.pilgrimDist -= 40;
+                if (game.hp < game.maxHp) {
+                    game.hp = Math.min(game.maxHp, game.hp + 1);
+                    spawnFloatingText('✝ +1 HP', window.innerWidth / 2, window.innerHeight / 2 - 80, '#88ffcc');
+                    logMsg('Pilgrimage: Faith restores 1 HP.');
+                }
+            }
+        }
     }
     updateUI();
 
@@ -5966,72 +6001,76 @@ function startIntermission() {
     itemsContainer.style.cssText = "display:grid; grid-template-columns:repeat(2,1fr); gap:15px; width:320px; margin-top:8px;";
     enemyArea.appendChild(itemsContainer);
 
-    // Render Shop Items (Random selection of 4)
-    // Mix armor and items
-    const pool = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
-    shuffle(pool);
+    // Render Shop Items — wrapped so Hourglass (id:4) can call window._shopReroll() to reroll wares
+    const _renderShopItems = () => {
+        itemsContainer.innerHTML = '';
+        const freshPool = [...ARMOR_DATA.map(a => ({ ...a, type: 'armor' })), ...ITEM_DATA.map(i => ({ ...i, type: 'item' })), ...CURSED_ITEMS];
+        shuffle(freshPool);
 
-    for (let i = 0; i < 4; i++) {
-        const item = pool[i];
-        const card = document.createElement('div');
-        const finalCost = Math.floor(item.cost * discount);
-        card.className = 'card shop-item';
+        for (let i = 0; i < 4; i++) {
+            const item = freshPool[i];
+            const card = document.createElement('div');
+            const finalCost = Math.floor(item.cost * discount);
+            card.className = 'card shop-item';
 
-        const asset = getAssetData(item.type, item.id || item.val, null);
+            const asset = getAssetData(item.type, item.id || item.val, null);
 
-        const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
-        const sheetCount = asset.sheetCount || 9;
-        const bgSize = `${sheetCount * 100}% 100%`;
-        const bgPos = `${(asset.uv.u * sheetCount) / (sheetCount - 1) * 100}% 0%`;
+            const tint = item.isCursed ? 'filter: sepia(1) hue-rotate(60deg) saturate(3) contrast(1.2);' : '';
+            const sheetCount = asset.sheetCount || 9;
+            const bgSize = `${sheetCount * 100}% 100%`;
+            const bgPos = sheetCount <= 1 ? '0% 0%' : `${(asset.uv.u * sheetCount) / (sheetCount - 1) * 100}% 0%`;
 
-        card.innerHTML = `
-            <div class="card-art-container" style="background-image: url('assets/images/${asset.file}'); background-size: ${bgSize}; background-position: ${bgPos}; ${tint}"></div>
-            <div class="name" style="bottom: 40px; font-size: 14px; ${item.isCursed ? 'color:#adff2f;' : ''}">${item.name}</div>
-            <div class="val" style="font-size: 16px; color: #ffd700;">${finalCost}</div>
-            <div style="position:absolute; bottom:5px; width:100%; text-align:center; font-size:10px; color:#aaa;">${item.type === 'armor' ? `+${item.ap} AP` : (item.isCursed ? 'Cursed' : 'Item')}</div>
-        `;
+            card.innerHTML = `
+                <div class="card-art-container" style="background-image: url('assets/images/${asset.file}'); background-size: ${bgSize}; background-position: ${bgPos}; ${tint}"></div>
+                <div class="name" style="bottom: 40px; font-size: 14px; ${item.isCursed ? 'color:#adff2f;' : ''}">${item.name}</div>
+                <div class="val" style="font-size: 16px; color: #ffd700;">${finalCost}</div>
+                <div style="position:absolute; bottom:5px; width:100%; text-align:center; font-size:10px; color:#aaa;">${item.type === 'armor' ? `+${item.ap} AP` : (item.isCursed ? 'Cursed' : 'Item')}</div>
+            `;
 
-        card.onclick = () => {
-            if (game.soulCoins >= finalCost) {
-                if (getFreeBackpackSlot() === -1) {
-                    spawnFloatingText("Backpack Full!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
-                    return;
+            card.onclick = () => {
+                if (game.soulCoins >= finalCost) {
+                    if (getFreeBackpackSlot() === -1) {
+                        spawnFloatingText("Backpack Full!", window.innerWidth / 2, window.innerHeight / 2, '#ffaa00');
+                        return;
+                    }
+                    game.soulCoins -= finalCost;
+                    document.getElementById('shopCoinDisplay').innerText = game.soulCoins;
+
+                    // Handle Cursed Ring Passive immediately if bought
+                    if (item.id === 'cursed_ring') {
+                        game.maxHp += 10; game.hp += 10;
+                        logMsg("The Ring of Burden binds to you. (+10 Max HP)");
+                    }
+
+                    addToBackpack(item);
+
+                    spawnFloatingText("Purchased!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
+                    card.style.opacity = 0.5;
+                    card.style.pointerEvents = 'none';
+                    updateUI();
+                } else {
+                    spawnFloatingText("Not enough coins!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
                 }
-                game.soulCoins -= finalCost;
-                document.getElementById('shopCoinDisplay').innerText = game.soulCoins;
+            };
 
-                // Handle Cursed Ring Passive immediately if bought
-                if (item.id === 'cursed_ring') {
-                    game.maxHp += 10; game.hp += 10;
-                    logMsg("The Ring of Burden binds to you. (+10 Max HP)");
+            // Tooltip Events for Shop Items
+            card.onmouseenter = () => {
+                const tooltip = document.getElementById('gameTooltip');
+                if (tooltip) {
+                    tooltip.style.display = 'block';
+                    tooltip.innerHTML = `<strong style="color:${item.isCursed ? '#adff2f' : '#ffd700'}; font-size:16px;">${item.name}</strong><br/><span style="color:#aaa; font-size:12px;">${item.type === 'armor' ? `+${item.ap} AP` : 'Item'}</span><br/><div style="margin-top:4px; color:#ddd;">${item.desc || ''}</div>`;
+                    const rect = card.getBoundingClientRect();
+                    tooltip.style.left = (rect.right + 10) + 'px';
+                    tooltip.style.top = rect.top + 'px';
                 }
+            };
+            card.onmouseleave = () => { const t = document.getElementById('gameTooltip'); if (t) t.style.display = 'none'; };
 
-                addToBackpack(item);
-
-                spawnFloatingText("Purchased!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00');
-                card.style.opacity = 0.5;
-                card.style.pointerEvents = 'none';
-                updateUI();
-            } else {
-                spawnFloatingText("Not enough coins!", window.innerWidth / 2, window.innerHeight / 2, '#ff0000');
-            }
-        };
-
-        // Tooltip Events for Shop Items
-        card.onmouseenter = () => {
-            const tooltip = document.getElementById('gameTooltip');
-            if (tooltip) {
-                tooltip.style.display = 'block';
-                tooltip.innerHTML = `<strong style="color:${item.isCursed ? '#adff2f' : '#ffd700'}; font-size:16px;">${item.name}</strong><br/><span style="color:#aaa; font-size:12px;">${item.type === 'armor' ? `+${item.ap} AP` : 'Item'}</span><br/><div style="margin-top:4px; color:#ddd;">${item.desc || ''}</div>`;
-                const rect = card.getBoundingClientRect();
-                tooltip.style.left = (rect.right + 10) + 'px';
-                tooltip.style.top = rect.top + 'px';
-            }
-        };
-        card.onmouseleave = () => { const t = document.getElementById('gameTooltip'); if (t) t.style.display = 'none'; };
-
-        itemsContainer.appendChild(card);
-    }
+            itemsContainer.appendChild(card);
+        }
+    };
+    _renderShopItems(); // Initial render
+    window._shopReroll = _renderShopItems; // Hourglass (id:4) calls this to re-roll
 
     // Keep the external descendBtn hidden — inject the "next floor" button inside the scroll area
     document.getElementById('descendBtn').style.display = 'none';
@@ -6087,7 +6126,7 @@ function descendToNextFloor() {
     createDungeonDustMotes();
 
     // Map Item: reveal all rooms
-    const hasMap = game.hotbar.some(i => i && i.type === 'item' && i.id === 3);
+    const hasMap = game.hotbar.some(i => i && i.type === 'item' && (i.id === 3 || i.id === 12));
     if (hasMap) game.rooms.forEach(r => r.isRevealed = true);
 
     updateAtmosphere(game.floor);
@@ -6125,21 +6164,22 @@ function enterRoom(id) {
     // Hardcore Auto-Save on Room Entry
     if (game.mode === 'hardcore') saveGame();
 
+    // Ranger's Mask: count down per active (non-cleared, non-waypoint) room entered
+    if (game.maskRooms > 0 && !room.isWaypoint && !room.isBonfire && room.state !== 'cleared') {
+        game.maskRooms--;
+        if (game.maskRooms === 0) {
+            spawnFloatingText('Mask worn off!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#ffcc44');
+            logMsg("Ranger's Mask: Disguise has worn off.");
+        } else {
+            logMsg(`Ranger's Mask: ${game.maskRooms} encounter(s) of disguise remaining.`);
+        }
+    }
+
     if (room.isWaypoint) {
         logMsg("Traversing corridors...");
 
-        // Confessor (Priest) Passive: Pilgrimage
-        if (game.classId === 'priest') {
-            if (!game.visitedWaypoints) game.visitedWaypoints = [];
-            if (!game.visitedWaypoints.includes(room.id)) {
-                game.visitedWaypoints.push(room.id);
-                if (game.visitedWaypoints.length % 6 === 0) {
-                    game.hp = Math.min(game.maxHp, game.hp + 1);
-                    logMsg("Pilgrimage: Faith restores 1 HP.");
-                    updateUI();
-                }
-            }
-        }
+        // Confessor (Priest) Passive: Pilgrimage — now distance-based (tracked in movePlayerTo)
+        // Legacy waypoint-tick removed; healing triggers every 40 world-units walked instead.
         // Strider (Ranger) Passive: Scout
         if (game.classId === 'ranger') {
             room.connections.forEach(cid => { const r = game.rooms.find(rm => rm.id === cid); if (r) r.isRevealed = true; });
@@ -8064,9 +8104,10 @@ function pickCard(idx, event) {
             spawnAboveModalTexture('flame_03.png', window.innerWidth / 2, window.innerHeight / 2, 30, { tint: '#ff6600', blend: 'lighter', sizeRange: [48, 160], intensity: 1.45 });
             // Herbs Check (ID 5)
             const hasHerbs = game.hotbar.some(i => i && i.type === 'item' && i.id === 5);
-            const bonfireHeal = Math.min(card.val + (hasHerbs ? 5 : 0), game.maxHp - game.hp);
+            const hasPellBowl = game.hotbar.some(i => i && i.id === 15);
+            const bonfireHeal = Math.min(card.val + (hasHerbs ? 5 : 0) + (hasPellBowl ? 3 : 0), game.maxHp - game.hp);
             game.hp += bonfireHeal;
-            logMsg(`Rested at bonfire. Vitality +${bonfireHeal}.`);
+            logMsg(`Rested at bonfire. Vitality +${bonfireHeal}.${hasPellBowl ? " (Pell's stew warms your bones.)" : ''}`);
 
             game.bonfireUsed = true;
             game.activeRoom.restRemaining--;
@@ -8300,6 +8341,7 @@ function closeCombat() {
     document.getElementById('combatModal').style.pointerEvents = 'auto'; // Reset
 
     exitCombatView();
+    window._shopReroll = null; // Hourglass can no longer re-roll after leaving the shop
     updateUI(); // Ensure HUD reappears
 }
 window.closeCombat = closeCombat; // Expose for onClick events
@@ -8326,9 +8368,10 @@ window.handleBonfire = function (cost) {
     if (room.restRemaining < cost) return;
 
     room.restRemaining -= cost;
-    // Herbs Check (ID 5)
+    // Herbs Check (ID 5) + Pell's Bowl (ID 15)
     const hasHerbs = game.hotbar.some(i => i && i.type === 'item' && i.id === 5);
-    const heal = Math.min((5 * cost) + (hasHerbs ? 5 : 0), game.maxHp - game.hp);
+    const hasPellBowl = game.hotbar.some(i => i && i.id === 15);
+    const heal = Math.min((5 * cost) + (hasHerbs ? 5 : 0) + (hasPellBowl ? 3 : 0), game.maxHp - game.hp);
     game.hp += heal;
 
     // Ensure we don't exceed max? (Assuming logic allows overheal or not? usually clamped)
@@ -8446,6 +8489,27 @@ window.handleTrap = function (action) {
     closeCombat();
 };
 
+/**
+ * Checks for death-intercept items before calling gameOver.
+ * Silver Mirror (id:6): survive one fatal blow at 1 HP, then shatter.
+ * Lucky Duck   (id:13): passive +1 LCK per duck — does NOT intercept death;
+ *                       its benefit is tipping combat rolls via calcLuckBonus().
+ * Returns true if death was intercepted (do NOT call gameOver).
+ */
+function tryDeathIntercept() {
+    // Silver Mirror — single-use permanent save
+    const mirrorIdx = game.hotbar.findIndex(i => i && i.id === 6);
+    if (mirrorIdx !== -1) {
+        game.hp = 1;
+        game.hotbar[mirrorIdx] = null;
+        spawnFloatingText('MIRROR SHATTERED! Survived!', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aaddff', 28);
+        logMsg('Silver Mirror: Fatal blow deflected! (Mirror shattered)');
+        updateUI();
+        return true;
+    }
+    return false;
+}
+
 function gameOver() {
     logMsg("DEATH HAS CLAIMED YOU.");
 
@@ -8515,10 +8579,18 @@ window.useItem = function (idx) {
             else logMsg("Conservation: Key saved!");
             updateUI();
         }
-    } else if (item.id === 4) { // Hourglass
-        // Reshuffle room logic would go here, complex to implement cleanly without deck manipulation
-        // For now, let's make it heal 5 HP as a placeholder or skip
-        logMsg("Time shifts... (Effect pending)");
+    } else if (item.id === 4) { // Hourglass — Re-roll Soul Broker wares
+        if (typeof window._shopReroll === 'function') {
+            if (!saveItem) game.hotbar[idx] = null;
+            else logMsg("Conservation: Hourglass saved!");
+            spawnFloatingText('Wares rerolled!', window.innerWidth / 2, window.innerHeight / 2, '#cc88ff');
+            logMsg('The Hourglass winds back — the Broker reshuffles his stock.');
+            window._shopReroll();
+            updateUI();
+        } else {
+            spawnFloatingText('Use at the Soul Broker!', window.innerWidth / 2, window.innerHeight / 2 - 60, '#cc88ff');
+            logMsg('Hourglass: Use this at the Soul Broker shop to re-roll the wares.');
+        }
     } else if (item.id === 7) { // Music Box
         game.combatCards.forEach(c => {
             if (c.type === 'monster') c.val = Math.max(0, c.val - 2);
@@ -8529,6 +8601,24 @@ window.useItem = function (idx) {
         showCombat();
     } else if (item.id === 9) { // Town Portal Scroll
         activatePortalScroll(idx); // handles hotbar removal internally
+
+    } else if (item.id === 10) { // Adventurer's Pack — expand backpack by 3
+        game.backpack.push(null, null, null);
+        game.hotbar[idx] = null;
+        spawnFloatingText('+3 Backpack Slots!', window.innerWidth / 2, window.innerHeight / 2, '#ffcc44', 26);
+        logMsg("Adventurer's Pack: Backpack expanded by 3 slots.");
+        updateUI();
+
+    } else if (item.id === 11) { // Spellbook — must be used during 3D wanderer combat
+        spawnFloatingText('Use in 3D combat!', window.innerWidth / 2, window.innerHeight / 2 - 60, '#aa55ff', 26);
+        logMsg('Spellbook: Open your inventory mid-combat to unleash the arcane blast.');
+
+    } else if (item.id === 14) { // Ranger's Mask — wanderers ignore you for 2 encounters
+        game.maskRooms = (game.maskRooms || 0) + 2;
+        game.hotbar[idx] = null;
+        spawnFloatingText('Disguised! (2 rooms)', window.innerWidth / 2, window.innerHeight / 2, '#aaffee', 26);
+        logMsg("Ranger's Mask: Wanderers will ignore you for 2 room encounters.");
+        updateUI();
     }
 };
 
@@ -11060,12 +11150,24 @@ function startCombat(wanderer, isFlankAttack = false) {
     }
 }
 
+/**
+ * Combined luck bonus for combat rolls:
+ *   floor(stats.lck / 2)  +  1 per Lucky Duck (id:13) in hotbar.
+ * Cap duck contribution to 6 so a full hotbar of ducks can't cascade into
+ * broken numbers if other LCK sources stack too.
+ */
+function calcLuckBonus() {
+    const baseLck = Math.floor((game.stats.lck || 0) / 2);
+    const duckLck = Math.min(6, game.hotbar.filter(i => i && i.id === 13).length);
+    return baseLck + duckLck;
+}
+
 function rollInitiative() {
     combatState.turn = 'busy';
 
-    // Player: d20 + DEX + floor(LCK/2)
+    // Player: d20 + DEX + calcLuckBonus()
     const playerDex = game.stats.dex || 0;
-    const playerLck = Math.floor((game.stats.lck || 0) / 2);
+    const playerLck = calcLuckBonus();
     const playerRoll = Math.ceil(Math.random() * 20) + playerDex + playerLck;
     combatState.playerInitRoll = playerRoll;
 
@@ -11425,7 +11527,8 @@ function spawnCorpse(target) {
     if (loot) spawnLootSprite(deathPos, loot);
 
     // Soul coin drop — always spawns as a separate animated sprite the player must walk over
-    const coinAmount = Math.max(3, str * 3);
+    const _tomeBonus = game.hotbar.some(i => i && i.id === 8) ? 2 : 0; // Iron-Bound Tome passive
+    const coinAmount = Math.max(3, str * 3) + _tomeBonus;
     const coinTex = getClonedTexture('assets/images/animations/soulcoin.png');
     coinTex.repeat.set(1 / 25, 1); // 25-cell horizontal sprite sheet
     coinTex.offset.set(0, 0);
@@ -11731,7 +11834,7 @@ function executePlayerSkill(target) {
         let msg = "";
         let color = '#00ffff';
 
-        const _lck = Math.floor((game.stats.lck || 0) / 2); // Luck to-hit bonus for all skill clashes
+        const _lck = calcLuckBonus(); // Luck to-hit bonus for all skill clashes (stats + ducks)
 
         if (skill.id === 'power_strike') { // Knight
             // +3 Power
@@ -12157,7 +12260,7 @@ function executePlayerAttack(target) {
                 const playerAC = 10 + (game.maxAp || 0);
                 const enemyAC = target.stats.ac || 10;
 
-                const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC, Math.floor((game.stats.lck || 0) / 2));
+                const res = CombatResolver.resolveClash(crossbowPower, enemyPower, playerAC, enemyAC, calcLuckBonus());
                 spawnDice3D(res.attacker.config.sides, res.attacker.total, 0x00cc44, { x: -1.5, y: -0.5 }, "Crossbow", () => {});
                 spawnDice3D(res.defender.config.sides, res.defender.total, 0xff4400, { x: 1.5, y: -0.5 }, enemyDisplayName(target), () => {
                     if (res.winner === 'attacker') {
@@ -12252,7 +12355,7 @@ function executePlayerAttack(target) {
     const enemyWeapon = 4; // Generic enemy weapon power
     const enemyAC = target.stats.ac || 10;
     const enemyPower = enemyStr + enemyWeapon;
-    const luckBonus = Math.floor((game.stats.lck || 0) / 2);
+    const luckBonus = calcLuckBonus();
 
     const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC, luckBonus);
 
@@ -12385,7 +12488,7 @@ function checkCombatEnd(target) {
             }
         }
     } else if (game.hp <= 0) {
-        gameOver();
+        if (!tryDeathIntercept()) gameOver();
     } else {
         setTimeout(startEnemyTurn, 1000);
     }
@@ -12540,6 +12643,32 @@ window.commandUseItem = function (idx) {
             } else {
                 setTimeout(startEnemyTurn, 500);
             }
+            return;
+        }
+
+        if (item.id === 11) { // Spellbook — d8 + STR + LCK AoE to enemies within 3 units
+            const str = CLASS_DATA[game.classId].stats.str || 0;
+            const lckBonus = calcLuckBonus();
+            const roll = Math.ceil(Math.random() * 8);
+            const dmg = roll + str + lckBonus;
+            const playerPos = playerMesh ? playerMesh.position : null;
+            // Target all in 3 unit radius; fall back to all alive if none in range
+            let targets = playerPos
+                ? aliveEnemies.filter(e => e.mesh && e.mesh.position.distanceTo(playerPos) <= 3)
+                : aliveEnemies.slice();
+            if (targets.length === 0) targets = aliveEnemies.slice(0, 1);
+            targets.forEach(e => { e.stats.hp = Math.max(0, e.stats.hp - dmg); });
+            game.hotbar[idx] = null;
+            logCombat(`Spellbook: d8(${roll})+STR(${str})+LCK(${lckBonus}) = ${dmg} arcane dmg to ${targets.length} target(s)!`, '#aa55ff');
+            spawnFloatingText(`ARCANE BLAST! -${dmg}`, window.innerWidth / 2, window.innerHeight / 2 - 40, '#aa55ff', 28);
+            if (playerMesh) {
+                spawn3DImpact(playerMesh.position.clone().add(new THREE.Vector3(0, 1, 0)), 0xaa55ff, 'magic_02.png');
+                targets.forEach(e => { if (e.mesh) spawn3DImpact(e.mesh.position.clone().add(new THREE.Vector3(0, 1, 0)), 0x6600cc, 'circle_03.png'); });
+            }
+            updateUI();
+            if (window.openMainMenu) window.openMainMenu();
+            const spellKill = targets.find(e => e.stats.hp <= 0);
+            if (spellKill) checkCombatEnd(spellKill); else setTimeout(startEnemyTurn, 600);
             return;
         }
 
@@ -12908,7 +13037,7 @@ function executeEnemyRangedAttack(enemy) {
             spawnFloatingText('RESISTED!', window.innerWidth / 2, window.innerHeight / 2, '#88aaff');
             logCombat(`Spell dissipates against your armor! (Roll ${spellTotal} - AC ${playerAC} = 0)`, '#888');
         }
-        if (game.hp <= 0) { gameOver(); } else { endEnemyTurn(); }
+        if (game.hp <= 0) { if (!tryDeathIntercept()) gameOver(); else endEnemyTurn(); } else { endEnemyTurn(); }
     });
 }
 
@@ -12932,7 +13061,7 @@ function executeEnemyAttack(enemy) {
 
             updateUI();
             if (game.hp <= 0) {
-                gameOver();
+                if (!tryDeathIntercept()) gameOver(); else endEnemyTurn();
             } else {
                 endEnemyTurn();
             }
@@ -12960,7 +13089,7 @@ function executeEnemyAttack(enemy) {
         }
 
         const enemyPower = enemyStr + enemyWeapon;
-        const luckBonus = Math.floor((game.stats.lck || 0) / 2);
+        const luckBonus = calcLuckBonus();
 
         const result = CombatResolver.resolveClash(playerPower, enemyPower, playerAC, enemyAC, luckBonus);
 
@@ -12997,7 +13126,7 @@ function executeEnemyAttack(enemy) {
             updateUI();
 
             if (game.hp <= 0) {
-                gameOver();
+                if (!tryDeathIntercept()) gameOver(); else endEnemyTurn();
             } else if (enemy.stats.hp <= 0) {
                 logCombat("Enemy defeated by counter!", '#ffd700');
                 spawnFloatingText("VICTORY!", window.innerWidth / 2, window.innerHeight / 2, '#ffd700');
