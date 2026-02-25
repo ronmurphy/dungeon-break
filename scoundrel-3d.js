@@ -4228,9 +4228,8 @@ function animate3D() {
     // fire immediately while the player is standing on top of it.
     if (!isCombatView && !isEngagingCombat && !isAttractMode && !isEditMode && playerObj && Date.now() >= _azureFlameReadyAt) {
         const azureRoom = game.rooms.find(r => r.id === 0);
-        const modal = document.getElementById('combatModal');
-        const modalOpen = modal && modal.style.display === 'flex';
-        if (azureRoom && !modalOpen) {
+        // Azure Flame always overrides whatever modal is open — it's the only safe point
+        if (azureRoom) {
             const dist = Math.hypot(azureRoom.gx - playerObj.position.x, azureRoom.gy - playerObj.position.z);
             if (dist < 3.0) {
                 console.log("%c--- AZURE FLAME PROXIMITY ---", "color:#44aaff; font-weight:bold;");
@@ -4255,6 +4254,7 @@ function animate3D() {
     }
 
     // Boss Room proximity trigger — fires when player approaches isFinal room and all enemies are dead
+    // Guard: enemy counter must show 0 (wanderers.length === 0) — checked inside
     if (!isCombatView && !isAttractMode && !isEditMode && !game.isBossFight && playerObj
         && !(window._bossPromptCooldown && Date.now() < window._bossPromptCooldown)) {
         const finalRoom = game.rooms ? game.rooms.find(r => r.isFinal) : null;
@@ -6680,6 +6680,8 @@ window.handleAzureFlameChoice = function(choice) {
     }
     // Grace period so the re-trigger can't fire until the slide finishes
     _azureFlameReadyAt = Date.now() + 2000;
+    // Prevent boss prompt from immediately chaining after azure flame is dismissed
+    window._bossPromptCooldown = Date.now() + 3000;
     // Azure Flame marker is NEVER sunk/cleared — always present
 };
 
@@ -10269,21 +10271,18 @@ function loadGame() {
     // Start Audio
     updateMusicForFloor();
 
-    _azureFlameReadyAt = Date.now() + 30000; // Keep proximity from re-firing immediately after we show it directly
+    _azureFlameReadyAt = Date.now() + 30000; // Proximity disabled — we show it directly below
+    window._bossPromptCooldown = Date.now() + 3000; // Prevent boss from firing before player moves
     updateUI();
     logMsg("Game Loaded.");
 
     // If loaded into a room that isn't cleared, trigger it
     enterRoom(game.currentRoomIdx);
 
-    // BSP: always show the Azure Flame prompt on load — it's the save/refuel point
-    // (proximity can't reliably fire since the player may be anywhere on the floor)
+    // BSP: always show the Azure Flame prompt on load (it's the save/refuel point)
     if (game.useBSP && !game.campMap) {
         const azureRoom = game.rooms.find(r => r.id === 0);
-        if (azureRoom) {
-            game.activeRoom = azureRoom;
-            showAzureFlamePrompt();
-        }
+        if (azureRoom) { game.activeRoom = azureRoom; showAzureFlamePrompt(); }
     }
 }
 
