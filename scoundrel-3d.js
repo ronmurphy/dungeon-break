@@ -116,6 +116,58 @@ let destinationMarker = null; // Gold marker for click destination
 let playerRotateTween = null; // Tween for smooth turning
 let savedFogDensity = 0.045;
 
+// ── CSS Fog Overlay helpers ───────────────────────────────────────────────────
+function _fogEl()   { return document.getElementById('fogOverlay'); }
+function _fogTint() { return document.getElementById('fogTint'); }
+
+function _fogOverlayBSP() {
+    const el = _fogEl(); if (!el) return;
+    el.style.display = 'block';
+    requestAnimationFrame(() => { el.style.transition = 'opacity 2s ease'; el.style.opacity = '0.25'; });
+    const t = _fogTint(); if (t) t.style.backgroundColor = 'rgba(20,16,40,0.35)';
+}
+function _fogOverlayShowCamp() {
+    const el = _fogEl(); if (!el) return;
+    el.style.display = 'block'; el.style.transition = 'opacity 3s ease'; el.style.opacity = '0';
+}
+function _fogOverlayHide() {
+    const el = _fogEl(); if (!el) return;
+    el.style.transition = 'opacity 0.5s ease'; el.style.opacity = '0';
+    setTimeout(() => { if (parseFloat(el.style.opacity) < 0.01) el.style.display = 'none'; }, 600);
+}
+function _fogOverlayRestoreFromBattle() {
+    if (game.campMap) { _fogOverlayShowCamp(); return; }
+    if (game.useBSP)  { _fogOverlayBSP();      return; }
+    _fogOverlayHide();
+}
+// Show/hide torch widget and inventory block based on active map type.
+// Called from updateAtmosphere (covers BSP + camp) and enterBossArena.
+function _syncTorchUI() {
+    const show = !!(game.useBSP || game.campMap || inBattleIsland);
+    const _btn = document.getElementById('torchToggleImg');
+    const _wdg = document.getElementById('torchFuelWidget');
+    const _inv = document.getElementById('torchInventoryBlock');
+    if (_btn) _btn.style.display = show ? 'block' : 'none';
+    if (_wdg) _wdg.style.cursor  = show ? 'pointer' : 'default';
+    if (_inv) _inv.style.display  = show ? 'flex' : 'none';
+}
+// Watch modals so CSS can suppress fog with body.modal-open
+(function _initFogModalObserver() {
+    const _watchIds = ['combatModal', 'avatarModal', 'startMenuModal', 'attractionOverlay'];
+    const _isVisible = el => el && el.style.display !== '' && el.style.display !== 'none';
+    const _refresh = () => {
+        const anyOpen = _watchIds.some(id => { const el = document.getElementById(id); return _isVisible(el); });
+        document.body.classList.toggle('modal-open', anyOpen);
+    };
+    const _observer = new MutationObserver(_refresh);
+    const _attach = () => {
+        _watchIds.forEach(id => { const el = document.getElementById(id); if (el) _observer.observe(el, { attributes: true, attributeFilter: ['style'] }); });
+        _refresh();
+    };
+    if (document.readyState === 'loading') { document.addEventListener('DOMContentLoaded', _attach); } else { _attach(); }
+}());
+// ── End CSS Fog Overlay helpers ───────────────────────────────────────────────
+
 // Expose exit function globally
 window.exitBattleIsland = function () {
     hideCombatMenu();
@@ -172,7 +224,7 @@ window.exitBattleIsland = function () {
     activeWanderer = null;
 
     document.getElementById('combatModal').style.display = 'none';
-    setTimeout(() => { if (scene.fog) scene.fog.density = savedFogDensity; }, 200);
+    setTimeout(_fogOverlayRestoreFromBattle, 300);
     spawnFloatingText("ESCAPED!", window.innerWidth / 2, window.innerHeight / 2, '#00ff00', 40);
 
     exitCombatView();
@@ -224,6 +276,7 @@ window.testDungeon       = function (floor = 1) {
     game.visitedWaypoints = [];
     isAttractMode = false;
     game.useBSP = true;
+    game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     closeCombat();
     clear3DScene(); init3D(); preloadFXTextures();
     const bsp = generateBSPFloor(scene, floor, _rngMulberry32(floorSeed(floor)), loadTexture, getClonedTexture);
@@ -262,6 +315,7 @@ window.goMap = function (map) {
         game.campMap = false;
         game.visitedWaypoints = [];
         isAttractMode = false;
+        game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
         closeCombat();
         clear3DScene(); init3D(); preloadFXTextures();
     };
@@ -279,8 +333,8 @@ window.goMap = function (map) {
         globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 50, false, null, true);
         extractCAGrid(globalFloorMesh);
         updateAtmosphere(floor);
-        // Camp: no fog — the island is open air, player should see the whole terrain
-        scene.fog = null;
+        // Camp: fog overlay driven by updateCampDayNight (starts at 0 opacity)
+        _fogOverlayShowCamp();
         scene.background = new THREE.Color(0x0a0d18); // Clear dark-blue night sky
         initWanderers();
         updateUI();
@@ -438,7 +492,7 @@ window.whereAmI = function() {
 // Torch toggle — the 🔦 button in the inventory bar (camp maps only)
 window._toggleTorch = function(e) {
     if (e) { e.stopPropagation(); e.preventDefault(); } // Don't bubble — prevents accidental on3DClick
-    if (!game.campMap) return;       // Only works on camp island
+    if (!game.useBSP && !game.campMap && !inBattleIsland) return; // Only on active 3D maps
     if (isCombatView || isEngagingCombat) return; // Never toggle during combat
     if (game.torchCharge <= 0) return; // Can't relight a dead torch
     game.torchEnabled = !game.torchEnabled;
@@ -1769,11 +1823,11 @@ function init3D() {
         // Already initialized, just need new scene/camera
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x080616);
-        scene.fog = new THREE.FogExp2(0x080616, 0.04);
+        scene.fog = null; // CSS overlay handles atmosphere
     } else {
         scene = new THREE.Scene();
         scene.background = new THREE.Color(0x080616);
-        scene.fog = new THREE.FogExp2(0x080616, 0.04);
+        scene.fog = null; // CSS overlay handles atmosphere
 
         renderer = new THREE.WebGLRenderer({ 
             antialias: true,
@@ -1838,12 +1892,12 @@ function init3D() {
     hemisphereLight = new THREE.HemisphereLight(0x1a0d30, 0x050010, 0.55);
     scene.add(hemisphereLight);
     // Initial Torch
-    torchLight = new THREE.PointLight(0xffaa44, 300, 40);
+    torchLight = new THREE.PointLight(0xd4af37, 300, 40);
     torchLight.castShadow = false; // Shadows owned by DirectionalLight — PointLight shadow = 6 cubemap passes/frame
     scene.add(torchLight);
 
-    // Fog of War — deep indigo, not pure black; has color depth without being bright
-    scene.fog = new THREE.FogExp2(0x0a0818, 0.05);
+    // Fog of War — handled by CSS overlay (Three.js fog disabled)
+    scene.fog = null;
 
     // Load 3D Player Model
     loadPlayerModel();
@@ -3397,33 +3451,20 @@ function update3DScene() {
         }
 
         let vRad = 2.5;
-        // Check for Spectral Lantern (ID 1)
+        // Check for Spectral Lantern (ID 1) — expands reveal radius only, no light colour change
         const hasLantern = game.hotbar.some(i => i && i.type === 'item' && i.id === 1);
 
         // Check for Map (ID 3)
         const hasMap = game.hotbar.some(i => i && i.type === 'item' && (i.id === 3 || i.id === 12));
 
-        // Torch Logic based on Fuel
-        // Min baseDist 50: must reach camera (~35 units away) so floor tiles are lit even when drained
-        // Min baseInt 2000: dungeon must be readable even at 0% charge; full charge (100) gives 5200
-        const baseDist = Math.max(65, 25 + (game.torchCharge * 1.5)); // Increased min range to cut through fog
-        const baseInt  = Math.max(2500, 500 + (game.torchCharge * 50)); // Increased min brightness
+        // Torch Logic based on Fuel — gold always, no weapon-tier branching
+        const baseDist = Math.max(65, 25 + (game.torchCharge * 1.5));
+        const baseInt  = Math.max(2500, 500 + (game.torchCharge * 50));
 
-        if (game.equipment.weapon) {
-            if ((game.torchEnabled && game.torchCharge > 0) && (game.equipment.weapon.val >= 8 || hasLantern)) {
-                torchLight.color.setHex(0x00ccff); torchLight.intensity = baseInt * 1.6;
-                torchLight.distance = baseDist * 1.5; vRad = 8.0;
-            } else if (game.equipment.weapon.val >= 6 || hasLantern) {
-                torchLight.color.setHex(0xd4af37); torchLight.intensity = baseInt * 1.3;
-                torchLight.distance = baseDist * 1.2; vRad = 5.0;
-            } else {
-                torchLight.color.setHex(0xffaa44); torchLight.intensity = baseInt * 1.1;
-                torchLight.distance = baseDist; vRad = 3.5;
-            }
-        } else {
-            torchLight.color.setHex(0xffaa44); torchLight.intensity = baseInt;
-            torchLight.distance = baseDist * 0.8; vRad = 2.5;
-        }
+        torchLight.color.setHex(0xd4af37);
+        torchLight.intensity = baseInt;
+        torchLight.distance  = baseDist;
+        vRad = hasLantern ? 6.0 : 3.5;
 
         // Torch Flicker — more dramatic against cool ambient; occasional deep dip
         const flicker = 1.0 + (Math.random() - 0.5) * 0.28 + (Math.random() < 0.04 ? -0.18 : 0);
@@ -3439,8 +3480,8 @@ function update3DScene() {
         // Note: This check is cheap in the loop map
         // if (audio.initialized) audio.startLoop('torch', 'torch_loop', { volume: 0 });
 
-        // Camp torch toggle: player can extinguish the torch (creates no shadows, blocks shadow spawns)
-        if (game.campMap && !game.torchEnabled) {
+        // Torch toggle: player can extinguish the torch on any map
+        if (!game.torchEnabled) {
             torchLight.intensity = 0;
             if (torchGlowOuter) torchGlowOuter.visible = false;
             if (torchGlowInner) torchGlowInner.visible = false;
@@ -3543,6 +3584,7 @@ function update3DScene() {
                     const mat = new THREE.MeshStandardMaterial({ visible: false });
                     const mesh = new THREE.Mesh(geo, mat);
                     mesh.position.set(r.gx, r.floorHeight || 0, r.gy);
+                    mesh.userData = { roomId: r.id }; // Required for click-to-enter detection
                     scene.add(mesh);
                     const configKey = modelPath.split('/').pop();
                     loadGLB(modelPath, (model) => {
@@ -4314,32 +4356,39 @@ function animate3D() {
         // Gentle irregular flicker (slower and subtler than the torchLight flicker)
         const flicker = 1.0 + Math.sin(Date.now() * 0.0011) * 0.06 + Math.sin(Date.now() * 0.0023) * 0.04;
 
-        // Opacity: full fuel = 0.60, empty = 0.04 (barely a ghost)
-        torchGlowOuter.material.opacity = (0.04 + fuelPct * 0.56) * flicker;
-        // Inner bright centre vanishes faster — gone before torch runs out
-        torchGlowInner.material.opacity = Math.max(0, (fuelPct - 0.1) * 0.44) * flicker;
-
-        // Colour: warm amber (#ffbb44) at full → dim red-orange at low
-        const g = 0.30 + fuelPct * 0.43; // 0.30 → 0.73
-        const b = fuelPct * 0.12;        // 0    → 0.12
-        torchGlowOuter.material.color.setRGB(1.0, g, b);
-
-        // Position just above the floor — the inner sits one sliver higher to always win z
-        const groundY = playerObj.position.y + 0.05;
-        torchGlowOuter.position.set(playerObj.position.x, groundY,       playerObj.position.z);
-        torchGlowInner.position.set(playerObj.position.x, groundY + 0.01, playerObj.position.z);
-
-        // Visibility: hide in waypoints, attract mode, and during combat (battle island)
         const _cr = game.rooms ? game.rooms.find(r => r.id === game.currentRoomIdx) : null;
         const _glowHide = (_cr && _cr.isWaypoint) || isAttractMode || isCombatView;
-        torchGlowOuter.visible = !_glowHide;
-        torchGlowInner.visible = !_glowHide;
-    }
 
-    // Update Movement Indicator Position
-    if (movementRangeIndicator && movementRangeIndicator.visible && playerObj) {
-        movementRangeIndicator.position.set(playerObj.position.x, playerObj.position.y + 0.1, playerObj.position.z);
-        // Pulse opacity slightly
+        if (!game.torchEnabled) {
+            // Night-vision aura — dim cool blue ring so the player isn't completely blind
+            torchGlowOuter.material.opacity = 0.13 + Math.sin(Date.now() * 0.0008) * 0.03;
+            torchGlowOuter.material.color.setRGB(0.35, 0.75, 1.0); // pale blue
+            torchGlowInner.material.opacity = 0;
+            const groundY = playerObj.position.y + 0.05;
+            torchGlowOuter.position.set(playerObj.position.x, groundY,       playerObj.position.z);
+            torchGlowInner.position.set(playerObj.position.x, groundY + 0.01, playerObj.position.z);
+            torchGlowOuter.visible = !_glowHide;
+            torchGlowInner.visible = false;
+        } else {
+            // Opacity: full fuel = 0.60, empty = 0.04 (barely a ghost)
+            torchGlowOuter.material.opacity = (0.04 + fuelPct * 0.56) * flicker;
+            // Inner bright centre vanishes faster — gone before torch runs out
+            torchGlowInner.material.opacity = Math.max(0, (fuelPct - 0.1) * 0.44) * flicker;
+
+            // Colour: warm gold (#d4af37) at full → dim red-orange at low
+            const g = 0.30 + fuelPct * 0.43; // 0.30 → 0.73
+            const b = fuelPct * 0.12;        // 0    → 0.12
+            torchGlowOuter.material.color.setRGB(1.0, g, b);
+
+            // Position just above the floor — the inner sits one sliver higher to always win z
+            const groundY = playerObj.position.y + 0.05;
+            torchGlowOuter.position.set(playerObj.position.x, groundY,       playerObj.position.z);
+            torchGlowInner.position.set(playerObj.position.x, groundY + 0.01, playerObj.position.z);
+
+            // Visibility: hide in waypoints, attract mode, and during combat (battle island)
+            torchGlowOuter.visible = !_glowHide;
+            torchGlowInner.visible = !_glowHide;
+        }
         const pulse = 0.3 + Math.sin(Date.now() * 0.005) * 0.1;
         movementRangeIndicator.material.opacity = pulse;
     }
@@ -5255,6 +5304,27 @@ function updateCampDayNight(dt) {
         _invLbl.style.color = _torchOn ? '#ffaa44' : '#666';
     }
 
+    // Sync CSS fog overlay opacity to time of day
+    {
+        const _fEl = _fogEl(); const _fTint = _fogTint();
+        if (_fEl) {
+            let _fo = 0;
+            if      (campTime < 0.21)  _fo = 0.65;
+            else if (campTime < 0.27)  _fo = 0.65 * (1 - (campTime - 0.21) / 0.06);
+            else if (campTime < 0.72)  _fo = 0;
+            else if (campTime < 0.79)  _fo = 0.50 * ((campTime - 0.72) / 0.07);
+            else                       _fo = 0.50 + 0.15 * ((campTime - 0.79) / 0.21);
+            _fEl.style.display = 'block'; _fEl.style.transition = ''; _fEl.style.opacity = _fo.toFixed(3);
+            if (_fTint) {
+                let _tc;
+                if      (campTime >= 0.68 && campTime < 0.83) _tc = 'rgba(100,28,6,0.45)';
+                else if (campTime >= 0.21 && campTime < 0.32) _tc = 'rgba(75,26,5,0.35)';
+                else                                           _tc = 'rgba(8,6,28,0.50)';
+                _fTint.style.backgroundColor = _fo > 0.01 ? _tc : 'transparent';
+            }
+        }
+    }
+
     // Sync camp time indicator icon + colour
     _syncTimeIndicator();
 }
@@ -5645,7 +5715,8 @@ function updateAtmosphere(floor) {
     const MIN_FOG_FAR = 90; // Increased to push fog back further
     const effectiveFogFar = Math.max(farDist, MIN_FOG_FAR);
     const density = -Math.log(visibilityAtFar) / effectiveFogFar;
-    scene.fog = new THREE.FogExp2(fogColor, isEditMode ? 0 : density);
+    scene.fog = null; // Three.js fog disabled — CSS overlay used instead
+    if (!game.campMap) _fogOverlayBSP();
     // --- END DYNAMIC FOG ---
 
     // Ambient stays cool purple — theme tint bleeds in slightly but never goes white
@@ -5673,6 +5744,8 @@ function updateAtmosphere(floor) {
     // Show time indicator on all maps
     const _atiEl = document.getElementById('campTimeIndicator');
     if (_atiEl) _atiEl.style.display = 'flex';
+    // Sync torch widget visibility (BSP, camp, battle island all show it)
+    _syncTorchUI();
 }
 
 function clear3DScene() {
@@ -6007,6 +6080,7 @@ function finalizeStartDive() {
     recalcAP();
     game.ap = game.maxAp; // Fill AP
 
+    game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
@@ -6212,6 +6286,7 @@ function descendToNextFloor() {
     game.currentTrack = null; // Force music re-eval
     game.visitedWaypoints = [];
 
+    game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     clear3DScene(); init3D();
     // Preload FX textures for particle effects
     preloadFXTextures();
@@ -7260,6 +7335,7 @@ function enterBossArena() {
             savedPlayerPos.copy(dungeonReturnPos);
             inBattleIsland = true;
             window.inBattleIsland = true;
+            _fogOverlayHide();
 
             // Ensure the avoid/flee button is hidden — no retreat from boss fight
             document.getElementById('modalAvoidBtn').style.display = 'none';
@@ -9087,7 +9163,10 @@ function _returnViaCampPortal() {
     const _tBtnI = document.getElementById('torchInventoryBlock'); if (_tBtnI)   _tBtnI.style.display = 'none';
     if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
 
+    const _savedRooms = game.rooms; // Preserve room state across the init3D synchronous frame
+    game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     clear3DScene(); init3D(); preloadFXTextures();
+    game.rooms = _savedRooms; // Restore so BSP/CA rebuild and enterRoom can find rooms
 
     if (state.useBSP) {
         const bsp = generateBSPFloor(scene, state.floor, _rngMulberry32(floorSeed(state.floor)), loadTexture, getClonedTexture);
@@ -10060,10 +10139,13 @@ function loadGame() {
     const contBtn = document.getElementById('continueGameBtn');
     if (contBtn) contBtn.style.display = 'none';
 
-    // Re-Initialize 3D
+    // Re-Initialize 3D — preserve rooms from save across the synchronous animate3D() frame in init3D()
+    const _savedRooms = game.rooms;
+    game.rooms = []; // Prevent stale rooms rendering in the synchronous animate3D() call inside init3D()
     clear3DScene();
     init3D();
     preloadFXTextures();
+    game.rooms = _savedRooms; // Restore so BSP rebuild + enterRoom can find rooms
 
     // Detect map type from save — default BSP for old saves that lack the flag
     const savedCampMap = data.campMap || false;
@@ -10082,7 +10164,7 @@ function loadGame() {
         globalFloorMesh = generateFloorCA(scene, 1, game.rooms, corridorMeshes, decorationMeshes, treePositions, loadTexture, getClonedTexture, 50, false, null, true);
         extractCAGrid(globalFloorMesh);
         updateAtmosphere(1);
-        scene.fog = null;
+        _fogOverlayShowCamp();
         scene.background = new THREE.Color(0x0a0d18);
         // Day/night state — resume mid-cycle (dawn so player sees the island)
         campTime = 0.22; _dawnCleanPending = false;
@@ -11484,12 +11566,8 @@ function startCombat(wanderer, isFlankAttack = false) {
     if (combatGroup.parent !== scene) scene.add(combatGroup);
     while (combatGroup.children.length > 0) combatGroup.remove(combatGroup.children[0]);
 
-    // Clear fog significantly during combat — near-black fog at 0x0a0818 makes the scene dark
-    // at camera distances of ~35 units. 0.008 gives 76% visibility (vs 50% at 0.02).
-    if (scene.fog) {
-        savedFogDensity = scene.fog.density;
-        scene.fog.density = 0.008;
-    }
+    // Three.js fog disabled — CSS overlay remains unchanged during on-map combat
+    // (savedFogDensity no longer used for scene.fog manipulation)
 
     if (controls) { controls.enableRotate = true; controls.enabled = true; }
     if (playerMoveTween) { playerMoveTween.stop(); playerMoveTween = null; }

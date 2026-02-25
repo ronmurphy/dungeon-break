@@ -1850,6 +1850,37 @@ body.qperf #combatTracker {
     left: auto !important;
 }
 
+/* ── CSS Fog Overlay ─────────────────────────────────────────── */
+@keyframes fogDriftA {
+    0%   { transform: translate(0%,0%) rotate(0deg); }
+    25%  { transform: translate(3%,2%) rotate(2deg); }
+    50%  { transform: translate(-1%,4%) rotate(-1deg); }
+    75%  { transform: translate(-3%,1%) rotate(1.5deg); }
+    100% { transform: translate(0%,0%) rotate(0deg); }
+}
+@keyframes fogDriftB {
+    0%   { transform: translate(0%,0%) rotate(0deg) scaleX(-1); }
+    25%  { transform: translate(-3%,-2%) rotate(-2deg) scaleX(-1); }
+    50%  { transform: translate(2%,-4%) rotate(1.5deg) scaleX(-1); }
+    75%  { transform: translate(3%,-1%) rotate(-1deg) scaleX(-1); }
+    100% { transform: translate(0%,0%) rotate(0deg) scaleX(-1); }
+}
+#fogOverlay {
+    position: fixed; inset: 0; pointer-events: none; z-index: 50;
+    overflow: hidden; display: none; opacity: 0;
+    transition: opacity 3s ease;
+}
+#fogTint { position: absolute; inset: 0; transition: background-color 8s ease; }
+.fog-layer {
+    position: absolute; inset: -25%; width: 150%; height: 150%;
+    background-image: url('assets/images/textures/large-smoke.png');
+    background-size: 60% 60%; background-repeat: repeat; opacity: 0.55;
+}
+#fogLayerA { animation: fogDriftA 50s ease-in-out infinite; }
+#fogLayerB { animation: fogDriftB 70s ease-in-out infinite; opacity: 0.45; }
+body.modal-open #fogOverlay { opacity: 0 !important; transition: opacity 0.25s ease !important; }
+/* ── End CSS Fog Overlay ─────────────────────────────────────── */
+
 /* ≤1080px wide: tighter scaling to avoid overlap */
 @media (max-width: 1080px) {
     body.qperf #gameplayInventoryBar.gothic-hud-active {
