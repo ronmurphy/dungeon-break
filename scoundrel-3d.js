@@ -4429,8 +4429,15 @@ function animate3D() {
         if (!isAttractMode) controls.update();
     }
 
-    // Camp day/night cycle (sky colour, sun arc, spawn timers) — only when on the camp island
-    if (game.campMap && !isAttractMode) updateCampDayNight(dt);
+    // Camp day/night cycle — full effects on camp map, time+indicator on all maps
+    if (!isAttractMode) {
+        if (game.campMap) {
+            updateCampDayNight(dt);
+        } else {
+            campTime = (campTime + dt / 600) % 1.0;
+            _syncTimeIndicator();
+        }
+    }
 
     // Town Portal — trigger return trip when player steps into the camp-side portal
     if (_portalState && _portalState.campPortal && game.campMap && playerMesh &&
@@ -5120,6 +5127,28 @@ function updatePlayerMovement(dt) {
 // ── Camp day/night cycle ──────────────────────────────────────────────────────
 // 30 min full cycle (15 min day + 15 min night including dawn/dusk/twilight).
 // campTime: 0=midnight, 0.25=dawn, 0.5=noon, 0.75=dusk.
+// Sync the campTimeIndicator widget (icon, colour, border) to current campTime.
+// Called every frame on all map types.
+function _syncTimeIndicator() {
+    const _ctiEl   = document.getElementById('campTimeIndicator');
+    const _ctiIcon = document.getElementById('campTimeIcon');
+    if (!_ctiEl || !_ctiIcon) return;
+    const _isDawn  = campTime >= 0.21 && campTime < 0.28;
+    const _isDusk  = campTime >= 0.72 && campTime < 0.79;
+    const _isNight = campTime < 0.21  || campTime >= 0.79;
+    let _icon, _color, _border;
+    if (_isNight) {
+        _icon = 'dark_mode';   _color = '#99aadd'; _border = '#223';
+    } else if (_isDawn || _isDusk) {
+        _icon = 'wb_twilight'; _color = '#ff9944'; _border = '#553311';
+    } else {
+        _icon = 'light_mode';  _color = '#ffdd44'; _border = '#554400';
+    }
+    _ctiIcon.textContent     = _icon;
+    _ctiIcon.style.color     = _color;
+    _ctiEl.style.borderColor = _border;
+}
+
 function updateCampDayNight(dt) {
     const FULL_DAY_S =  600 //1800;
     campTime = (campTime + dt / FULL_DAY_S) % 1.0;
@@ -5227,30 +5256,7 @@ function updateCampDayNight(dt) {
     }
 
     // Sync camp time indicator icon + colour
-    const _ctiEl   = document.getElementById('campTimeIndicator');
-    const _ctiIcon = document.getElementById('campTimeIcon');
-    if (_ctiEl && _ctiIcon) {
-        let _icon, _color, _border;
-        const _isDawn = campTime >= 0.21 && campTime < 0.28;
-        const _isDusk = campTime >= 0.72 && campTime < 0.79;
-        const _isNight = campTime < 0.21 || campTime >= 0.79;
-        if (_isNight) {
-            _icon   = 'dark_mode';
-            _color  = '#99aadd';
-            _border = '#223';
-        } else if (_isDawn || _isDusk) {
-            _icon   = 'wb_twilight';
-            _color  = '#ff9944';
-            _border = '#553311';
-        } else {
-            _icon   = 'light_mode';
-            _color  = '#ffdd44';
-            _border = '#554400';
-        }
-        _ctiIcon.textContent        = _icon;
-        _ctiIcon.style.color        = _color;
-        _ctiEl.style.borderColor    = _border;
-    }
+    _syncTimeIndicator();
 }
 
 // Spawn a single wanderer on the camp island.
@@ -5664,6 +5670,9 @@ function updateAtmosphere(floor) {
     BattleIsland.generate(theme);
     currentWeather = theme.weather || 'none';
     weatherParticles = []; // Reset particles on floor change
+    // Show time indicator on all maps
+    const _atiEl = document.getElementById('campTimeIndicator');
+    if (_atiEl) _atiEl.style.display = 'flex';
 }
 
 function clear3DScene() {
@@ -5702,8 +5711,6 @@ function clear3DScene() {
     if (_tbcW) { _tbcW.style.cursor = 'default'; _tbcW.style.borderColor = '#444'; _tbcW.style.opacity = '1'; }
     const _tbci = document.getElementById('torchInventoryBlock');
     if (_tbci) _tbci.style.display = 'none';
-    const _ctiH = document.getElementById('campTimeIndicator');
-    if (_ctiH) _ctiH.style.display = 'none';
     Minimap.clear();
     dungeonDustMotes = null; // scene.remove already happened via while loop above
 
@@ -7163,6 +7170,8 @@ function enterBossArena() {
     if (game.activeRoom) game.activeRoom.state = 'boss_active';
     document.getElementById('combatModal').style.display = 'none';
     logMsg("You step into the Guardian's Lair...");
+    const _biCti = document.getElementById('campTimeIndicator');
+    if (_biCti) _biCti.style.display = 'flex';
 
     // Save dungeon return position BEFORE moving the player
     const dungeonReturnPos = playerMesh ? playerMesh.position.clone() : new THREE.Vector3();
@@ -9076,7 +9085,6 @@ function _returnViaCampPortal() {
     const _tBtn = document.getElementById('torchToggleImg');       if (_tBtn)    _tBtn.style.display = 'none';
     const _tWidget = document.getElementById('torchFuelWidget');   if (_tWidget) _tWidget.style.cursor = 'default';
     const _tBtnI = document.getElementById('torchInventoryBlock'); if (_tBtnI)   _tBtnI.style.display = 'none';
-    const _cti = document.getElementById('campTimeIndicator');     if (_cti)     _cti.style.display = 'none';
     if (_sunLight) { scene.remove(_sunLight); _sunLight = null; }
 
     clear3DScene(); init3D(); preloadFXTextures();
