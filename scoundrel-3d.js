@@ -6708,8 +6708,8 @@ window.handleAzureFlameChoice = function(choice) {
         game.torchCharge = 100;
         torchFlashBoost = 5000; // Visible burst as the flame surges back to full
         
-        console.log("%c--- AZURE FLAME REFUEL ---", "color:#44aaff; font-weight:bold;");
-        console.log("New Torch Level:", game.torchCharge);
+        // console.log("%c--- AZURE FLAME REFUEL ---", "color:#44aaff; font-weight:bold;");
+        // console.log("New Torch Level:", game.torchCharge);
         // Calculate expected base intensity since the render loop hasn't updated the light object yet
         const baseInt = Math.max(2000, 200 + (game.torchCharge * 50));
         console.log("New Brightness Level (Base Calculated):", baseInt);
