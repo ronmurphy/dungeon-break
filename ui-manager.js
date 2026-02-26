@@ -41,6 +41,7 @@ export function showManorPrompt() {
     const overlay = document.getElementById('combatModal');
     overlay.style.display = 'flex';
     overlay.style.pointerEvents = 'auto';
+    overlay.style.background = 'rgba(0,0,0,0.85)';
     document.getElementById('combatContainer').style.display = 'none';
     document.getElementById('bonfireUI').style.display = 'none';
 
