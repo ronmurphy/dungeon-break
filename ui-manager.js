@@ -1452,7 +1452,10 @@ const COMBAT_PAGES = {
     tactics_2: [
         { name: 'Trip', icon: 'icon_attack.png', fn: "window.commandTrip()" },
         { name: '2nd Wind', icon: 'icon_wait.png', fn: "window.commandSecondWind()" },
-        null, null, null, null, 
+        { name: 'Counter', icon: 'icon_defend.png', fn: "window.commandCounter()" },
+        { name: 'Pummel', icon: 'icon_attack.png', fn: "window.commandPummel()" },
+        { name: 'AutoPotion', icon: 'icon_item.png', fn: "window.commandAutoPotion()" },
+        null, 
         { name: '< Prev', icon: 'icon_flee.png', fn: "window.openTacticsMenu()" },
         null,
         { name: 'Back', icon: 'icon_flee.png', fn: "window.openMainMenu()" }

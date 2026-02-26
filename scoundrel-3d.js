@@ -899,7 +899,9 @@ let combatState = {
     activeEnemyIdx: 0, // Which enemy in the list is currently taking their turn
     distractionPoint: null, // Bard's Distract: enemies move here instead of the player for one round
     siphonTurns: 0, // Necromancer's Siphon Life: attacks drain HP for N turns
-    tempHp: 0 // Temporary HP from Brace
+    tempHp: 0, // Temporary HP from Brace
+    isCountering: false, // Counter Stance active
+    autoPotionActive: false // AutoPotion tactic active
 };
 
 let savedMapState = null; // For True Dungeon recursion
@@ -4780,6 +4782,7 @@ function animate3D() {
         // 34+ units from any ground object, and camera.zoom division makes it worse.
         const _lodPlayerPos = playerMesh ? playerMesh.position : null;
         const _lodFar = (gameSettings.lod && gameSettings.lod.far) || 80;
+        const _lodTmpVec = new THREE.Vector3(); // reused per-frame, avoids per-wanderer alloc
         wanderers.forEach(w => {
             // Dead wanderers (mesh hidden by spawnCorpse) — no point animating
             if (w.mesh && !w.mesh.visible) return;
@@ -4787,7 +4790,8 @@ function animate3D() {
             if (w.mesh && w.mesh.isLOD) {
                 const levels = w.mesh.levels;
                 if (_lodPlayerPos && levels.length >= 2) {
-                    const pd = _lodPlayerPos.distanceTo(w.mesh.position);
+                    w.mesh.getWorldPosition(_lodTmpVec);
+                    const pd = _lodPlayerPos.distanceTo(_lodTmpVec);
                     const useBox = pd >= _lodFar;
                     levels[0].object.visible = !useBox; // high-poly model
                     levels[1].object.visible = useBox;  // placeholder box
@@ -5690,7 +5694,8 @@ function createEmojiSprite(emoji, size = 1.5) {
 
 function takeDamage(amount) {
     let remaining = amount;
-    const protectionFloor = Object.values(game.equipment).filter(i => i && i.type === 'armor').length;
+    const armorCount = Object.values(game.equipment).filter(i => i && i.type === 'armor').length;
+    const protectionFloor = armorCount > 0 ? 1 : 0;
 
     if (game.ap > protectionFloor) {
         // We have pool above the floor
@@ -5719,6 +5724,51 @@ function takeDamage(amount) {
     
     if (remaining > 0) {
         spawnHudFloatingText(`-${remaining}`, '#ff0000');
+    }
+
+    // --- AUTO POTION LOGIC ---
+    if (combatState.autoPotionActive && game.hp <= 8) {
+        // Find all potions in hotbar and backpack
+        const hotbarPotions = game.hotbar.map((item, idx) => ({ item, idx, loc: 'hotbar' })).filter(x => x.item && x.item.type === 'potion');
+        const backpackPotions = game.backpack.map((item, idx) => ({ item, idx, loc: 'backpack' })).filter(x => x.item && x.item.type === 'potion');
+        
+        let chosen = null;
+        // Prefer hotbar, then backpack
+        if (hotbarPotions.length > 0) {
+            chosen = hotbarPotions[Math.floor(Math.random() * hotbarPotions.length)];
+        } else if (backpackPotions.length > 0) {
+            chosen = backpackPotions[Math.floor(Math.random() * backpackPotions.length)];
+        }
+
+        if (chosen) {
+            const potionVal = chosen.item.val;
+            let heal = 0;
+            let msg = "";
+
+            if (game.hp <= 0) {
+                // Death Save: Revive with HALF the potion's value
+                heal = Math.floor(potionVal / 2);
+                game.hp = heal; // Set HP directly to positive value
+                msg = `AutoPotion saves you! (Revived with ${heal} HP)`;
+                spawnFloatingText("REVIVED!", window.innerWidth / 2, window.innerHeight / 2, '#ff8888');
+            } else {
+                // Normal Trigger: Full heal
+                heal = Math.min(potionVal, game.maxHp - game.hp);
+                game.hp += heal;
+                msg = `AutoPotion triggered! (+${heal} HP)`;
+                spawnFloatingText(`AUTO +${heal}`, window.innerWidth / 2, window.innerHeight / 2, '#ff8888');
+            }
+
+            // Consume Potion
+            if (chosen.loc === 'hotbar') game.hotbar[chosen.idx] = null;
+            else game.backpack[chosen.idx] = null;
+
+            logCombat(msg, '#ff8888');
+            combatState.autoPotionActive = false; // Effect consumed
+        } else {
+            logCombat("AutoPotion failed! No potions found!", '#ff0000');
+            combatState.autoPotionActive = false; // Failed, effect ends
+        }
     }
     
     updateUI(); // Ensure HUD updates immediately
@@ -11680,6 +11730,8 @@ function startCombat(wanderer, isFlankAttack = false) {
     combatState.distractionPoint = null;
     combatState.siphonTurns = 0;
     combatState.tempHp = 0;
+    combatState.isCountering = false;
+    combatState.autoPotionActive = false;
     updateSiphonBadge(); // Clear any leftover badge
 
     updateMovementIndicator();
@@ -12575,6 +12627,49 @@ function executePlayerSkill(target) {
                 spawnFloatingText("MISSED", window.innerWidth/2, window.innerHeight/2, '#aaa');
             }
         }
+        else if (skill.id === 'pummel') {
+            // Self-inflicted damage (ignores AP)
+            game.hp -= 4;
+            spawnHudFloatingText("-4 HP", '#ff0000');
+            updateUI();
+
+            if (game.hp <= 0) {
+                logCombat("You collapsed from the exertion.", '#ff0000');
+                gameOver();
+                return;
+            }
+
+            // Resolve Attack (Standard Power vs Enemy)
+            const dexClasses = ['rogue', 'ranger', 'bard'];
+            const primaryStatName = dexClasses.includes(game.classId) ? 'dex' : 'str';
+            const primaryAttributeValue = (game.stats && game.stats[primaryStatName]) ? game.stats[primaryStatName] : 1;
+            const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 1;
+            
+            const playerPower = primaryAttributeValue + weaponVal;
+            const enemyPower = (target.stats.str || 1) + 4;
+            
+            const res = CombatResolver.resolveClash(playerPower, enemyPower, 10 + (game.maxAp||0), target.stats.ac || 10, _lck);
+            spawnDice3D(res.attacker.config.sides, res.attacker.total, 0xcc0000, { x: -1.5, y: -0.5 }, "Pummel", () => {});
+            
+            if (res.attacker.total > res.defender.total) {
+                damage = Math.ceil(res.damage * 1.6);
+                
+                if (combatState.gutsCharge > 0) {
+                    damage += combatState.gutsCharge;
+                    msg = `Pummel + Guts hits for ${damage}!`;
+                    combatState.gutsCharge = 0;
+                    combatState.gutsStacks = 0;
+                } else {
+                    msg = `Pummel hits for ${damage}! (160%)`;
+                }
+                
+                color = '#ff0000';
+                triggerShake(12, 15);
+            } else {
+                msg = "Pummel missed! (HP sacrificed in vain)";
+                color = '#aaa';
+            }
+        }
         else {
             // Default fallback
             damage = 2;
@@ -12911,7 +13006,7 @@ function executePlayerAttack(target) {
     const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 1;
 
     const playerPower = primaryAttributeValue + weaponVal;
-    const playerAC = 10 + (game.maxAp || 0); // Base 10 AC + Armor Points
+    const playerAC = 10 + (game.stats.dex || 0); // Base 10 + DEX (Ablative Armor rule)
 
     // Enemy Stats
     const enemyStr = target.stats.str || 1;
@@ -13315,6 +13410,35 @@ window.commandSecondWind = function() {
     setTimeout(startEnemyTurn, 500);
 };
 
+window.commandCounter = function() {
+    if (combatState.turn !== 'player') return;
+    combatState.isCountering = true;
+    spawnFloatingText("COUNTER STANCE", window.innerWidth / 2, window.innerHeight / 2, '#ff4400');
+    logCombat("Counter Stance! (+4 AC, Reflects Damage)", '#ff4400');
+    // End turn
+    if (window.openMainMenu) window.openMainMenu();
+    setTimeout(startEnemyTurn, 500);
+};
+
+window.commandPummel = function() {
+    if (combatState.turn !== 'player') return;
+    if (!combatState.canAttack) { logMsg("Cannot Pummel after Dashing."); return; }
+    combatState.activeSkill = { id: 'pummel', name: 'Pummel' };
+    combatState.isTargeting = true;
+    spawnFloatingText("PUMMEL", window.innerWidth / 2, window.innerHeight / 2 - 150, '#ff0000');
+    logMsg("Select target to Pummel (Sacrifice 4 HP).");
+};
+
+window.commandAutoPotion = function() {
+    if (combatState.turn !== 'player') return;
+    combatState.autoPotionActive = true;
+    spawnFloatingText("AUTO POTION", window.innerWidth / 2, window.innerHeight / 2, '#ff8888');
+    logCombat("Auto-Potion ready! Will drink if HP <= 8.", '#ff8888');
+    // End turn
+    if (window.openMainMenu) window.openMainMenu();
+    setTimeout(startEnemyTurn, 500);
+};
+
 function startEnemyTurn() {
     combatState.turn = 'enemy';
     updateMovementIndicator(); // Hide player indicator
@@ -13582,9 +13706,8 @@ function executeEnemyRangedAttack(enemy) {
     const spellRoll  = DiceRoller.roll(spellConfig.sides);
     const spellTotal = spellRoll + spellConfig.bonus;
 
-    let playerAC = (CLASS_DATA[game.classId].stats.ac || 0);
-    if (game.equipment.armor) playerAC += (game.equipment.armor.val || 0);
-    if (combatState.isDefending) playerAC += 4;
+    let playerAC = 10 + (game.stats.dex || 0);
+    if (combatState.isDefending || combatState.isCountering) playerAC += 4;
 
     // Fire the visual first, resolve damage after travel time
     if (playerMesh) spawn3DSpell(enemy.mesh.position.clone(), playerMesh.position.clone());
@@ -13596,6 +13719,21 @@ function executeEnemyRangedAttack(enemy) {
             spawnFloatingText(`CURSED! -${damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2, '#cc44ff');
             logCombat(`Spell strikes for ${damage}! (Roll ${spellTotal} - AC ${playerAC})`, '#cc44ff');
             takeDamage(damage);
+
+            // Counter Logic (Reflect Spell)
+            if (combatState.isCountering) {
+                let reflectDmg = Math.ceil(spellTotal * 0.8);
+                if (combatState.gutsCharge > 0) {
+                    reflectDmg += combatState.gutsCharge;
+                    combatState.gutsCharge = 0;
+                    combatState.gutsStacks = 0;
+                    logCombat("Guts consumed for reflection!", '#ffaa00');
+                }
+                enemy.stats.hp -= reflectDmg;
+                spawnFloatingText(`REFLECT! -${reflectDmg}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff4400');
+                logCombat(`Magic reflected! Dealt ${reflectDmg} damage.`, '#ff4400');
+                if (enemy.healthBar) enemy.healthBar.scale.x = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
+            }
         } else {
             spawnFloatingText('RESISTED!', window.innerWidth / 2, window.innerHeight / 2, '#88aaff');
             logCombat(`Spell dissipates against your armor! (Roll ${spellTotal} - AC ${playerAC} = 0)`, '#888');
@@ -13633,8 +13771,8 @@ function executeEnemyAttack(enemy) {
 
         const playerStr = CLASS_DATA[game.classId].stats.str || 0;
         const weaponVal = game.equipment.weapon ? game.equipment.weapon.val : 2;
-        let playerAC = CLASS_DATA[game.classId].stats.ac || 10;
-        if (combatState.isDefending) playerAC += 4; // Defense Bonus
+        let playerAC = 10 + (game.stats.dex || 0);
+        if (combatState.isDefending || combatState.isCountering) playerAC += 4; // Defense Bonus
         const playerPower = playerStr + weaponVal;
 
         // Enemy Stats
@@ -13667,7 +13805,23 @@ function executeEnemyAttack(enemy) {
                 spawnFloatingText(`-${result.damage}`, window.innerWidth / 2 - 100, window.innerHeight / 2 + 50, '#ff0000'); // Player's side, red for damage taken
                 logCombat(`Enemy hits! (Roll ${result.defender.total} vs ${result.attacker.total})`, '#f44');
                 if (actions.hit) actions.hit.reset().play();
-                if (combatState.isDefending) logCombat("(Damage reduced by Defense)", '#00ffff');
+                if (combatState.isDefending || combatState.isCountering) logCombat("(Damage reduced by Stance)", '#00ffff');
+
+                // Counter Logic
+                if (combatState.isCountering) {
+                    // Reflect 80% of raw roll (attacker total from enemy perspective)
+                    let reflectDmg = Math.ceil(result.defender.total * 0.8);
+                    if (combatState.gutsCharge > 0) {
+                        reflectDmg += combatState.gutsCharge;
+                        combatState.gutsCharge = 0;
+                        combatState.gutsStacks = 0;
+                        logCombat("Guts consumed for counter!", '#ffaa00');
+                    }
+                    enemy.stats.hp -= reflectDmg;
+                    spawnFloatingText(`REFLECT! -${reflectDmg}`, window.innerWidth / 2 + 100, window.innerHeight / 2, '#ff4400');
+                    logCombat(`Vengeance! Reflected ${reflectDmg} damage.`, '#ff4400');
+                    if (enemy.healthBar) enemy.healthBar.scale.x = Math.max(0, enemy.stats.hp / enemy.stats.maxHp);
+                }
             } else if (result.winner === 'attacker') {
                 // Player Wins Clash (Counters)
                 spawnFloatingText("COUNTER!", window.innerWidth / 2 - 100, window.innerHeight / 2 - 50, '#00ff00'); // Player's side, green for counter
@@ -13730,6 +13884,7 @@ function endEnemyTurn() {
             combatState.canAttack = true;
             combatState.isDashing = false;
             combatState.isDefending = false;
+            combatState.isCountering = false;
             combatState.tempHp = 0; // Clear brace
 
             // Pet heal — 35% chance at the start of the player's turn
