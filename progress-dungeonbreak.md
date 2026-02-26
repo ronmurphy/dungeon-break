@@ -380,3 +380,5 @@ BIG CHANGE: Camp / cellular automata, always level 1, wanderers can be adjusted 
 
 2-25-26:
 a bad code pull or github, idk, messed things up, doing emergency management and recovery.  fixed time indicator and time on all three maps, ca, bsp and battle island.fixed  torch button actually does on / on now with a small night vision for the player when torch = off. fixed bsp-dungeon 'room' no move issues.  fixed waypoint issueson bsp.  fixed goMap("bi") not going to battle island.  fixed the azure and guardian bug.   made bone set and infernal set, a set of armor: hands, chest, helm, legs that when all used together have a special benefit.  bone has +8 to AP total, +2 per piece, and skeletons dont attack, summons a skeleton helper.  infernal is +8 total, +2 per piece, and evil, demoness and will ignore you. new tactics. auto potion. counter. pummel. AP and AC restructure so the player actually takes damage. 
+
+2-25-26 - diverging in to godot. 

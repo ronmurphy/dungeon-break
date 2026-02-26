@@ -7328,6 +7328,28 @@ window._triggerInfernalSet = () => {
     spawnFloatingText('INFERNAL SET COMPLETE!', window.innerWidth / 2, window.innerHeight / 2 - 80, '#ff4422', 28);
 };
 
+/** Debug: rebuild BSP geometry for the current floor without touching game/player state. */
+window._regenFloor = () => {
+    game.rooms = [];
+    clear3DScene(); init3D();
+    preloadFXTextures();
+    game.useBSP = true;
+    const bsp = generateBSPFloor(scene, game.floor, _rngMulberry32(floorSeed(game.floor)), loadTexture, getClonedTexture);
+    game.rooms = bsp.rooms;
+    globalFloorMesh = bsp.mesh;
+    bspGrid = bsp.tileGrid; bspCols = bsp.cols; bspRows = bsp.rows;
+    bspHeightGrid = bsp.heightGrid;
+    _bspWallMesh = bsp.wallMesh || null; _bspWallTorchState = null;
+    Minimap.setLevel(bspGrid, bspCols, bspRows, game.rooms);
+    spawnBSPDoors(bsp.doorPositions);
+    spawnBSPDecorations(bsp.decorations || [], bsp.wallSheet);
+    createDungeonDustMotes();
+    updateAtmosphere(game.floor);
+    updateUI();
+    enterRoom(game.currentRoomIdx);
+    console.log('[_regenFloor] BSP rebuilt for floor', game.floor);
+};
+
 /**
  * Spawns a single boss helper wanderer at the given island offset position.
  */
